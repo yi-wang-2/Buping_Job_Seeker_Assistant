@@ -28,14 +28,14 @@ JOB_MAX_APPLICATIONS = 5
 JOB_MIN_APPLICATIONS = 1
 
 LLM_MODEL_TYPE = os.environ.get('LLM_MODEL_TYPE', os.environ.get('LLM_MODEL_TYPE_DEF', 'anthropic'))
-LLM_MODEL = os.environ.get('LLM_MODEL', 'MiniMax-M2.7')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'MiniMax-M3')
 # MiniMax uses Anthropic-compatible endpoint
 LLM_API_URL = os.environ.get('ANTHROPIC_BASE_URL', 'https://api.minimaxi.com/anthropic')
 
 # Anthropic/MiniMax configuration
 ANTHROPIC_AUTH_TOKEN = os.environ.get('ANTHROPIC_AUTH_TOKEN', 'sk-cp-shrFT60UliCZdN3bExya4P5R6qGsiWSibi60_1CuLPBCqS0vaH9qIE-nBaeKWL-wMKO_0L-SHlEUFkp-mQIrrscDSEmXa49gCcwSxLtuCMvO5XE1EYyVy3w')
 ANTHROPIC_BASE_URL = os.environ.get('ANTHROPIC_BASE_URL', 'https://api.minimaxi.com/anthropic')
-ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'MiniMax-M2.7')
+ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'MiniMax-M3')
 
 # Additional flags from user
 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = os.environ.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', '1')

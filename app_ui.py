@@ -12,6 +12,7 @@ import yaml
 
 # Import existing project modules
 from src.libs.resume_and_cover_builder import ResumeFacade, ResumeGenerator, StyleManager
+from src.libs.interview_prep import InterviewPrepGenerator
 from src.resume_schemas.resume import Resume
 from src.utils.chrome_utils import init_browser
 from src.logging import logger
@@ -456,6 +457,72 @@ def generate_resume(api_key, model_type, base_url, style_name, job_description, 
         logger.exception(f"Error generating resume: {e}")
         return None, f"{i18n('msg_error')}: {str(e)}"
 
+def generate_interview_prep(
+    api_key,
+    model_type,
+    base_url,
+    job_description,
+    interview_type,
+    question_count,
+    resume_language,
+    progress=gr.Progress(),
+):
+    """Generate interview preparation materials from resume content and JD."""
+    try:
+        progress(0.1, desc="Loading resume...")
+
+        if api_key:
+            save_secrets(api_key, model_type, base_url, resume_language)
+
+        resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
+        with open(resume_file, "r", encoding="utf-8") as f:
+            resume_text = f.read()
+
+        progress(0.35, desc="Generating interview prep...")
+
+        secrets = load_secrets()
+        # Fallback: 从 config.py 读取默认 api_key (抄 llm_generate_resume.py 的作业)
+        import config as cfg
+        effective_api_key = (
+            api_key
+            or secrets.get("llm_api_key", "")
+            or cfg.ANTHROPIC_AUTH_TOKEN
+        )
+        effective_base_url = (
+            base_url
+            or secrets.get("llm_base_url", "")
+            or cfg.ANTHROPIC_BASE_URL
+        )
+        generator = InterviewPrepGenerator(
+            api_key=effective_api_key,
+            model_type=model_type or secrets.get("llm_model_type", "anthropic"),
+            base_url=effective_base_url,
+        )
+        report = generator.generate(
+            resume_text=resume_text,
+            job_description=job_description or "",
+            interview_type=interview_type or "综合面试",
+            question_count=int(question_count or 10),
+            language=resume_language,
+        )
+
+        progress(0.85, desc="Saving report...")
+
+        output_dir = OUTPUT_FOLDER / "interview_prep"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"interview_prep_{timestamp}.md"
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        progress(1.0, desc="Done")
+        status = f"面试准备报告已生成: {output_path.name}" if resume_language == "zh" else f"Interview prep report generated: {output_path.name}"
+        return report, str(output_path), status
+    except Exception as e:
+        logger.exception(f"Error generating interview prep: {e}")
+        message = f"生成面试准备报告失败: {e}" if resume_language == "zh" else f"Error generating interview prep: {e}"
+        return "", None, message
+
 def list_output_files():
     """List all PDF files in the output directory"""
     files = []
@@ -646,6 +713,54 @@ def create_ui():
                     fn=generate_resume,
                     inputs=[api_key, model_type, base_url, style_choice, job_description, resume_language],
                     outputs=[output_file, status_output]
+                )
+
+            # ========== Tab 2: Interview Preparation ==========
+            with gr.TabItem("面试准备", id="tab_interview_prep"):
+                gr.Markdown("### 面试准备")
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        interview_type = gr.Dropdown(
+                            label="面试类型",
+                            choices=["综合面试", "技术面试", "HR 面试", "行为面试", "项目深挖", "英文面试"],
+                            value="综合面试",
+                            elem_id="interview_type_input",
+                        )
+                        interview_question_count = gr.Slider(
+                            label="问题数量",
+                            minimum=3,
+                            maximum=20,
+                            step=1,
+                            value=10,
+                            elem_id="interview_question_count_input",
+                        )
+                        interview_generate_btn = gr.Button("生成面试准备报告", variant="primary", elem_id="interview_generate_btn")
+
+                    with gr.Column(scale=2):
+                        interview_job_description = gr.Textbox(
+                            label="职位描述",
+                            placeholder="粘贴用于面试准备的 JD...",
+                            lines=10,
+                            elem_id="interview_job_desc_input",
+                        )
+                        interview_status = gr.Textbox(label="状态", interactive=False, lines=2, elem_id="interview_status_output")
+                        interview_file = gr.File(label="下载报告", elem_id="interview_output_file")
+
+                interview_report = gr.Markdown("", elem_id="interview_report_output")
+
+                interview_generate_btn.click(
+                    fn=generate_interview_prep,
+                    inputs=[
+                        api_key,
+                        model_type,
+                        base_url,
+                        interview_job_description,
+                        interview_type,
+                        interview_question_count,
+                        resume_language,
+                    ],
+                    outputs=[interview_report, interview_file, interview_status],
                 )
             
             # ========== Tab 2: History ==========
