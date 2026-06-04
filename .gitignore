@@ -169,3 +169,11 @@ reference/
 
 # Local code review reports (kept locally only, not synced to repo)
 docs/review/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# uv lock file (optional)
+# .python-version
