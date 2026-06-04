@@ -1,12 +1,14 @@
-# AI Job Assistant Agent (Buping) - 智能求职助手
+# 不平 - 智能求职助手
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Gradio](https://img.shields.io/badge/UI-Gradio-orange.svg)](https://www.gradio.app/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-> **Bumps on the road forge an extraordinary life.**
+> **人生之路总是坎坷，这也造就了我们不平凡的人生.**
 
 AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具。覆盖从简历优化、岗位匹配、面试准备到职业发展的完整求职周期。
+
+> **English version**: [README_EN.md](README_EN.md)
 
 ---
 
@@ -76,6 +78,17 @@ Buping_Job_Seeker_Assistant/
 ├── .gitignore                   # Git 忽略规则
 │
 ├── data_folder/                 # 用户数据 (实际数据，已脱敏)
+│   ├── plain_text_resume.yaml   # 简历内容
+│   ├── plain_text_resume_zh.yaml
+│   ├── work_preferences.yaml    # 工作偏好
+│   ├── work_preferences_zh.yaml
+│   └── secrets.yaml             # API 密钥 (模板)
+│
+├── data_folder_example/         # 用户数据示例
+│   ├── plain_text_resume.yaml   # 简历示例 (英文)
+│   ├── resume_liam_murphy.txt
+│   ├── work_preferences.yaml
+│   └── secrets.yaml
 │   ├── plain_text_resume.yaml   # 简历内容 (英文)
 │   ├── plain_text_resume_zh.yaml # 简历内容 (中文)
 │   ├── work_preferences.yaml    # 工作偏好
