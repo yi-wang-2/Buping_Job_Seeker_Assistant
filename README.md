@@ -76,8 +76,8 @@ Buping_Job_Seeker_Assistant/
 ├── .gitignore                   # Git 忽略规则
 │
 ├── data_folder/                 # 用户数据 (实际数据，已脱敏)
-│   ├── plain_text_resume.yaml   # 简历内容 (中文)
-│   ├── plain_text_resume_zh.yaml
+│   ├── plain_text_resume.yaml   # 简历内容 (英文)
+│   ├── plain_text_resume_zh.yaml # 简历内容 (中文)
 │   ├── work_preferences.yaml    # 工作偏好
 │   ├── work_preferences_zh.yaml
 │   └── secrets.yaml             # API 密钥 (模板)
