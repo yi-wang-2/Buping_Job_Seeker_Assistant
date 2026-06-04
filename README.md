@@ -1,191 +1,339 @@
-﻿# AI Job Assistant Agent - 智能求职助手
+# AI Job Assistant Agent (Buping) - 智能求职助手
 
-AI求职助手是一个基于大语言模型(LLM)的智能求职辅助工具，定位不止于简历生成，而是成为求职全流程的智能助手，覆盖从简历优化、岗位匹配、面试准备到职业发展的完整求职周期。
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Gradio](https://img.shields.io/badge/UI-Gradio-orange.svg)](https://www.gradio.app/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## 功能架构
+> **Bumps on the road forge an extraordinary life.**
 
-### 1. 简历生成与优化模块
-- **智能简历分析**: ATS兼容性检测，识别简历中的关键词缺失和格式问题
-- **个性化内容建议**: 基于目标岗位JD，智能优化简历内容
-- **成就量化与故事化**: 将工作经历转化为可量化的成就陈述，增强竞争力
+AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具。覆盖从简历优化、岗位匹配、面试准备到职业发展的完整求职周期。
 
-### 2. 岗位匹配模块
-- **智能岗位推荐**: 基于用户技能库与简历，进行技能-岗位匹配度分析
-- **公司文化适配度评估**: 分析公司价值观与个人偏好的匹配程度
-- **薪资范围预测**: 根据岗位、公司、地区预测合理薪资范围
+---
 
-### 3. 面试准备模块
-- **个性化面试问题生成**: 根据简历和JD生成针对性的面试题库
-- **模拟面试对话**: AI模拟面试官进行实时对话练习
-- **行为面试(STAR法则)指导**: 提供STAR法则指导与案例库
+## ✨ 核心功能
 
-### 4. 申请跟踪模块
-- **申请进度管理**: 追踪每个岗位的申请状态和时间线
-- **跟进提醒系统**: 智能提醒面试时间点、感谢信发送时机
-- **拒绝原因分析与改进建议**: 分析被拒原因并提供针对性改进方案
+### 🎯 已实现功能
 
-### 5. 职业发展模块
-- **技能缺口分析**: 对比目标岗位要求与当前技能水平
-- **学习路径推荐**: 推荐个性化学习资源与成长路径
-- **行业趋势洞察**: 追踪行业动态，提供职业发展建议
+- **📄 简历生成引擎**
+  - 普通简历生成（基于 YAML）
+  - JD 定制简历生成（针对职位描述优化）
+  - 单次 LLM 调用生成完整简历（~30 秒）
+  - 支持 5 种专业样式模板
+  - 详实量化内容，ATS 友好
 
-## 技术架构
+- **📋 面试准备模块**
+  - 基于简历和 JD 自动生成面试准备报告
+  - 包含：技术问题、行为面试 (STAR)、简历深挖、准备清单
+  - 支持中英文双语
+  - Markdown 报告导出
 
-- **前端**: Gradio Web UI (端口 7860)
-- **LLM引擎**: MiniMax-M2.7 (通过Anthropic兼容API)
-- **PDF生成**: Selenium + Chrome DevTools Protocol
-- **Python版本**: 3.11+
+- **🎭 模拟面试模块**
+  - AI 扮演面试官，多轮对话模拟
+  - 5 种面试官风格：友善型 / 专业型 / 压力型 / 学术型 / 闲聊型
+  - 自动轮次控制：开场 → 项目 → 技术 → 行为 → 反问 → 结束
+  - 结束生成多维度评估报告
 
-## 目录结构
+- **⚙️ 配置与设置**
+  - API Key 配置面板
+  - 多语言支持（中文/英文简历和系统）
+  - max_tokens 可调（默认 4096）
+  - 模型选择
 
-`
-├── main.py              # 主程序入口
-├── app_ui.py            # Gradio Web界面
-├── config.py            # 配置文件
-├── requirements.txt     # Python依赖
-├── data_folder/         # 用户数据文件夹
-│   ├── plain_text_resume.yaml  # 简历内容
-│   ├── secrets.yaml     # API密钥配置
-│   └── work_preferences.yaml   # 工作偏好设置
+- **📚 历史记录**
+  - 生成的简历历史列表
+  - 一键下载 PDF
+
+### 🚧 规划中功能
+
+- 岗位匹配分析
+- 申请跟踪管理
+- 技能缺口分析
+- 学习路径推荐
+
+---
+
+## 🛠️ 技术架构
+
+| 组件 | 技术栈 |
+|------|--------|
+| 前端 | Gradio Web UI (端口 7860) |
+| LLM 引擎 | Anthropic 兼容 API (推荐 `MiniMax-M3`) |
+| PDF 生成 | Selenium + Chrome DevTools Protocol |
+| 数据验证 | Pydantic v2 |
+| LLM 框架 | LangChain |
+| Python 版本 | 3.11+ |
+
+---
+
+## 📁 目录结构
+
+```
+Jobs_Applier_AI_Agent_AIHawk-main/
+├── app_ui.py                    # Gradio Web 界面入口
+├── main.py                      # 主程序入口
+├── config.py                    # 全局配置 (API Key 等)
+├── requirements.txt             # Python 依赖
+├── .gitignore                   # Git 忽略规则
+│
+├── data_folder/                 # 用户数据 (实际数据，已脱敏)
+│   ├── plain_text_resume.yaml   # 简历内容 (中文)
+│   ├── plain_text_resume_zh.yaml
+│   ├── work_preferences.yaml    # 工作偏好
+│   ├── work_preferences_zh.yaml
+│   └── secrets.yaml             # API 密钥 (模板)
+│
+├── data_folder_example/         # 用户数据示例
+│   ├── plain_text_resume.yaml   # 简历示例 (英文)
+│   ├── resume_liam_murphy.txt
+│   ├── work_preferences.yaml
+│   └── secrets.yaml
+│
 ├── src/
-│   ├── llm_manager.py           # LLM管理器
-│   ├── resume_and_cover_builder/  # 简历生成模块
-│   │   ├── resume_generator.py    # 简历生成器
-│   │   ├── cover_letter_generator.py  # 求职信生成
-│   │   └── style_manager.py      # 样式管理
-│   ├── job.py                   # 职位相关类
-│   ├── job_application_saver.py  # 申请跟踪模块
-│   └── jobContext.py             # 求职上下文管理
-└── assets/             # 静态资源
+│   ├── __init__.py
+│   ├── job.py                   # 职位数据类
+│   ├── jobContext.py            # 求职上下文
+│   ├── job_application_saver.py # 申请跟踪
+│   ├── logging.py               # 日志模块
+│   ├── resume_schemas/          # 简历 Pydantic 模型
+│   │   ├── resume.py
+│   │   └── job_application_profile.py
+│   ├── utils/                   # 工具模块
+│   │   ├── chrome_utils.py      # Chrome 浏览器工具
+│   │   └── constants.py
+│   └── libs/
+│       ├── llm_manager.py       # LLM 管理
+│       ├── resume_and_cover_builder/  # 简历与求职信生成
+│       │   ├── resume_generator.py
+│       │   ├── resume_facade.py
+│       │   ├── style_manager.py
+│       │   ├── template_base.py
+│       │   ├── template_base_zh.py
+│       │   ├── utils.py
+│       │   ├── config.py
+│       │   ├── module_loader.py
+│       │   ├── llm/                  # LLM 调用层
+│       │   │   ├── llm_generate_resume.py
+│       │   │   ├── llm_generate_resume_from_job.py
+│       │   │   ├── llm_generate_cover_letter_from_job.py
+│       │   │   └── llm_job_parser.py
+│       │   ├── resume_prompt/        # 简历 Prompt 模板
+│       │   ├── cover_letter_prompt/  # 求职信 Prompt 模板
+│       │   └── resume_style/         # CSS 样式模板
+│       └── interview_prep/           # 面试模块 ⭐
+│           ├── __init__.py
+│           ├── interview_generator.py  # 面试准备报告生成
+│           └── mock_interview.py      # 模拟面试对话
+│
+└── assets/                      # 静态资源
+    ├── AIHawk.png
+    ├── laboro.png
+    └── resume_schema.yaml
 ```
 
-## 快速开始
+---
 
-### 1. 安装依赖
+## 🚀 快速开始
+
+### 1. 克隆仓库
+
+```bash
+git clone git@github.com:yi-wang-2/Buping_Job_Seeker_Assistant.git
+cd Buping_Job_Seeker_Assistant
+```
+
+### 2. 创建虚拟环境（推荐）
+
+```bash
+conda create -n jobagent python=3.11
+conda activate jobagent
+```
+
+### 3. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置API密钥
+### 4. 配置 API 密钥
 
-编辑 data_folder/secrets.yaml:
+编辑 `config.py`，填入你的 LLM API 配置：
 
-```yaml
-api_key_name: your-api-key-name
-api_key: your-api-key
+```python
+# Anthropic 兼容 API
+ANTHROPIC_AUTH_TOKEN = "your-api-key-here"
+ANTHROPIC_BASE_URL = "https://api.example.com/anthropic"
+ANTHROPIC_MODEL = "MiniMax-M3"
 ```
 
-### 3. 配置简历内容
-
-编辑 data_folder/plain_text_resume.yaml:
+或编辑 `data_folder/secrets.yaml`：
 
 ```yaml
-first_name: 张
-last_name: 三
-title: 软件工程师
-email: zhang@example.com
+llm_api_key: "your-api-key-here"
+llm_base_url: "https://api.example.com/anthropic"
+llm_model_type: "anthropic"
+resume_language: "zh"
+system_language: "zh"
+```
+
+> **优先级**: 用户输入 → `config.py` → `secrets.yaml`
+
+### 5. 准备简历内容
+
+编辑 `data_folder/plain_text_resume.yaml`：
+
+```yaml
+first_name: "张"
+last_name: "三"
+title: "高级软件工程师"
+email: "zhangsan@example.com"
 phone: "+86 13800000000"
-location: 北京
+location: "北京"
+summary: "5 年 Python 后端开发经验..."
+# ... 更多字段
 ```
 
-### 4. 运行程序
+可参考 `data_folder_example/plain_text_resume.yaml`。
+
+### 6. 启动应用
 
 ```bash
-python main.py
+python app_ui.py
 ```
 
-访问 http://localhost:7860 打开Web界面。
+访问 http://localhost:7860 打开 Web 界面。
 
-## 使用说明
+---
 
-### Tab 1: 生成简历 (简历生成与优化)
+## 📖 使用说明
 
-1. 在左侧粘贴职位描述(JD)
-2. 选择简历样式模板
-3. 点击"生成AI简历"
-4. 等待生成完成，点击下载PDF
+### Tab 1: 生成简历
+1. 选择简历样式模板（5 种可选）
+2. 点击「生成 AI 简历」
+3. 等待 ~30 秒
+4. 预览 / 下载 PDF
 
-**其他简历功能 (待开发)**
-- ATS兼容性检测与分析
-- 基于JD的个性化内容建议
-- 成就量化与故事化优化
-
-### Tab 2: 生成定制简历 (简历生成与优化)
-
-1. 粘贴Job Description
+### Tab 2: 定制简历
+1. 粘贴目标职位描述 (JD)
 2. 选择样式模板
-3. 点击"生成定制简历"
-4. 可预览和下载结果
+3. 点击「生成定制简历」
+4. LLM 会根据 JD 优化简历内容
 
-### Tab 3: 岗位匹配 (待开发)
+### Tab 3: 面试准备
+1. 粘贴简历和 JD
+2. 设置问题数量（3-20）
+3. 选择语言
+4. 点击「生成面试准备报告」
+5. 下载 Markdown 报告
 
-- 智能岗位推荐与技能匹配度分析
-- 公司文化适配度评估
-- 薪资范围预测
+### Tab 4: 模拟面试
+1. 配置公司、岗位、面试类型
+2. 选择面试官风格（5 种）
+3. 粘贴简历和 JD
+4. 点击「开始面试」
+5. 多轮对话，AI 面试官会追问
+6. 点击「结束面试」生成评估报告
 
-### Tab 4: 面试准备 (待开发)
+### Tab 5: 历史记录
+查看之前生成的所有简历。
 
-- 个性化面试问题生成
-- 模拟面试对话练习
-- STAR法则指导与案例库
+### Tab 6: 设置
+配置 API Key、模型、max_tokens 等参数。
 
-### Tab 5: 申请跟踪 (待开发)
+---
 
-- 申请进度管理
-- 跟进提醒系统
-- 拒绝原因分析与改进建议
+## 🎨 样式模板
 
-### Tab 6: 职业发展 (待开发)
-
-- 技能缺口分析
-- 学习路径推荐
-- 行业趋势洞察
-
-### Tab 7: 历史记录
-
-查看之前生成的简历记录。
-
-### Tab 8: 设置
-
-配置LLM参数，如max_tokens等。
-
-## 配置说明
-
-### secrets.yaml
-
-| 参数 | 说明 |
-|------|------|
-| api_key_name | API密钥名称 |
-| api_key | API密钥值 |
-
-### work_preferences.yaml
-
-| 参数 | 说明 |
-|------|------|
-| suggest_thinking | 是否显示思考建议 |
-
-## 样式模板
-
-| 模板名称 | 说明 |
+| 模板名称 | 风格 |
 |---------|------|
-| cloyola | 简洁专业风格 |
-| josylad_blue | 蓝色商务风格 |
-| josylad_grey | 灰色简约风格 |
-| krishnavalliappan | 现代技术风格 |
-| samodum_bold | 醒目粗体风格 |
+| `cloyola` | 简洁专业 |
+| `josylad_blue` | 蓝色商务 |
+| `josylad_grey` | 灰色简约 |
+| `krishnavalliappan` | 现代技术 |
+| `samodum_bold` | 醒目粗体 |
 
-## 问题排查
+---
+
+## 📊 性能指标
+
+| 指标 | 数值 |
+|------|------|
+| 普通简历生成 | ~30 秒 (1 次 LLM 调用) |
+| 定制简历生成 | ~30 秒 (2 次 LLM 调用) |
+| 面试准备报告 | ~15-20 秒 |
+| 模拟面试响应 | ~3-5 秒/轮 |
+| 简历 PDF 生成 | ~5 秒 |
+
+---
+
+## 🔧 问题排查
 
 **Q: 生成的简历内容太简单？**
-A: 尝试在设置中增加 max_tokens 值（当前默认4096）
+A: 在设置中增加 `max_tokens` 值（推荐 4096 或更高）。
 
-**Q: 样式选择无法点击？**
-A: 已修复，使用Radio组件替代Dropdown
+**Q: 401 认证错误？**
+A: 确认 `config.py` 中 `ANTHROPIC_AUTH_TOKEN` 已正确填写。
 
-**Q: PDF生成失败？**
-A: 确保Chrome已安装且版本支持headless模式
+**Q: PDF 生成失败？**
+A: 确保 Chrome 已安装且支持 headless 模式。Windows 上需要 Chrome 90+。
 
-## License
+**Q: CSS 文件读取错误 (GBK)？**
+A: 已在最新版修复，确保使用 `encoding="utf-8"`。
 
-MIT License
+**Q: 模拟面试无响应？**
+A: 检查 API Key 是否有效，查看终端日志。
+
+---
+
+## 🤝 贡献指南
+
+欢迎贡献！请遵循以下流程：
+
+1. Fork 仓库
+2. 创建功能分支 (`git checkout -b feat/amazing-feature`)
+3. 提交更改 (`git commit -m 'feat: add amazing feature'`)
+4. 推送到分支 (`git push origin feat/amazing-feature`)
+5. 创建 Pull Request
+
+提交信息规范：
+- `feat:` 新功能
+- `fix:` Bug 修复
+- `docs:` 文档更新
+- `style:` 代码格式
+- `refactor:` 重构
+- `test:` 测试
+- `chore:` 构建/工具
+
+---
+
+## 📜 License
+
+[MIT License](LICENSE)
+
+---
+
+## 🔗 相关链接
+
+| 资源 | 链接 |
+|------|------|
+| GitHub 仓库 | https://github.com/yi-wang-2/Buping_Job_Seeker_Assistant |
+| Gradio 文档 | https://www.gradio.app/docs/ |
+| LangChain | https://python.langchain.com/ |
+| Pydantic | https://docs.pydantic.dev/ |
+| Anthropic API | https://docs.anthropic.com/ |
+
+---
+
+## 🙏 致谢
+
+本项目基于开源项目 [Jobs_Applier_AI_Agent_AIHawk](https://github.com/feder-cr/Jobs_Applier_AI_Agent_AIHawk) 开发，感谢原作者 [feder-cr](https://github.com/feder-cr) 的开源贡献。
+
+在此基础上扩展了：
+- 中文简历支持
+- 模拟面试模块
+- 面试准备模块
+- API Key Fallback 机制
+- 性能优化（LLM 调用合并）
+
+---
+
+**Made with ❤️ by yi-wang-2**
