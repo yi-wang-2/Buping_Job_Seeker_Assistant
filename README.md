@@ -125,8 +125,6 @@ Jobs_Applier_AI_Agent_AIHawk-main/
 │           └── mock_interview.py      # 模拟面试对话
 │
 └── assets/                      # 静态资源
-    ├── AIHawk.png
-    ├── laboro.png
     └── resume_schema.yaml
 ```
 
@@ -316,6 +314,7 @@ A: 检查 API Key 是否有效，查看终端日志。
 | 资源 | 链接 |
 |------|------|
 | GitHub 仓库 | https://github.com/yi-wang-2/Buping_Job_Seeker_Assistant |
+| 参考项目 (paper-ppt-agent) | https://github.com/CRui5in/paper-ppt-agent |
 | Gradio 文档 | https://www.gradio.app/docs/ |
 | LangChain | https://python.langchain.com/ |
 | Pydantic | https://docs.pydantic.dev/ |
