@@ -173,7 +173,7 @@ resume_language: "zh"
 system_language: "zh"
 ```
 
-> **优先级**: 用户输入 → `config.py` → `secrets.yaml`
+> **优先级**: 用户输入 → `secrets.yaml` → `config.py`
 
 ### 5. 准备简历内容
 
