@@ -1,9 +1,10 @@
 """
-Gradio UI for Jobs Applier AI Agent
-Provides a web interface for resume generation and management.
+Gradio UI for Buping (不平)
+Provides a web interface for resume generation, interview prep, and more.
 """
 import base64
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -12,7 +13,15 @@ import yaml
 
 # Import existing project modules
 from src.libs.resume_and_cover_builder import ResumeFacade, ResumeGenerator, StyleManager
-from src.libs.interview_prep import InterviewPrepGenerator
+from src.libs.interview_prep import (
+    InterviewPrepGenerator,
+    MockInterviewer,
+    MockInterviewSession,
+    CandidateProfile,
+    CompanyProfile,
+    JobProfile,
+    InterviewStyle,
+)
 from src.resume_schemas.resume import Resume
 from src.utils.chrome_utils import init_browser
 from src.logging import logger
@@ -41,7 +50,7 @@ i18n = gr.I18n(
         "tab_generate": "Generate Resume",
         "tab_history": "History",
         "tab_settings": "Settings",
-        "header": "AI Resume Generator",
+        "header": "Buping",
         "header_config": "⚙️ Configuration",
         "header_generated": "📁 Generated Resumes",
         "header_settings": "🔧 Application Settings",
@@ -72,14 +81,14 @@ i18n = gr.I18n(
         "msg_cleared": "Cleared",
         "msg_load_error": "Could not load resume content",
         "msg_config_saved": "Configuration saved!",
-        "footer": "*Built with ❤️ using Gradio | Jobs Applier AI Agent*",
-        "subtitle": "Generate professional resumes with AI",
+        "footer": "*Bumps on the road forge an extraordinary life.*",
+        "subtitle": "AI-powered career assistant for resume, interview prep and more",
     },
     zh={
         "tab_generate": "生成简历",
         "tab_history": "历史记录",
         "tab_settings": "设置",
-        "header": "AI 简历生成器",
+        "header": "不平",
         "header_config": "⚙️ 配置",
         "header_generated": "📁 已生成的简历",
         "header_settings": "🔧 应用设置",
@@ -110,8 +119,8 @@ i18n = gr.I18n(
         "msg_cleared": "已清空",
         "msg_load_error": "无法加载简历内容",
         "msg_config_saved": "配置已保存！",
-        "footer": "*使用 ❤️ 和 Gradio 构建 | Jobs Applier AI Agent*",
-        "subtitle": "使用 AI 助手生成专业简历",
+        "footer": "*人生之路总是坎坷，这也造就了我们不平凡的人生*",
+        "subtitle": "AI 驱动的求职助手 - 简历生成、面试准备、岗位匹配",
     }
 )
 
@@ -189,7 +198,7 @@ def get_ui_strings(system_language="zh"):
             "msg_config_saved": "Configuration saved!",
             
             # Footer
-            "footer": "*Built with ❤️ using Gradio | Jobs Applier AI Agent*",
+            "footer": "*Bumps on the road forge an extraordinary life.*",
         }
     else:  # Chinese
         return {
@@ -253,7 +262,7 @@ def get_ui_strings(system_language="zh"):
             "msg_config_saved": "配置已保存！",
             
             # Footer
-            "footer": "*使用 ❤️ 和 Gradio 构建 | Jobs Applier AI Agent*",
+            "footer": "*人生之路总是坎坷，这也造就了我们不平凡的人生*",
         }
 
 def save_secrets(api_key, model_type, base_url, resume_language="zh", system_language="zh"):
@@ -523,6 +532,366 @@ def generate_interview_prep(
         message = f"生成面试准备报告失败: {e}" if resume_language == "zh" else f"Error generating interview prep: {e}"
         return "", None, message
 
+
+def start_mock_interview(
+    api_key: str,
+    model_type: str,
+    base_url: str,
+    resume_text: str,
+    job_description: str,
+    company_name: str,
+    company_industry: str,
+    job_title: str,
+    interview_type: str,
+    interview_style: str,
+):
+    """Start a new mock interview session and return the opening question."""
+    try:
+        secrets = load_secrets()
+        import config as cfg
+        effective_api_key = (
+            api_key
+            or secrets.get("llm_api_key", "")
+            or cfg.ANTHROPIC_AUTH_TOKEN
+        )
+        effective_base_url = (
+            base_url
+            or secrets.get("llm_base_url", "")
+            or cfg.ANTHROPIC_BASE_URL
+        )
+
+        if not resume_text.strip():
+            return [], None, "❌ 请先提供简历内容"
+        if not job_description.strip():
+            return [], None, "❌ 请先提供职位描述 (JD)"
+
+        # Build profiles
+        candidate = CandidateProfile(
+            name="候选人",
+            resume_text=resume_text,
+            target_position=job_title or "应聘岗位",
+        )
+        company = CompanyProfile(
+            name=company_name or "某公司",
+            industry=company_industry or "",
+            culture="",
+        )
+        job = JobProfile(
+            title=job_title or "应聘岗位",
+            description=job_description,
+        )
+
+        # Map style string to enum
+        style_map = {
+            "友善型": InterviewStyle.FRIENDLY,
+            "专业型": InterviewStyle.PROFESSIONAL,
+            "压力型": InterviewStyle.PRESSURE,
+            "学术型": InterviewStyle.ACADEMIC,
+            "闲聊型": InterviewStyle.CASUAL,
+        }
+        style_enum = style_map.get(interview_style, InterviewStyle.PROFESSIONAL)
+
+        # Create interviewer
+        interviewer = MockInterviewer(
+            api_key=effective_api_key,
+            model_type=model_type or "anthropic",
+            base_url=effective_base_url,
+        )
+        session = interviewer.start_session(
+            candidate=candidate,
+            company=company,
+            job=job,
+            interview_type=interview_type or "综合面试",
+            style=style_enum,
+        )
+
+        # Format as Gradio 6.x Chatbot history: [{"role": "assistant", "content": "..."}]
+        history = [{"role": "assistant", "content": session.messages[0].content}] if session.messages else []
+
+        return history, session.session_id, "✅ 面试已开始！面试官已准备好问题"
+
+    except Exception as e:
+        logger.exception(f"Error starting mock interview: {e}")
+        return [], None, f"❌ 启动失败: {e}"
+
+
+def submit_mock_answer(
+    user_message: str,
+    history: list,
+    session_id: str,
+    api_key: str,
+    model_type: str,
+    base_url: str,
+    resume_text: str,
+    job_description: str,
+    company_name: str,
+    company_industry: str,
+    job_title: str,
+    interview_type: str,
+    interview_style: str,
+):
+    """Submit candidate's answer and get next question from interviewer."""
+    if not session_id:
+        return history or [], None, "❌ 请先开始面试"
+    if not user_message.strip():
+        return history, session_id, "❌ 请输入回答"
+
+    try:
+        secrets = load_secrets()
+        import config as cfg
+        effective_api_key = (
+            api_key
+            or secrets.get("llm_api_key", "")
+            or cfg.ANTHROPIC_AUTH_TOKEN
+        )
+        effective_base_url = (
+            base_url
+            or secrets.get("llm_base_url", "")
+            or cfg.ANTHROPIC_BASE_URL
+        )
+
+        # Recreate interviewer (sessions are in-memory, need to recreate)
+        candidate = CandidateProfile(
+            name="候选人",
+            resume_text=resume_text,
+            target_position=job_title or "应聘岗位",
+        )
+        company = CompanyProfile(
+            name=company_name or "某公司",
+            industry=company_industry or "",
+        )
+        job = JobProfile(
+            title=job_title or "应聘岗位",
+            description=job_description,
+        )
+        style_map = {
+            "友善型": InterviewStyle.FRIENDLY,
+            "专业型": InterviewStyle.PROFESSIONAL,
+            "压力型": InterviewStyle.PRESSURE,
+            "学术型": InterviewStyle.ACADEMIC,
+            "闲聊型": InterviewStyle.CASUAL,
+        }
+        style_enum = style_map.get(interview_style, InterviewStyle.PROFESSIONAL)
+
+        interviewer = MockInterviewer(
+            api_key=effective_api_key,
+            model_type=model_type or "anthropic",
+            base_url=effective_base_url,
+        )
+
+        # Re-create session with same ID by restoring from history
+        session = MockInterviewSession(
+            session_id=session_id,
+            candidate=candidate,
+            company=company,
+            job=job,
+            interview_type=interview_type or "综合面试",
+            style=style_enum,
+        )
+        # Restore history (Gradio 6.x format: [{"role": "user"|"assistant", "content": "..."}])
+        from src.libs.interview_prep.mock_interview import InterviewMessage, InterviewRound
+        for entry in history or []:
+            if isinstance(entry, dict):
+                role = entry.get("role", "")
+                content = entry.get("content", "")
+                if role == "user" and content:
+                    session.messages.append(InterviewMessage(
+                        role="candidate",
+                        content=content,
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+                elif role == "assistant" and content:
+                    session.messages.append(InterviewMessage(
+                        role="interviewer",
+                        content=content,
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                # 兼容旧格式 [[user, bot], ...]
+                if entry[0]:
+                    session.messages.append(InterviewMessage(
+                        role="candidate",
+                        content=entry[0],
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+                if entry[1]:
+                    session.messages.append(InterviewMessage(
+                        role="interviewer",
+                        content=entry[1],
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+        interviewer.sessions[session_id] = session
+
+        # Submit the answer
+        next_question_msg = interviewer.submit_answer(session_id, user_message)
+
+        # Append to history (Gradio 6.x format)
+        new_history = list(history or []) + [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": next_question_msg.content},
+        ]
+        return new_history, session_id, "✅ 已收到回答"
+
+    except Exception as e:
+        logger.exception(f"Error submitting answer: {e}")
+        return history, session_id, f"❌ 提交失败: {e}"
+
+
+def end_mock_interview(
+    session_id: str,
+    history: list,
+    api_key: str,
+    model_type: str,
+    base_url: str,
+    resume_text: str,
+    job_description: str,
+    company_name: str,
+    company_industry: str,
+    job_title: str,
+    interview_type: str,
+    interview_style: str,
+):
+    """End the interview and generate an evaluation report."""
+    if not session_id:
+        return "❌ 没有进行中的面试", ""
+
+    try:
+        secrets = load_secrets()
+        import config as cfg
+        effective_api_key = (
+            api_key
+            or secrets.get("llm_api_key", "")
+            or cfg.ANTHROPIC_AUTH_TOKEN
+        )
+        effective_base_url = (
+            base_url
+            or secrets.get("llm_base_url", "")
+            or cfg.ANTHROPIC_BASE_URL
+        )
+
+        candidate = CandidateProfile(
+            name="候选人",
+            resume_text=resume_text,
+            target_position=job_title or "应聘岗位",
+        )
+        company = CompanyProfile(
+            name=company_name or "某公司",
+            industry=company_industry or "",
+        )
+        job = JobProfile(
+            title=job_title or "应聘岗位",
+            description=job_description,
+        )
+        style_map = {
+            "友善型": InterviewStyle.FRIENDLY,
+            "专业型": InterviewStyle.PROFESSIONAL,
+            "压力型": InterviewStyle.PRESSURE,
+            "学术型": InterviewStyle.ACADEMIC,
+            "闲聊型": InterviewStyle.CASUAL,
+        }
+        style_enum = style_map.get(interview_style, InterviewStyle.PROFESSIONAL)
+
+        interviewer = MockInterviewer(
+            api_key=effective_api_key,
+            model_type=model_type or "anthropic",
+            base_url=effective_base_url,
+        )
+
+        # Restore session (Gradio 6.x format: [{"role": "user"|"assistant", "content": "..."}])
+        session = MockInterviewSession(
+            session_id=session_id,
+            candidate=candidate,
+            company=company,
+            job=job,
+            interview_type=interview_type or "综合面试",
+            style=style_enum,
+        )
+        from src.libs.interview_prep.mock_interview import InterviewMessage, InterviewRound
+        for entry in history or []:
+            if isinstance(entry, dict):
+                role = entry.get("role", "")
+                content = entry.get("content", "")
+                if role == "user" and content:
+                    session.messages.append(InterviewMessage(
+                        role="candidate",
+                        content=content,
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+                elif role == "assistant" and content:
+                    session.messages.append(InterviewMessage(
+                        role="interviewer",
+                        content=content,
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                if entry[0]:
+                    session.messages.append(InterviewMessage(
+                        role="candidate",
+                        content=entry[0],
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+                if entry[1]:
+                    session.messages.append(InterviewMessage(
+                        role="interviewer",
+                        content=entry[1],
+                        timestamp=time.time(),
+                        round=InterviewRound.OPENING,
+                    ))
+        interviewer.sessions[session_id] = session
+
+        # Generate evaluation
+        evaluation = interviewer.end_session(session_id)
+
+        # Save to file
+        output_dir = OUTPUT_FOLDER / "mock_interview"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"interview_eval_{timestamp}.md"
+
+        # Build full report with conversation
+        full_report = f"""# 模拟面试评估报告
+
+**时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+**岗位**: {job_title}
+**公司**: {company_name}
+
+---
+
+## 面试对话记录
+
+"""
+        for entry in history or []:
+            if isinstance(entry, dict):
+                role = entry.get("role", "")
+                content = entry.get("content", "")
+                if role == "user" and content:
+                    full_report += f"**候选人**: {content}\n\n"
+                elif role == "assistant" and content:
+                    full_report += f"**面试官**: {content}\n\n"
+            elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                if entry[0]:
+                    full_report += f"**候选人**: {entry[0]}\n\n"
+                if entry[1]:
+                    full_report += f"**面试官**: {entry[1]}\n\n"
+
+        full_report += f"---\n\n## 评估报告\n\n{evaluation}"
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(full_report)
+
+        return evaluation, str(output_path)
+
+    except Exception as e:
+        logger.exception(f"Error ending interview: {e}")
+        return f"❌ 生成评估失败: {e}", ""
+
 def list_output_files():
     """List all PDF files in the output directory"""
     files = []
@@ -762,7 +1131,174 @@ def create_ui():
                     ],
                     outputs=[interview_report, interview_file, interview_status],
                 )
-            
+
+            # ========== Tab 2.5: Mock Interview ==========
+            with gr.TabItem("模拟面试", id="tab_mock_interview"):
+                gr.Markdown("### 🤖 AI 模拟面试")
+                gr.Markdown("""
+                基于你的简历和目标岗位，AI 面试官将与你进行多轮对话模拟。
+                - 面试官会根据你的回答深入追问
+                - 支持多种面试官风格（友善/专业/压力/学术/闲聊）
+                - 面试结束时会生成详细评估报告
+                """)
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("#### 📋 面试配置")
+                        mock_company_name = gr.Textbox(
+                            label="公司名称",
+                            value="MiniMax",
+                            elem_id="mock_company_name",
+                        )
+                        mock_company_industry = gr.Textbox(
+                            label="公司行业",
+                            value="AI",
+                            elem_id="mock_company_industry",
+                        )
+                        mock_job_title = gr.Textbox(
+                            label="应聘岗位",
+                            value="Python 后端工程师",
+                            elem_id="mock_job_title",
+                        )
+                        mock_interview_type = gr.Dropdown(
+                            label="面试类型",
+                            choices=["综合面试", "技术面试", "行为面试", "项目深挖", "系统设计"],
+                            value="技术面试",
+                            elem_id="mock_interview_type",
+                        )
+                        mock_interview_style = gr.Dropdown(
+                            label="面试官风格",
+                            choices=["友善型", "专业型", "压力型", "学术型", "闲聊型"],
+                            value="专业型",
+                            elem_id="mock_interview_style",
+                        )
+                        mock_resume_text = gr.Textbox(
+                            label="简历内容",
+                            placeholder="粘贴你的简历内容（YAML 或纯文本）",
+                            lines=6,
+                            elem_id="mock_resume_text",
+                        )
+                        mock_job_description = gr.Textbox(
+                            label="职位描述 (JD)",
+                            placeholder="粘贴目标岗位的 JD",
+                            lines=5,
+                            elem_id="mock_job_desc",
+                        )
+                        mock_start_btn = gr.Button(
+                            "🎬 开始面试",
+                            variant="primary",
+                            elem_id="mock_start_btn",
+                        )
+                        mock_status = gr.Textbox(
+                            label="状态",
+                            interactive=False,
+                            lines=1,
+                            elem_id="mock_status",
+                        )
+
+                    with gr.Column(scale=2):
+                        gr.Markdown("#### 💬 面试对话")
+                        mock_chatbot = gr.Chatbot(
+                            label="面试官",
+                            height=450,
+                            elem_id="mock_chatbot",
+                        )
+                        with gr.Row():
+                            mock_user_input = gr.Textbox(
+                                label="你的回答",
+                                placeholder="输入你的回答，按 Enter 或点击发送...",
+                                lines=2,
+                                scale=4,
+                                elem_id="mock_user_input",
+                            )
+                            mock_submit_btn = gr.Button(
+                                "📤 发送",
+                                scale=1,
+                                variant="primary",
+                                elem_id="mock_submit_btn",
+                            )
+
+                        with gr.Row():
+                            mock_end_btn = gr.Button(
+                                "🏁 结束面试并生成评估",
+                                variant="stop",
+                                elem_id="mock_end_btn",
+                            )
+
+                # State
+                mock_session_id = gr.State()
+                mock_evaluation = gr.Markdown(
+                    label="面试评估",
+                    elem_id="mock_evaluation",
+                )
+                mock_eval_file = gr.File(
+                    label="下载评估报告",
+                    elem_id="mock_eval_file",
+                )
+
+                # Event handlers
+                mock_start_btn.click(
+                    fn=start_mock_interview,
+                    inputs=[
+                        api_key,
+                        model_type,
+                        base_url,
+                        mock_resume_text,
+                        mock_job_description,
+                        mock_company_name,
+                        mock_company_industry,
+                        mock_job_title,
+                        mock_interview_type,
+                        mock_interview_style,
+                    ],
+                    outputs=[mock_chatbot, mock_session_id, mock_status],
+                )
+
+                # Submit answer
+                mock_submit_btn.click(
+                    fn=submit_mock_answer,
+                    inputs=[
+                        mock_user_input,
+                        mock_chatbot,
+                        mock_session_id,
+                        api_key,
+                        model_type,
+                        base_url,
+                        mock_resume_text,
+                        mock_job_description,
+                        mock_company_name,
+                        mock_company_industry,
+                        mock_job_title,
+                        mock_interview_type,
+                        mock_interview_style,
+                    ],
+                    outputs=[mock_chatbot, mock_session_id, mock_status],
+                ).then(
+                    fn=lambda: "",
+                    inputs=[],
+                    outputs=[mock_user_input],
+                )
+
+                # End interview
+                mock_end_btn.click(
+                    fn=end_mock_interview,
+                    inputs=[
+                        mock_session_id,
+                        mock_chatbot,
+                        api_key,
+                        model_type,
+                        base_url,
+                        mock_resume_text,
+                        mock_job_description,
+                        mock_company_name,
+                        mock_company_industry,
+                        mock_job_title,
+                        mock_interview_type,
+                        mock_interview_style,
+                    ],
+                    outputs=[mock_evaluation, mock_eval_file],
+                )
+
             # ========== Tab 2: History ==========
             with gr.TabItem(i18n("tab_history"), id="tab_history"):
                 gr.Markdown(f"### {i18n('header_generated')}", elem_id="header_history")
@@ -910,7 +1446,7 @@ def create_ui():
                         'msg_cleared': '已清空',
                         'msg_load_error': '无法加载简历内容',
                         'msg_style_preview_soon': '*样式预览即将推出...*',
-                        'footer': '*使用 ❤️ 和 Gradio 构建 | Jobs Applier AI Agent*',
+                        'footer': '*人生之路总是坎坷，这也造就了我们不平凡的人生*',
                     },
                     'en': {
                         'tab_generate': 'Generate Resume',
@@ -952,7 +1488,7 @@ def create_ui():
                         'msg_cleared': 'Cleared',
                         'msg_load_error': 'Could not load resume content',
                         'msg_style_preview_soon': '*Style preview coming soon...*',
-                        'footer': '*Built with ❤️ using Gradio | Jobs Applier AI Agent*',
+                        'footer': '*Bumps on the road forge an extraordinary life.*',
                     }
                 };
                 
@@ -964,7 +1500,7 @@ def create_ui():
                     // Update headers
                     document.querySelectorAll('h1').forEach(el => {
                         if (el.textContent.includes('简历') || el.textContent.includes('Resume')) {
-                            el.textContent = lang === 'zh' ? '📄 AI 简历生成器' : '📄 AI Resume Generator';
+                            el.textContent = lang === 'zh' ? '📄 不平' : '📄 Buping';
                         }
                     });
                     
@@ -1060,7 +1596,7 @@ def create_ui():
 def main():
     """Main entry point"""
     print("=" * 50)
-    print("正在启动 AI 简历生成器...")
+    print("正在启动 不平 (Buping)...")
     print("=" * 50)
     
     # 显示可用的样式
