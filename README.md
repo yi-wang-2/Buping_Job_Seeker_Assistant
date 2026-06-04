@@ -154,14 +154,14 @@ pip install -r requirements.txt
 
 ### 4. 配置 API 密钥
 
-编辑 `config.py`，填入你的 LLM API 配置：
+优先通过环境变量（或在项目根目录创建 `.env`）配置 LLM（避免把密钥写入并提交 `config.py`）：
 
-```python
+~~~bash
 # Anthropic 兼容 API
-ANTHROPIC_AUTH_TOKEN = "your-api-key-here"
-ANTHROPIC_BASE_URL = "https://api.example.com/anthropic"
-ANTHROPIC_MODEL = "MiniMax-M3"
-```
+ANTHROPIC_AUTH_TOKEN="your-api-key-here"
+ANTHROPIC_BASE_URL="https://api.example.com/anthropic"
+ANTHROPIC_MODEL="MiniMax-M3"
+~~~
 
 或编辑 `data_folder/secrets.yaml`：
 
