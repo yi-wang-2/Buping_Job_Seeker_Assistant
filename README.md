@@ -231,7 +231,7 @@ python app_ui.py
 查看之前生成的所有简历。
 
 ### Tab 6: 设置
-配置 API Key、模型、max_tokens 等参数。
+展示数据/输出目录信息，并可直接编辑本地简历 YAML（如 `data_folder/plain_text_resume_zh.yaml`）。
 
 ---
 
