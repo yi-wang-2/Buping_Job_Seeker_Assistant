@@ -166,3 +166,6 @@ job_applications/
 # External libraries (not part of this project)
 lib_resume_builder_AIHawk-main/
 reference/
+
+# Local code review reports (kept locally only, not synced to repo)
+docs/review/
