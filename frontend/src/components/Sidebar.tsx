@@ -28,9 +28,11 @@ export default function Sidebar({ t, lang, onLangChange }: SidebarProps) {
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 flex flex-col">
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b border-gray-200 px-6 dark:border-gray-700">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-white font-bold text-lg">
-          不
-        </div>
+        <img
+          src="/logo.png"
+          alt={t.appName}
+          className="h-9 w-9 rounded-xl object-cover"
+        />
         <div>
           <h1 className="text-lg font-bold text-gray-900 dark:text-white">{t.appName}</h1>
           <p className="text-[10px] leading-tight text-gray-500 dark:text-gray-400">AI Career Assistant</p>

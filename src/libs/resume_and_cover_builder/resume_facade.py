@@ -3,12 +3,10 @@ This module contains the FacadeManager class, which is responsible for managing 
 """
 # app/libs/resume_and_cover_builder/manager_facade.py
 import hashlib
-import inquirer
 from pathlib import Path
 
 from loguru import logger
 
-from src.libs.resume_and_cover_builder.llm.llm_job_parser import LLMParser
 from src.job import Job
 from src.utils.chrome_utils import HTML_to_PDF
 from .config import global_config
@@ -72,6 +70,7 @@ class ResumeFacade:
         Returns:
             str: The choice selected by the user.
         """
+        import inquirer  # lazy import: only needed for CLI prompt, not for backend service
         questions = [
             inquirer.List('selection', message=message, choices=choices),
         ]
@@ -85,6 +84,7 @@ class ResumeFacade:
         Returns:
             str: The text entered by the user.
         """
+        import inquirer  # lazy import: only needed for CLI prompt, not for backend service
         questions = [
             inquirer.Text('text', message=message),
         ]
@@ -92,6 +92,9 @@ class ResumeFacade:
 
         
     def link_to_job(self, job_url):
+        # Lazy import: LLMParser pulls in lib_resume_builder_AIHawk which may be unavailable.
+        from src.libs.resume_and_cover_builder.llm.llm_job_parser import LLMParser
+
         self.driver.get(job_url)
         self.driver.implicitly_wait(10)
         body_element = self.driver.find_element("tag name", "body")
