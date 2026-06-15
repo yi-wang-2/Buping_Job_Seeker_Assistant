@@ -19,13 +19,32 @@ export async function generateResume(params: {
   job_description?: string;
   resume_language?: string;
   system_language?: string;
-}): Promise<{ path: string; filename: string; status: string }> {
+}): Promise<{ path: string; filename: string; html_filename?: string; html_path?: string; status: string }> {
   const { data } = await api.post("/resume/generate", params);
   return data;
 }
 
+export async function previewResume(params: {
+  style_name?: string;
+  resume_language?: string;
+}): Promise<{ html: string; style: string; language: string }> {
+  const { data } = await api.post("/resume/preview", params);
+  return data;
+}
+
+export function getPreviewPageUrl(style: string, language: string): string {
+  const params = new URLSearchParams({ style, language });
+  return `/api/resume/preview/render?${params.toString()}`;
+}
+
 export function getDownloadUrl(filename: string): string {
   return `/api/resume/download/${encodeURIComponent(filename)}`;
+}
+
+// Preview a previously-saved resume by HTML filename
+export async function previewSavedResume(htmlFilename: string): Promise<{ html: string }> {
+  const { data } = await api.get(`/resume/preview-saved/${encodeURIComponent(htmlFilename)}`);
+  return data;
 }
 
 // ---- Interview ----

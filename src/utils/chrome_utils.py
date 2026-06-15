@@ -47,26 +47,46 @@ def init_browser() -> webdriver.Chrome:
 
         # 1. Try finding a cached driver manually to avoid webdriver_manager hanging on network issues
         import glob
-        wdm_path = os.path.expanduser("~/.wdm/drivers/chromedriver/win64/**/chromedriver.exe")
-        matches = glob.glob(wdm_path, recursive=True)
+        # Match both: .../chromedriver.exe and .../chromedriver-win32/chromedriver.exe
+        wdm_patterns = [
+            os.path.expanduser("~/.wdm/drivers/chromedriver/win64/**/chromedriver.exe"),
+            os.path.expanduser("~/.wdm/drivers/chromedriver/**/chromedriver.exe"),
+            "C:/Users/*/.wdm/drivers/chromedriver/**/chromedriver.exe",
+        ]
+        matches = []
+        for pat in wdm_patterns:
+            matches.extend(glob.glob(pat, recursive=True))
+        # De-duplicate
+        matches = list(set(matches))
         driver = None
 
         if matches:
             try:
+                # Prefer newest by mtime
                 latest_driver = sorted(matches, key=os.path.getmtime)[-1]
                 logger.info(f"Using locally cached chromedriver: {latest_driver}")
                 driver = webdriver.Chrome(service=ChromeService(latest_driver), options=options)
             except Exception as e_local:
                 logger.warning(f"Failed to use locally cached driver: {e_local}")
-        
+
         # 2. Fallback to webdriver_manager if no cached driver found or it failed
-        if not driver:
+        # Only try this if explicitly enabled (env var) to avoid network hangs
+        if not driver and os.environ.get("ENABLE_WDM_FALLBACK", "0") == "1":
             try:
                 logger.info("Attempting to use webdriver_manager...")
                 driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
             except Exception as e_manager:
                 logger.warning(f"webdriver_manager failed: {e_manager}. Trying without it...")
                 driver = webdriver.Chrome(options=options)
+
+        # 3. Last fallback: try without service (use system PATH)
+        if not driver:
+            try:
+                logger.info("Trying chromedriver from system PATH...")
+                driver = webdriver.Chrome(options=options)
+            except Exception as e_final:
+                logger.error(f"All Chrome init attempts failed: {e_final}")
+                raise
 
         logger.debug("Chrome browser initialized successfully.")
         return driver

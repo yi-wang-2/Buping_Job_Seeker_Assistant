@@ -23,7 +23,24 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
   - Supports 5 professional style templates
   - Detailed quantitative content, ATS-friendly
 
-- **📋 Interview Preparation Module**
+- **�️ Real-Time Resume Preview**
+  - Preview directly from local YAML data (no LLM call, sub-second response)
+  - Auto-refresh on style/language change
+  - Iframe-based, fully styled preview
+
+- **✏️ Rich Text Editor (TipTap)**
+  - WYSIWYG editing of generated resume content
+  - 20+ toolbar buttons: bold/italic/underline, headings, lists, links, code, etc.
+  - 50-step undo/redo history
+  - Auto-save to localStorage every 1.5s (keeps 5 versions)
+  - Export edited version as HTML
+
+- **📂 History Resume Preview**
+  - Dropdown picker for all historical resumes
+  - One-click load any past resume into the preview
+  - Auto-load newly generated resume into preview after completion
+
+- **�📋 Interview Preparation Module**
   - Auto-generate interview prep reports based on resume and JD
   - Includes: Technical questions, Behavioral interview (STAR), Resume deep-dive, Prep checklist
   - Bilingual support (Chinese/English)
@@ -35,6 +52,21 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
   - Auto round control: Opening → Project → Technical → Behavioral → Q&A → Closing
   - Multi-dimensional evaluation report at the end
 
+- **🎨 3-Column Layout**
+  - Left: API config + style picker
+  - Center: Resume preview (prominent, centered)
+  - Right: Job description
+
+- **📊 Generation Progress Bar**
+  - 5-stage visual progress (Parse → LLM → CSS → Chrome → Save)
+  - Real-time feedback during 30-60s generation
+  - Better UX than spinner-only
+
+- **🔧 Collapsible Sidebar**
+  - Hide/show sidebar with one click
+  - State persisted to localStorage
+  - Mobile-friendly
+
 - **⚙️ Configuration & Settings**
   - API Key configuration panel
   - Multi-language support (Chinese/English resumes and system)
@@ -44,10 +76,11 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
 - **📚 History**
   - List of generated resumes
   - One-click PDF download
+  - Preview historical resumes
 
 ### 🚧 Planned Features
 
-- Job matching analysis
+- Job matching analysis (from the web crawler pool)
 - Application tracking
 - Skill gap analysis
 - Learning path recommendations
@@ -58,7 +91,9 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | Gradio Web UI (Port 7860) |
+| Frontend | React 19 + Vite 6 + Tailwind CSS (Port 5173) |
+| Backend | FastAPI + Uvicorn (Port 8000) |
+| Rich Text Editor | TipTap 3.26 + ProseMirror |
 | LLM Engine | Anthropic-compatible API (Recommended `MiniMax-M3`) |
 | PDF Generation | Selenium + Chrome DevTools Protocol |
 | Data Validation | Pydantic v2 |

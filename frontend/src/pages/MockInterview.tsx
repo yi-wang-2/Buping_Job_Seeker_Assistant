@@ -48,7 +48,7 @@ export default function MockInterview({ t }: { t: Strings }) {
         interview_type: interviewType,
         interview_style: interviewStyle,
       });
-      setHistory(result.history);
+      setHistory(result.history as Message[]);
       setSessionId(result.session_id);
       setStatus(result.status);
       setEvaluation("");
@@ -70,7 +70,7 @@ export default function MockInterview({ t }: { t: Strings }) {
         user_message: msg,
         history: history,
       });
-      setHistory(result.history);
+      setHistory(result.history as Message[]);
       setStatus(result.status);
     } catch (err: any) {
       setStatus(`❌ ${err.response?.data?.detail || err.message}`);

@@ -111,14 +111,14 @@ class ResumeFacade:
         logger.info(f"Extracting job details from URL: {job_url}")
 
 
-    def create_resume_pdf_job_tailored(self) -> tuple[bytes, str]:
+    def create_resume_pdf_job_tailored(self) -> tuple[bytes, str, str]:
         """
         Create a resume PDF using the selected style and the given job description text.
         Args:
             job_url (str): The job URL to generate the hash for.
             job_description_text (str): The job description text to include in the resume.
         Returns:
-            tuple: A tuple containing the PDF content as bytes and the unique filename.
+            tuple: A tuple containing the PDF content as bytes, unique filename, and HTML.
         """
         style_path = self.style_manager.get_style_path()
         if style_path is None:
@@ -129,10 +129,21 @@ class ResumeFacade:
 
         # Generate a unique name using the job URL hash
         suggested_name = hashlib.md5(self.job.link.encode()).hexdigest()[:10]
-        
-        result = HTML_to_PDF(html_resume, self.driver)
+
+        # Load CSS to assemble full HTML
+        from string import Template
+        from src.libs.resume_and_cover_builder.config import global_config
+        template = Template(global_config.html_template)
+        with open(style_path, "r", encoding="utf-8") as f:
+            style_css = f.read()
+        lang_code = global_config.RESUME_LANGUAGE if global_config.RESUME_LANGUAGE else "zh"
+        lang_attr = "zh" if lang_code in ["zh", "zh-cn"] else ("en" if lang_code == "en" else "zh")
+        full_html = template.substitute(body=html_resume, style_css=style_css, lang=lang_attr)
+
+        result = HTML_to_PDF(full_html, self.driver)
         self.driver.quit()
-        return result, suggested_name
+        import base64
+        return result, suggested_name, base64.b64encode(full_html.encode("utf-8")).decode("ascii")
     
     
     
@@ -143,16 +154,28 @@ class ResumeFacade:
             job_url (str): The job URL to generate the hash for.
             job_description_text (str): The job description text to include in the resume.
         Returns:
-            tuple: A tuple containing the PDF content as bytes and the unique filename.
+            tuple: A tuple containing the PDF content as bytes, the unique filename, and the HTML.
         """
         style_path = self.style_manager.get_style_path()
         if style_path is None:
             raise ValueError("You must choose a style before generating the PDF.")
-        
+
         html_resume = self.resume_generator.create_resume(style_path)
-        result = HTML_to_PDF(html_resume, self.driver)
+        # Load CSS to assemble full HTML
+        from string import Template
+        from src.libs.resume_and_cover_builder.config import global_config
+        template = Template(global_config.html_template)
+        with open(style_path, "r", encoding="utf-8") as f:
+            style_css = f.read()
+        lang_code = global_config.RESUME_LANGUAGE if global_config.RESUME_LANGUAGE else "zh"
+        lang_attr = "zh" if lang_code in ["zh", "zh-cn"] else ("en" if lang_code == "en" else "zh")
+        full_html = template.substitute(body=html_resume, style_css=style_css, lang=lang_attr)
+
+        result = HTML_to_PDF(full_html, self.driver)
         self.driver.quit()
-        return result
+        # Return HTML as base64 so it can be safely transported
+        import base64
+        return result, base64.b64encode(full_html.encode("utf-8")).decode("ascii")
 
     def create_cover_letter(self) -> tuple[bytes, str]:
         """

@@ -11,6 +11,10 @@ const strings = {
       history: "历史记录",
       settings: "设置",
     },
+    sidebar: {
+      toggle: "收起侧边栏",
+      expand: "展开侧边栏",
+    },
     resume: {
       title: "生成简历",
       config: "配置",
@@ -31,6 +35,13 @@ const strings = {
       styles: "可用样式",
       success: "简历生成成功！",
       error: "生成失败",
+      preview: "预览简历",
+      previewing: "正在生成预览...",
+      previewEmpty: "暂无预览，请先生成预览",
+      previewHint: "预览基于本地 YAML 简历，不会调用 LLM（秒级响应）",
+      previewOpen: "在新窗口打开",
+      previewRefresh: "刷新预览",
+      previewStyleLabel: "预览样式：",
     },
     interviewPrep: {
       title: "面试准备",
@@ -102,6 +113,10 @@ const strings = {
       history: "History",
       settings: "Settings",
     },
+    sidebar: {
+      toggle: "Collapse sidebar",
+      expand: "Expand sidebar",
+    },
     resume: {
       title: "Generate Resume",
       config: "Configuration",
@@ -122,6 +137,13 @@ const strings = {
       styles: "Available Styles",
       success: "Resume generated successfully!",
       error: "Generation failed",
+      preview: "Preview Resume",
+      previewing: "Generating preview...",
+      previewEmpty: "No preview yet. Click 'Preview Resume' to render one.",
+      previewHint: "Preview is rendered from the local YAML resume — no LLM call required.",
+      previewOpen: "Open in new window",
+      previewRefresh: "Refresh preview",
+      previewStyleLabel: "Previewing style:",
     },
     interviewPrep: {
       title: "Interview Preparation",
@@ -185,7 +207,7 @@ const strings = {
   },
 } as const;
 
-export type Strings = typeof strings.zh;
+export type Strings = (typeof strings)["zh" | "en"];
 
 export function getStrings(lang: Lang): Strings {
   return strings[lang] || strings.zh;
