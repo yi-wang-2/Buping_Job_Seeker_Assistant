@@ -380,7 +380,11 @@ def generate_resume(
         is_tailored = job_description and job_description.strip()
         if is_tailored:
             style_path = style_manager.get_style_path()
-            result, suggested_name, html_b64 = resume_facade.create_resume_pdf_job_tailored()
+            # Pass JD text directly — avoids the need to pre-populate self.job
+            # via link_to_job() which would require URL scraping.
+            result, suggested_name, html_b64 = resume_facade.create_resume_pdf_job_tailored(
+                job_description_text=job_description,
+            )
             pdf_data = base64.b64decode(result)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"resume_tailored_{timestamp}_{suggested_name}.pdf"

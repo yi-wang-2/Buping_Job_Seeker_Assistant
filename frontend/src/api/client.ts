@@ -106,6 +106,36 @@ export async function getSettings(): Promise<{
   return data;
 }
 
+export interface UploadResumeResponse {
+  status: string;
+  filename: string;
+  ext: string;
+  yaml_content: string;
+  message: string;
+}
+
+export async function uploadResume(
+  file: File,
+  targetLang: string = "en",
+  options?: {
+    apiKey?: string;
+    modelType?: string;
+    baseUrl?: string;
+  },
+): Promise<UploadResumeResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("target_lang", targetLang);
+  if (options?.apiKey) formData.append("api_key", options.apiKey);
+  if (options?.modelType) formData.append("model_type", options.modelType);
+  if (options?.baseUrl) formData.append("base_url", options.baseUrl);
+  const { data } = await api.post("/settings/upload-resume", formData, {
+    headers: {"Content-Type": "multipart/form-data"},
+    timeout: 180000, // 3 min for LLM extraction
+  });
+  return data;
+}
+
 export async function saveSettings(params: {
   llm_api_key?: string;
   llm_model_type?: string;

@@ -111,24 +111,53 @@ class ResumeFacade:
         logger.info(f"Extracting job details from URL: {job_url}")
 
 
-    def create_resume_pdf_job_tailored(self) -> tuple[bytes, str, str]:
+    def create_resume_pdf_job_tailored(
+        self,
+        job_description_text: str | None = None,
+        job_url: str | None = None,
+    ) -> tuple[bytes, str, str]:
         """
-        Create a resume PDF using the selected style and the given job description text.
-        Args:
-            job_url (str): The job URL to generate the hash for.
-            job_description_text (str): The job description text to include in the resume.
+        Create a resume PDF using the selected style and the given job description.
+
+        Supports two input modes:
+          1. URL mode (legacy): ``job_url`` is provided and ``self.job`` was
+             previously populated via ``link_to_job(job_url)``.
+          2. Text mode: ``job_description_text`` is provided directly (no
+             scraping, no ``self.job`` access required). This is the mode
+             used by the web backend when the user pastes a JD.
+
         Returns:
-            tuple: A tuple containing the PDF content as bytes, unique filename, and HTML.
+            tuple: (pdf_base64, suggested_filename, html_base64).
         """
         style_path = self.style_manager.get_style_path()
         if style_path is None:
             raise ValueError("You must choose a style before generating the PDF.")
 
+        # Resolve the JD text and the hash source for the filename.
+        # Prefer the explicit job_description_text parameter; fall back to
+        # self.job.description (set by link_to_job) for backward compatibility.
+        if job_description_text and job_description_text.strip():
+            jd_text = job_description_text
+        elif getattr(self, "job", None) is not None and getattr(self.job, "description", None):
+            jd_text = self.job.description
+        else:
+            raise ValueError(
+                "No job description provided. Pass job_description_text=... or "
+                "call link_to_job(url) before generate."
+            )
 
-        html_resume = self.resume_generator.create_resume_job_description_text(style_path, self.job.description)
+        # Resolve a hash source for the suggested filename
+        if job_url:
+            hash_source = job_url
+        elif getattr(self, "job", None) is not None and getattr(self.job, "link", None):
+            hash_source = self.job.link
+        else:
+            # Fall back to a hash of the JD text itself (still unique enough)
+            hash_source = jd_text
 
-        # Generate a unique name using the job URL hash
-        suggested_name = hashlib.md5(self.job.link.encode()).hexdigest()[:10]
+        suggested_name = hashlib.md5(hash_source.encode()).hexdigest()[:10]
+
+        html_resume = self.resume_generator.create_resume_job_description_text(style_path, jd_text)
 
         # Load CSS to assemble full HTML
         from string import Template

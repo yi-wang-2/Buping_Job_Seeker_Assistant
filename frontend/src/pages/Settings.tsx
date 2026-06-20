@@ -1,7 +1,13 @@
-import { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Save, FileEdit, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle } from "lucide-react";
 import type { Strings } from "../i18n";
-import { getSettings, saveSettings, getResumeContent, saveResumeContent } from "../api/client";
+import {
+  getSettings,
+  saveSettings,
+  getResumeContent,
+  saveResumeContent,
+  uploadResume,
+} from "../api/client";
 
 export default function SettingsPage({ t }: { t: Strings }) {
   const st = t.settings;
@@ -15,6 +21,12 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const [resumeContent, setResumeContent] = useState("");
   const [resumeStatus, setResumeStatus] = useState("");
   const [loadingResume, setLoadingResume] = useState(false);
+
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "parsing" | "success" | "error">("idle");
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadedFilename, setUploadedFilename] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getSettings().then((cfg) => {
@@ -57,6 +69,9 @@ export default function SettingsPage({ t }: { t: Strings }) {
     try {
       await saveResumeContent({ content: resumeContent, language: resumeLang });
       setResumeStatus(st.resumeSaved);
+      setUploadStatus("idle");
+      setUploadMessage("");
+      setUploadedFilename("");
       setTimeout(() => setResumeStatus(""), 3000);
     } catch (err: any) {
       setResumeStatus(`❌ ${err.message}`);
@@ -66,6 +81,44 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const handleResumeLangChange = (lang: string) => {
     setResumeLang(lang);
     loadResume(lang);
+  };
+
+  const handleFileUpload = useCallback(async (file: File) => {
+    setUploadStatus("parsing");
+    setUploadMessage(st.uploadStatus);
+    setUploadedFilename(file.name);
+    try {
+      const result = await uploadResume(file, resumeLang, {
+        apiKey: apiKey || undefined,
+        modelType,
+        baseUrl,
+      });
+      setResumeContent(result.yaml_content);
+      setUploadStatus("success");
+      setUploadMessage(st.uploadSuccess);
+    } catch (err: any) {
+      setUploadStatus("error");
+      setUploadMessage(err?.response?.data?.detail || st.uploadError);
+    }
+  }, [apiKey, modelType, baseUrl, resumeLang, st.uploadStatus, st.uploadSuccess, st.uploadError]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFileUpload(file);
+  }, [handleFileUpload]);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => setIsDragging(false);
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
   };
 
   return (
@@ -136,6 +189,65 @@ export default function SettingsPage({ t }: { t: Strings }) {
             </span>
           )}
         </div>
+      </div>
+
+      {/* Upload Resume Document */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <h3 className="mb-5 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <Upload className="h-5 w-5 text-brand-500" />
+          {st.uploadResume}
+        </h3>
+        <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">{st.uploadHint}</p>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.docx,.html,.htm,.txt,.md,.yaml,.yml,.json,.tex"
+          onChange={handleFileInputChange}
+          className="hidden"
+        />
+
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          className={`
+            cursor-pointer rounded-lg border-2 border-dashed p-8 text-center transition-colors
+            ${isDragging
+              ? "border-brand-500 bg-brand-50 dark:bg-brand-900/20"
+              : "border-gray-300 bg-gray-50 hover:border-brand-400 hover:bg-brand-50/50 dark:border-gray-600 dark:bg-gray-700/30 dark:hover:border-brand-400"}
+          `}
+        >
+          <FileText className="mx-auto mb-3 h-10 w-10 text-gray-400 dark:text-gray-500" />
+          <p className="mb-1 text-sm font-medium text-gray-700 dark:text-gray-200">
+            {st.uploadButton}
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">{st.uploadDrag}</p>
+        </div>
+
+        {/* Upload status */}
+        {uploadStatus === "parsing" && (
+          <div className="mt-4 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+            <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
+            {uploadMessage}
+          </div>
+        )}
+        {uploadStatus === "success" && (
+          <div className="mt-4 flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-4 w-4" />
+            {uploadMessage}
+            {uploadedFilename && (
+              <span className="ml-1 font-medium">({uploadedFilename})</span>
+            )}
+          </div>
+        )}
+        {uploadStatus === "error" && (
+          <div className="mt-4 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+            <AlertCircle className="h-4 w-4" />
+            {uploadMessage}
+          </div>
+        )}
       </div>
 
       {/* Resume Editor */}

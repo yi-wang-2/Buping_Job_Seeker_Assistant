@@ -23,24 +23,37 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
   - Supports 5 professional style templates
   - Detailed quantitative content, ATS-friendly
 
-- **�️ Real-Time Resume Preview**
+- **馃憖 Real-Time Resume Preview**
   - Preview directly from local YAML data (no LLM call, sub-second response)
   - Auto-refresh on style/language change
   - Iframe-based, fully styled preview
 
-- **✏️ Rich Text Editor (TipTap)**
-  - WYSIWYG editing of generated resume content
-  - 20+ toolbar buttons: bold/italic/underline, headings, lists, links, code, etc.
-  - 50-step undo/redo history
+- **✏️ WYSIWYG Editor (iframe + designMode)**
+  - **What-You-See-Is-What-You-Get**: edit mode renders 100% identical styles to preview (colors/fonts/layout all preserved)
+  - 18 toolbar buttons: undo/redo, 3 heading levels, bold/italic/underline/strikethrough, ordered/unordered lists, quote, divider, link, clear formatting
+  - Powered by native `<iframe>` + `designMode="on"` with zero editor dependencies
   - Auto-save to localStorage every 1.5s (keeps 5 versions)
+  - Standard shortcuts: Ctrl+Z/Y (undo/redo), Ctrl+B/I/U (bold/italic/underline)
   - Export edited version as HTML
 
-- **📂 History Resume Preview**
+- **👀 Previewable + Editable**
+  - Real-time preview: local YAML rendering, instant style/language switch (no LLM call)
+  - History preview: dropdown to load any past resume into the preview
+  - One-click toggle: Preview mode (read-only iframe) ↔ Edit mode (iframe WYSIWYG)
+  - Auto-loads newly generated content into preview after completion
+
+- **📤 Resume Document Upload & Parsing**
+  - Supports PDF, Word (DOCX), HTML, Markdown, YAML, LaTeX formats
+  - Drag-and-drop or click to upload — LLM-powered structured extraction
+  - YAML/JSON parsed directly (zero cost); other formats parsed via LLM
+  - Parsed result auto-fills the YAML editor for review before saving
+
+- **�📂 History Resume Preview**
   - Dropdown picker for all historical resumes
   - One-click load any past resume into the preview
   - Auto-load newly generated resume into preview after completion
 
-- **�📋 Interview Preparation Module**
+- **馃搵📋 Interview Preparation Module**
   - Auto-generate interview prep reports based on resume and JD
   - Includes: Technical questions, Behavioral interview (STAR), Resume deep-dive, Prep checklist
   - Bilingual support (Chinese/English)
@@ -93,7 +106,7 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
 |-----------|------------|
 | Frontend | React 19 + Vite 6 + Tailwind CSS (Port 5173) |
 | Backend | FastAPI + Uvicorn (Port 8000) |
-| Rich Text Editor | TipTap 3.26 + ProseMirror |
+| Rich Text Editor | Native iframe + designMode (zero dependencies) |
 | LLM Engine | Anthropic-compatible API (Recommended `MiniMax-M3`) |
 | PDF Generation | Selenium + Chrome DevTools Protocol |
 | Data Validation | Pydantic v2 |
@@ -227,6 +240,24 @@ Visit http://localhost:7860 to open the Web UI.
 3. Wait ~30 seconds
 4. Preview / Download PDF
 
+### 👀 Real-Time Preview + ✏️ WYSIWYG Editing
+
+After a resume is generated, you can edit it directly with full WYSIWYG fidelity:
+
+1. **Real-time preview**: Switch style/language from the left panel — preview refreshes instantly (no LLM call)
+2. **Auto-preview after generation**: Newly generated resume loads into preview automatically
+3. **History preview**: Top-right dropdown lists all historical resumes; click to load any into preview
+4. **Switch to edit mode**: Click the "Edit Mode" button — preview becomes a WYSIWYG editor
+5. **WYSIWYG editing**: Modify text/formatting/lists/links directly inside the iframe — what you see is what you get
+6. **Auto-save**: Changes saved to localStorage 1.5s after the last edit
+7. **Save / Reset**: Click "Save" to commit, "Reset" to discard all changes
+8. **Shortcuts**: Ctrl+Z/Y (undo/redo), Ctrl+B/I/U (bold/italic/underline)
+
+> **Technical Note**: The editor uses native `<iframe>` + `document.designMode = "on"`,
+> the same approach used by WordPress Gutenberg and early Notion.
+> 100% style fidelity; the previous TipTap dependency has been removed
+> (bundle size reduced by 113KB).
+
 ### Tab 2: Customized Resume
 1. Paste target job description (JD)
 2. Select a style template
@@ -306,6 +337,22 @@ A: Fixed in latest version, ensure `encoding="utf-8"` is used.
 
 **Q: Mock interview not responding?**
 A: Check if API Key is valid, see terminal logs.
+
+**Q: Editor does not show styles (colors/fonts/layout)?**
+A: Since 2026-06-19 the editor uses iframe + designMode; edit-mode styles are
+   100% identical to preview. Make sure `frontend/src/components/editor/EditableResumePreview.tsx`
+   is up to date.
+
+**Q: Chinese characters garbled in editor files?**
+A: Older versions may have been written via PowerShell with GBK encoding.
+   Re-save the file with UTF-8 (no BOM) encoding:
+   ```powershell
+   [System.IO.File]::WriteAllText(
+     "path/to/file.tsx",
+       $content,
+       [System.Text.UTF8Encoding]::new($false)
+   )
+   ```
 
 ---
 
