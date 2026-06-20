@@ -48,7 +48,7 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
   - YAML/JSON parsed directly (zero cost); other formats parsed via LLM
   - Parsed result auto-fills the YAML editor for review before saving
 
-- **�📂 History Resume Preview**
+- **馃搨📂 History Resume Preview**
   - Dropdown picker for all historical resumes
   - One-click load any past resume into the preview
   - Auto-load newly generated resume into preview after completion
@@ -208,19 +208,59 @@ system_language: "zh"
 
 > **Priority**: User input → `config.py` → `secrets.yaml`
 
-### 5. Prepare Resume Content
+### 5. Prepare Resume Content (Two Methods)
 
-Edit `data_folder/plain_text_resume.yaml`:
+Before using this tool, you need to provide your resume data. Two methods are supported:
+
+#### Method A: Edit YAML Manually
+
+Edit `data_folder/plain_text_resume.yaml` directly:
 
 ```yaml
-first_name: "John"
-last_name: "Doe"
-title: "Senior Software Engineer"
-email: "john@example.com"
-phone: "+1 555-0100"
-location: "San Francisco"
-summary: "5 years of Python backend development experience..."
+personal_information:
+  name: "Your"
+  surname: "Name"
+  email: "you@example.com"
+  phone: "+1-555-123-4567"
+  city: "San Francisco"
+  country: "USA"
+education_details:
+  - education_level: "Bachelor's Degree"
+    institution: "Stanford University"
+    field_of_study: "Computer Science"
+    year_of_completion: "2023"
+experience_details:
+  - position: "Senior Engineer"
+    company: "Google"
+    employment_period: "2020 - Present"
+    key_responsibilities:
+      - responsibility: "Led team of 5 engineers"
+projects:
+  - name: "Open Source Project"
+    description: "Description of the project"
 ```
+
+See [`assets/resume_schema.yaml`](assets/resume_schema.yaml) for the full schema.
+
+#### Method B: Upload Document (Recommended)
+
+Open the **Settings** page → **Upload Resume Document** section, then **drag-and-drop or click to upload** any supported format:
+
+| Supported Format | Parsing Method |
+|-----------------|----------------|
+| `.yaml` / `.yml` / `.json` | Direct structured parse (zero LLM cost) |
+| `.pdf` / `.docx` / `.html` / `.md` / `.txt` | Extract text → LLM structured extraction |
+| `.tex` / `.latex` | Smart LaTeX command stripping |
+
+**Workflow**:
+1. Upload a file (max 5 MB)
+2. Auto-parse (2-30s; PDF/Word require LLM call)
+3. Parsed YAML auto-fills the editor below
+4. Review and edit → click "Save Resume Content"
+5. Resume data is written to `data_folder/plain_text_resume*.yaml`
+
+> **Tip**: Configure your API Key in the Settings page first (PDF/DOCX parsing requires LLM);
+> YAML/JSON/TXT files parse without an API Key.
 
 ### 6. Launch the Application
 
