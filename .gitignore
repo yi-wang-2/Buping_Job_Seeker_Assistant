@@ -185,6 +185,7 @@ docs/NOTION_MCP_SETUP.md
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/tsconfig.tsbuildinfo
 
 # uv lock file (optional)
 # .python-version
