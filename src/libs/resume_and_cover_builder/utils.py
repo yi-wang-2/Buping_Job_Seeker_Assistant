@@ -80,8 +80,12 @@ class LoggerChatModel:
         self.llm = llm
 
     def __call__(self, messages: List[Dict[str, str]]) -> str:
-        max_retries = 15
-        retry_delay = 10
+        # 401 (auth) and 400 (bad request) errors should not be retried
+        NON_RETRYABLE_STATUS_CODES = {400, 401, 403, 404}
+
+        max_retries = 3  # Reduced from 15 to avoid hour-long waits
+        retry_delay = 5
+        max_total_wait = 60  # Cap total retry wait time at 60 seconds
 
         for attempt in range(max_retries):
             try:
@@ -89,19 +93,40 @@ class LoggerChatModel:
                 parsed_reply = self.parse_llmresult(reply)
                 LLMLogger.log_request(prompts=messages, parsed_reply=parsed_reply)
                 return reply
-            except (openai.RateLimitError, HTTPStatusError) as err:
-                if isinstance(err, HTTPStatusError) and err.response.status_code == 429:
-                    logger.warning(f"HTTP 429 Too Many Requests: Waiting for {retry_delay} seconds before retrying (Attempt {attempt + 1}/{max_retries})...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    wait_time = self.parse_wait_time_from_error_message(str(err))
-                    logger.warning(f"Rate limit exceeded or API error. Waiting for {wait_time} seconds before retrying (Attempt {attempt + 1}/{max_retries})...")
+            except HTTPStatusError as err:
+                # Check status code — fail fast on auth/config errors
+                status_code = err.response.status_code if hasattr(err, "response") else 0
+                if status_code in NON_RETRYABLE_STATUS_CODES:
+                    logger.error(f"Non-retryable HTTP {status_code}: {str(err)[:200]}")
+                    raise
+                if status_code == 429:
+                    wait_time = min(retry_delay, max_total_wait)
+                    logger.warning(f"HTTP 429: Waiting {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
                     time.sleep(wait_time)
+                    retry_delay = min(retry_delay * 2, 30)
+                else:
+                    wait_time = min(self.parse_wait_time_from_error_message(str(err)), max_total_wait)
+                    logger.warning(f"HTTP error: Waiting {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(wait_time)
+            except openai.RateLimitError as err:
+                wait_time = min(self.parse_wait_time_from_error_message(str(err)), max_total_wait)
+                logger.warning(f"Rate limit: Waiting {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
             except Exception as e:
-                logger.error(f"Unexpected error occurred: {str(e)}, retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                time.sleep(retry_delay)
-                retry_delay *= 2
+                # Check if this is a non-retryable HTTP error (401, 400, etc.)
+                error_str = str(e)
+                is_non_retryable = any(
+                    code in error_str
+                    for code in ["401", "400", "403", "404", "invalid api key", "authentication_error"]
+                )
+                if is_non_retryable:
+                    logger.error(f"Non-retryable error: {error_str[:200]}")
+                    raise  # Fail fast on auth/config errors
+
+                wait_time = min(retry_delay, max_total_wait)
+                logger.error(f"Unexpected error: {error_str[:200]}, retrying in {wait_time}s (Attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                retry_delay = min(retry_delay * 2, 30)  # Cap delay at 30s
 
         logger.critical("Failed to get a response from the model after multiple attempts.")
         raise Exception("Failed to get a response from the model after multiple attempts.")
