@@ -18,6 +18,7 @@ class SettingsResponse(BaseModel):
     llm_api_key: str = ""
     llm_model_type: str = "anthropic"
     llm_base_url: str = "https://api.minimaxi.com/anthropic"
+    llm_protocol: str = "anthropic"  # "anthropic" | "openai_chat" | "openai_response"
     resume_language: str = "zh"
     system_language: str = "zh"
 
@@ -26,6 +27,7 @@ class SaveSettingsRequest(BaseModel):
     llm_api_key: str = ""
     llm_model_type: str = "anthropic"
     llm_base_url: str = ""
+    llm_protocol: str = "anthropic"
     resume_language: str = "zh"
     system_language: str = "zh"
 
@@ -38,6 +40,7 @@ def get_settings() -> SettingsResponse:
         llm_api_key=secrets.get("llm_api_key", ""),
         llm_model_type=secrets.get("llm_model_type", "anthropic"),
         llm_base_url=secrets.get("llm_base_url", "https://api.minimaxi.com/anthropic"),
+        llm_protocol=secrets.get("llm_protocol", "anthropic"),
         resume_language=secrets.get("resume_language", "zh"),
         system_language=secrets.get("system_language", "zh"),
     )
@@ -46,10 +49,15 @@ def get_settings() -> SettingsResponse:
 @router.put("")
 def save_settings(req: SaveSettingsRequest) -> dict:
     """Save settings."""
+    # Validate protocol value
+    valid_protocols = {"anthropic", "openai_chat", "openai_response"}
+    protocol = req.llm_protocol if req.llm_protocol in valid_protocols else "anthropic"
+
     config_service.save_secrets({
         "llm_api_key": req.llm_api_key,
         "llm_model_type": req.llm_model_type,
         "llm_base_url": req.llm_base_url,
+        "llm_protocol": protocol,
         "resume_language": req.resume_language,
         "system_language": req.system_language,
     })

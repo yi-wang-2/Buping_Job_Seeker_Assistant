@@ -48,9 +48,27 @@ class ContentBlockParser(BaseOutputParser):
     def _type(self) -> str:
         return 'content_block_parser'
 
-# choose model client dynamically
+# choose model client dynamically based on LLM_PROTOCOL
+# LLM_PROTOCOL is the wire protocol (independent of provider):
+#   - "anthropic"        → Anthropic Messages API (ChatAnthropic)
+#   - "openai_chat"      → OpenAI Chat Completions API (ChatOpenAI)
+#   - "openai_response"  → OpenAI Responses API (ChatOpenAI with Responses path)
+# LLM_MODEL_TYPE is the provider (anthropic/openai/deepseek/zhipu/...) — kept
+# for backward compatibility and as a label in the UI.
+def _resolve_protocol() -> str:
+    """Resolve LLM protocol with backward compatibility."""
+    proto = getattr(cfg, "LLM_PROTOCOL", None)
+    if proto:
+        return str(proto).lower()
+    # Fallback: derive from LLM_MODEL_TYPE (legacy behavior)
+    if cfg.LLM_MODEL_TYPE == "anthropic":
+        return "anthropic"
+    return "openai_chat"
+
+
 try:
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
+    proto = _resolve_protocol()
+    if proto == "anthropic":
         from langchain_anthropic import ChatAnthropic as ChatModel
     else:
         from langchain_openai import ChatOpenAI as ChatModel
@@ -60,7 +78,11 @@ except Exception:
 
 
 def _create_chat_model(api_key: str):
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
+    proto = _resolve_protocol()
+
+    if proto == "anthropic":
+        # Anthropic Messages API (also used by Anthropic-compatible providers
+        # such as MiniMax when configured to expose /anthropic endpoint)
         model_name = cfg.ANTHROPIC_MODEL or cfg.LLM_MODEL or ""
         base_url = cfg.ANTHROPIC_BASE_URL or ""
         try:
@@ -75,11 +97,32 @@ def _create_chat_model(api_key: str):
             except TypeError:
                 return ChatModel(model=model_name, api_key=api_key, temperature=0.4, max_tokens=4096)
 
-    model_name = cfg.LLM_MODEL or "gpt-4o-mini"
-    base_url = cfg.LLM_API_URL or ""
+    # OpenAI Chat Completions (default for openai_chat) OR Responses API
+    # We currently use ChatOpenAI for both; the protocol is recorded so the
+    # frontend/UI can display it correctly. To call the Responses API
+    # specifically, langchain-openai >= 0.3 supports `output_version`
+    # ("responses_v1") — see OpenAI provider docs.
+    model_name = (
+        cfg.OPENAI_MODEL
+        if proto == "openai_response" and getattr(cfg, "OPENAI_MODEL", None)
+        else (cfg.LLM_MODEL or "gpt-4o-mini")
+    )
+    base_url = getattr(cfg, "OPENAI_BASE_URL", None) or cfg.LLM_API_URL or ""
     if base_url:
-        return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4, max_tokens=4096)
-    return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4, max_tokens=4096)
+        try:
+            return ChatModel(
+                model_name=model_name,
+                openai_api_key=api_key,
+                base_url=base_url,
+                temperature=0.4,
+                max_tokens=4096,
+            )
+        except TypeError:
+            return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4)
+    try:
+        return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4, max_tokens=4096)
+    except TypeError:
+        return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4)
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger

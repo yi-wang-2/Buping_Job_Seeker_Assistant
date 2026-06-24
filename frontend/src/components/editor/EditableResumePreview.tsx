@@ -30,6 +30,14 @@ interface EditableResumePreviewProps {
   showSaveButton?: boolean;
   showResetButton?: boolean;
   showAutoSave?: boolean;
+  /** When true, the Save button shows a spinner and is disabled. */
+  saving?: boolean;
+  /**
+   * Called once when the iframe DOM is ready. The parent can use the
+   * returned ref to perform imperative DOM operations (e.g. injecting
+   * AI-rewritten text directly into the document).
+   */
+  onIframeReady?: (iframe: HTMLIFrameElement | null) => void;
 }
 
 export default function EditableResumePreview({
@@ -38,11 +46,13 @@ export default function EditableResumePreview({
   onChange,
   onSelectionChange,
   onReset,
+  onIframeReady,
   placeholder = "开始编辑你的简历...",
   className = "",
   showSaveButton = true,
   showResetButton = true,
   showAutoSave = true,
+  saving = false,
 }: EditableResumePreviewProps) {
   const [currentHtml, setCurrentHtml] = useState(initialHtml);
   const [isDirty, setIsDirty] = useState(false);
@@ -107,6 +117,7 @@ export default function EditableResumePreview({
         placeholder={placeholder}
         onChange={handleChange}
         onSelectionChange={onSelectionChange}
+        onIframeReady={onIframeReady}
       />
 
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -145,11 +156,11 @@ export default function EditableResumePreview({
             <button
               type="button"
               onClick={handleSave}
-              disabled={!isDirty}
+              disabled={!isDirty || saving}
               className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               title="保存修改"
             >
-              💾 保存
+              {saving ? "⏳ 保存中..." : "💾 保存"}
             </button>
           )}
         </div>
@@ -168,17 +179,28 @@ function EditableWYSIWYGEditor({
   placeholder,
   onChange,
   onSelectionChange,
+  onIframeReady,
 }: {
   initialHtml: string;
   currentHtml: string;
   placeholder: string;
   onChange: (html: string) => void;
   onSelectionChange?: (text: string) => void;
+  onIframeReady?: (iframe: HTMLIFrameElement | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const initialBodyRef = useRef<string>("");
+
+  // Expose the iframe ref to the parent via the onIframeReady callback.
+  // (We can't use forwardRef here because the parent component already
+  // uses forwardRef internally — keeping it simple by calling back.)
+  useEffect(() => {
+    onIframeReady?.(iframeRef.current);
+    return () => onIframeReady?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [iframeRef.current]);
 
   // Build the iframe srcdoc on mount/initial change
   const srcdoc = useMemo(() => {
@@ -191,32 +213,82 @@ function EditableWYSIWYGEditor({
     return initialHtml;
   }, [initialHtml, placeholder]);
 
-  // After iframe loads, enable designMode
+  // After iframe loads, set up block-scoped editing.
+  //
+  // Strategy: instead of `designMode = "on"` (which makes the whole
+  // document editable), we make individual BLOCK elements
+  // contenteditable. This way:
+  //   1. Only the block the user clicked can be selected
+  //   2. AI rewrite naturally operates on the active block only
+  //   3. Other blocks remain read-only (less error-prone)
   const handleIframeLoad = () => {
     const iframe = iframeRef.current;
     if (!iframe) return;
     try {
       const doc = iframe.contentDocument;
       if (!doc) return;
+      // Notify parent again (in case iframe DOM changed after first mount)
+      onIframeReady?.(iframe);
 
-      // Enable rich-text editing
-      doc.designMode = "on";
+      // Make the whole document non-editable by default.
+      doc.designMode = "off";
+      doc.body.setAttribute("contenteditable", "false");
 
       // Save body innerHTML for reset
       initialBodyRef.current = doc.body?.innerHTML || "";
 
-      // Inject base styles (font-awesome etc. are loaded by the document itself)
-      // Add a focus style
+      // Inject base styles + active-block highlight
       const style = doc.createElement("style");
+      style.id = "buping-editor-style";
       style.textContent = `
-        body { cursor: text; }
-        body:focus, body:focus-within { outline: none; }
+        body { cursor: default; }
+        /* Blocks are clickable but not editable until clicked */
+        [data-buping-block] {
+          cursor: pointer;
+          transition: outline-color 0.15s ease;
+          outline: 2px dashed transparent;
+          outline-offset: 2px;
+          border-radius: 2px;
+        }
+        [data-buping-block]:hover {
+          outline-color: rgba(20, 184, 166, 0.35);
+        }
+        [data-buping-block][contenteditable="true"] {
+          cursor: text;
+          outline: 2px solid rgba(20, 184, 166, 0.6);
+          outline-offset: 2px;
+        }
         [contenteditable="true"]:focus { outline: none; }
         ::selection { background: rgba(20, 184, 166, 0.3); }
       `;
       doc.head.appendChild(style);
 
-      // Hook input event to capture HTML changes
+      // Tag block-level elements as editable targets
+      const blockSelectors = "p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, .entry, .compact-list";
+      doc.body.querySelectorAll<HTMLElement>(blockSelectors).forEach((el) => {
+        el.setAttribute("data-buping-block", "true");
+        el.setAttribute("contenteditable", "false");
+      });
+
+      // Helper: activate a single block (make it editable, deactivate others)
+      const activateBlock = (el: HTMLElement) => {
+        doc.body
+          .querySelectorAll<HTMLElement>('[data-buping-block="true"]')
+          .forEach((other) => other.setAttribute("contenteditable", "false"));
+        el.setAttribute("contenteditable", "true");
+        el.focus();
+      };
+
+      // Click handler: activate the clicked block
+      doc.body.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement;
+        const block = target.closest<HTMLElement>('[data-buping-block="true"]');
+        if (block) {
+          activateBlock(block);
+        }
+      });
+
+      // Hook input event to capture HTML changes (bubbles up from any block)
       doc.addEventListener("input", () => {
         const html = doc.body?.innerHTML || "";
         onChange(html);
@@ -230,7 +302,7 @@ function EditableWYSIWYGEditor({
         onSelectionChange(text);
       });
 
-      // Track focus
+      // Track focus on the iframe document
       doc.addEventListener("focus", () => setIsFocused(true), true);
       doc.addEventListener("blur", () => setIsFocused(false), true);
 

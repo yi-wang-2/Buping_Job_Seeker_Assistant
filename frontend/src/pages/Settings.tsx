@@ -9,12 +9,52 @@ import {
   uploadResume,
 } from "../api/client";
 
+// Preset list of supported LLM providers. Choosing one auto-fills the
+// base_url AND protocol fields. Protocol is decoupled from provider so
+// providers like MiniMax that expose multiple APIs can be selected by
+// protocol variant.
+type LlmProtocol = "anthropic" | "openai_chat" | "openai_response";
+
+interface ModelPreset {
+  id: string;
+  label: string;
+  defaultBaseUrl: string;
+  protocol: LlmProtocol;
+}
+
+const MODEL_PRESETS: ReadonlyArray<ModelPreset> = [
+  // --- Native Anthropic protocol ---
+  { id: "anthropic",     label: "Anthropic (Claude 官方)",          defaultBaseUrl: "https://api.anthropic.com",        protocol: "anthropic" },
+  { id: "minimax-anth",  label: "MiniMax (Anthropic 协议)",        defaultBaseUrl: "https://api.minimaxi.com/anthropic", protocol: "anthropic" },
+
+  // --- OpenAI Chat Completions protocol (most common) ---
+  { id: "openai",        label: "OpenAI (Chat Completions)",       defaultBaseUrl: "https://api.openai.com/v1",           protocol: "openai_chat" },
+  { id: "deepseek",      label: "DeepSeek",                        defaultBaseUrl: "https://api.deepseek.com/v1",        protocol: "openai_chat" },
+  { id: "zhipu",         label: "智谱 AI (GLM-4)",                  defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4", protocol: "openai_chat" },
+  { id: "moonshot",      label: "月之暗面 (Kimi)",                  defaultBaseUrl: "https://api.moonshot.cn/v1",         protocol: "openai_chat" },
+  { id: "qwen",          label: "通义千问 (Qwen)",                  defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", protocol: "openai_chat" },
+  { id: "doubao",        label: "豆包 (Doubao)",                    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3", protocol: "openai_chat" },
+  { id: "yi",            label: "零一万物 (Yi)",                    defaultBaseUrl: "https://api.lingyiwanwu.com/v1",    protocol: "openai_chat" },
+  { id: "minimax-chat",  label: "MiniMax (OpenAI Chat 协议)",      defaultBaseUrl: "https://api.minimaxi.com/v1",        protocol: "openai_chat" },
+  { id: "ollama",        label: "Ollama (本地)",                    defaultBaseUrl: "http://localhost:11434/v1",        protocol: "openai_chat" },
+
+  // --- OpenAI Responses API ---
+  { id: "openai-resp",   label: "OpenAI (Responses API)",          defaultBaseUrl: "https://api.openai.com/v1",           protocol: "openai_response" },
+  { id: "minimax-resp",  label: "MiniMax (Responses API)",         defaultBaseUrl: "https://api.minimaxi.com/v1",        protocol: "openai_response" },
+];
+
+// Lookup a preset by id
+const PRESET_BY_ID: Record<string, ModelPreset> = Object.fromEntries(
+  MODEL_PRESETS.map((p) => [p.id, p])
+);
+
 export default function SettingsPage({ t }: { t: Strings }) {
   const st = t.settings;
 
   const [apiKey, setApiKey] = useState("");
   const [modelType, setModelType] = useState("anthropic");
   const [baseUrl, setBaseUrl] = useState("https://api.minimaxi.com/anthropic");
+  const [llmProtocol, setLlmProtocol] = useState<LlmProtocol>("anthropic");
   const [resumeLang, setResumeLang] = useState("zh");
   const [configStatus, setConfigStatus] = useState("");
 
@@ -33,6 +73,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setApiKey(cfg.llm_api_key);
       setModelType(cfg.llm_model_type);
       setBaseUrl(cfg.llm_base_url);
+      setLlmProtocol((cfg.llm_protocol as LlmProtocol) || "anthropic");
       setResumeLang(cfg.resume_language);
       loadResume(cfg.resume_language);
     }).catch(() => {});
@@ -56,6 +97,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
         llm_api_key: apiKey,
         llm_model_type: modelType,
         llm_base_url: baseUrl,
+        llm_protocol: llmProtocol,
         resume_language: resumeLang,
       });
       setConfigStatus(st.saved);
@@ -146,12 +188,44 @@ export default function SettingsPage({ t }: { t: Strings }) {
             <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{st.modelType}</label>
             <select
               value={modelType}
-              onChange={(e) => setModelType(e.target.value)}
+              onChange={(e) => {
+                const newType = e.target.value;
+                setModelType(newType);
+                // Auto-fill base_url AND protocol when picking a preset.
+                const preset = PRESET_BY_ID[newType];
+                if (preset) {
+                  setBaseUrl(preset.defaultBaseUrl);
+                  setLlmProtocol(preset.protocol);
+                }
+              }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             >
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
+              {MODEL_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
             </select>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {st.modelTypeHint}
+            </p>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              {st.modelProtocol}
+            </label>
+            <select
+              value={llmProtocol}
+              onChange={(e) => setLlmProtocol(e.target.value as LlmProtocol)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            >
+              <option value="anthropic">{st.protocolAnthropic}</option>
+              <option value="openai_chat">{st.protocolOpenaiChat}</option>
+              <option value="openai_response">{st.protocolOpenaiResponse}</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {st.modelProtocolHint}
+            </p>
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{st.baseUrl}</label>

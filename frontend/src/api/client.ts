@@ -5,6 +5,37 @@ const api = axios.create({
   timeout: 300000, // 5 min for LLM calls
 });
 
+// Retry on connection failures (e.g. backend not yet up after
+// `start-dev.bat` launches both servers). Chrome driver init + model
+// imports can take 3-6 seconds, so we use exponential backoff up to
+// ~10 seconds total. The component-level "retry" button provides
+// a manual fallback if this still fails.
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error?.config;
+    const isNetworkError =
+      error?.code === "ERR_NETWORK" ||
+      error?.code === "ECONNREFUSED" ||
+      error?.message?.includes("Network Error") ||
+      error?.message?.includes("ECONNREFUSED");
+    // Allow up to 4 retries with exponential backoff: 800ms, 1.6s, 3.2s, 6.4s
+    // (~12 seconds total). Reset the counter for fresh requests.
+    const attempt = (config?.__bupingRetryCount || 0) + 1;
+    const MAX_RETRIES = 4;
+    const BACKOFFS_MS = [800, 1600, 3200, 6400];
+
+    if (isNetworkError && attempt <= MAX_RETRIES && config) {
+      config.__bupingRetryCount = attempt;
+      const wait = BACKOFFS_MS[attempt - 1] || 6400;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      return api.request(config);
+    }
+
+    return Promise.reject(error);
+  },
+);
+
 // ---- Resume ----
 export async function getStyles(): Promise<Record<string, { file: string; author: string }>> {
   const { data } = await api.get("/resume/styles");
@@ -15,6 +46,7 @@ export async function generateResume(params: {
   api_key?: string;
   model_type?: string;
   base_url?: string;
+  llm_protocol?: string;
   style_name?: string;
   job_description?: string;
   resume_language?: string;
@@ -44,6 +76,71 @@ export function getDownloadUrl(filename: string): string {
 // Preview a previously-saved resume by HTML filename
 export async function previewSavedResume(htmlFilename: string): Promise<{ html: string }> {
   const { data } = await api.get(`/resume/preview-saved/${encodeURIComponent(htmlFilename)}`);
+  return data;
+}
+
+// ---- Save edited HTML (from WYSIWYG editor) ----
+export interface SaveEditedResponse {
+  status: string;
+  pdf_filename: string;
+  html_filename: string;
+  pdf_size: number;
+  message: string;
+}
+
+export async function saveEditedResume(
+  html: string,
+  filenameBase: string = "resume_edited",
+): Promise<SaveEditedResponse> {
+  const { data } = await api.post("/resume/save-edited", {
+    html,
+    filename_base: filenameBase,
+  }, {
+    timeout: 120000, // 2 min for Chrome PDF rendering
+  });
+  return data;
+}
+
+// ---- AI Rewrite (Roadmap §1) ----
+export type RewriteMode = "more_quantified" | "more_professional" | "more_concise" | "fix_grammar";
+
+export interface RewriteModeInfo {
+  id: RewriteMode;
+  icon: string;
+  label_zh: string;
+  label_en: string;
+  desc_zh: string;
+  desc_en: string;
+}
+
+export async function getRewriteModes(): Promise<{ modes: RewriteModeInfo[] }> {
+  const { data } = await api.get("/resume/rewrite/modes");
+  return data;
+}
+
+export interface RewriteRequest {
+  text: string;
+  mode: RewriteMode;
+  context?: string;
+  target_language?: "zh" | "en";
+  api_key?: string;
+  model_type?: string;
+  base_url?: string;
+  llm_protocol?: string;
+}
+
+export interface RewriteResponse {
+  status: string;
+  original: string;
+  rewritten: string;
+  mode: RewriteMode;
+  message: string;
+}
+
+export async function rewriteText(params: RewriteRequest): Promise<RewriteResponse> {
+  const { data } = await api.post("/resume/rewrite", params, {
+    timeout: 120000, // 2 min for LLM rewrite
+  });
   return data;
 }
 
@@ -99,6 +196,7 @@ export async function getSettings(): Promise<{
   llm_api_key: string;
   llm_model_type: string;
   llm_base_url: string;
+  llm_protocol: string;
   resume_language: string;
   system_language: string;
 }> {
@@ -140,6 +238,7 @@ export async function saveSettings(params: {
   llm_api_key?: string;
   llm_model_type?: string;
   llm_base_url?: string;
+  llm_protocol?: string;
   resume_language?: string;
   system_language?: string;
 }): Promise<{ status: string; message: string }> {

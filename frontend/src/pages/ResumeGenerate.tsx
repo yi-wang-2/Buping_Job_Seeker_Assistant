@@ -1,9 +1,44 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Edit3, Save, RotateCcw, Check, History as HistoryIcon, Sparkle } from "lucide-react";
 import type { Strings } from "../i18n";
-import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume } from "../api/client";
+import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveEditedResume } from "../api/client";
 import LoadingSpinner from "../components/LoadingSpinner";
+import AIRewriteDialog from "../components/AIRewriteDialog";
 import { EditableResumePreview } from "../components/editor";
+
+// Preset list of supported LLM providers — kept in sync with Settings page.
+// Choosing a preset auto-fills base_url AND protocol fields.
+type LlmProtocol = "anthropic" | "openai_chat" | "openai_response";
+
+interface ModelPreset {
+  id: string;
+  label: string;
+  defaultBaseUrl: string;
+  protocol: LlmProtocol;
+}
+
+const MODEL_PRESETS: ReadonlyArray<ModelPreset> = [
+  // Anthropic Messages protocol
+  { id: "anthropic",     label: "Anthropic (Claude 官方)",          defaultBaseUrl: "https://api.anthropic.com",        protocol: "anthropic" },
+  { id: "minimax-anth",  label: "MiniMax (Anthropic 协议)",        defaultBaseUrl: "https://api.minimaxi.com/anthropic", protocol: "anthropic" },
+  // OpenAI Chat Completions protocol
+  { id: "openai",        label: "OpenAI (Chat Completions)",       defaultBaseUrl: "https://api.openai.com/v1",           protocol: "openai_chat" },
+  { id: "deepseek",      label: "DeepSeek",                        defaultBaseUrl: "https://api.deepseek.com/v1",        protocol: "openai_chat" },
+  { id: "zhipu",         label: "智谱 AI (GLM-4)",                  defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4", protocol: "openai_chat" },
+  { id: "moonshot",      label: "月之暗面 (Kimi)",                  defaultBaseUrl: "https://api.moonshot.cn/v1",         protocol: "openai_chat" },
+  { id: "qwen",          label: "通义千问 (Qwen)",                  defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", protocol: "openai_chat" },
+  { id: "doubao",        label: "豆包 (Doubao)",                    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3", protocol: "openai_chat" },
+  { id: "yi",            label: "零一万物 (Yi)",                    defaultBaseUrl: "https://api.lingyiwanwu.com/v1",    protocol: "openai_chat" },
+  { id: "minimax-chat",  label: "MiniMax (OpenAI Chat 协议)",      defaultBaseUrl: "https://api.minimaxi.com/v1",        protocol: "openai_chat" },
+  { id: "ollama",        label: "Ollama (本地)",                    defaultBaseUrl: "http://localhost:11434/v1",        protocol: "openai_chat" },
+  // OpenAI Responses API
+  { id: "openai-resp",   label: "OpenAI (Responses API)",          defaultBaseUrl: "https://api.openai.com/v1",           protocol: "openai_response" },
+  { id: "minimax-resp",  label: "MiniMax (Responses API)",         defaultBaseUrl: "https://api.minimaxi.com/v1",        protocol: "openai_response" },
+];
+
+const PRESET_BY_ID: Record<string, ModelPreset> = Object.fromEntries(
+  MODEL_PRESETS.map((p) => [p.id, p])
+);
 
 interface HistoryFile {
   name: string;
@@ -12,12 +47,130 @@ interface HistoryFile {
   modified: string;
 }
 
+/**
+ * Walk the document subtree and replace the first occurrence of
+ * `searchText` (across text node boundaries) with `replaceText`.
+ * Returns true if a replacement was made.
+ *
+ * Why this exists: when user selects text in the WYSIWYG iframe, the
+ * selection is plain text, but the document HTML contains tags. A
+ * naive `source.split(searchText).join(replaceText)` only works when
+ * the selected text happens to span no formatting — which is rare.
+ *
+ * Strategy: use a TreeWalker to scan all text nodes in document order,
+ * concatenating them into a flat string with index map, find the
+ * substring, then re-split nodes at the match boundaries and replace.
+ */
+function replaceFirstTextOccurrence(
+  root: HTMLElement,
+  searchText: string,
+  replaceText: string,
+): boolean {
+  if (!searchText || !replaceText) return false;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  // Include ALL text nodes (even whitespace-only) to preserve
+  // structural info. We collapse whitespace in the search index below.
+  const textNodes: Text[] = [];
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    textNodes.push(node as Text);
+  }
+  if (textNodes.length === 0) return false;
+
+  // Build concatenated string + a parallel "collapsed" string with
+  // whitespace collapsed to single spaces. The search runs against
+  // the collapsed version so leading/trailing whitespace differences
+  // between user selection and source text don't break the match.
+  const concatParts: string[] = [];
+  const indexMap: Array<{ node: Text; start: number; end: number }> = [];
+  for (const tn of textNodes) {
+    const start = concatParts.join("").length;
+    concatParts.push(tn.nodeValue || "");
+    indexMap.push({ node: tn, start, end: start + (tn.nodeValue || "").length });
+  }
+  const concat = concatParts.join("");
+
+  // collapsedToOriginal[i] = index in `concat` of the i-th non-whitespace
+  // (or single-space) character in the collapsed version.
+  const collapsedChars: string[] = [];
+  const collapsedToOriginal: number[] = [];
+  let lastWasSpace = false;
+  for (let i = 0; i < concat.length; i++) {
+    const isSpace = /\s/.test(concat[i]);
+    if (isSpace) {
+      if (!lastWasSpace && collapsedChars.length > 0) {
+        collapsedChars.push(" ");
+        collapsedToOriginal.push(i);
+        lastWasSpace = true;
+      }
+    } else {
+      collapsedChars.push(concat[i]);
+      collapsedToOriginal.push(i);
+      lastWasSpace = false;
+    }
+  }
+  const collapsedStr = collapsedChars.join("");
+
+  // Normalize search text (collapse whitespace, trim) the same way
+  const searchNormalized = searchText.replace(/\s+/g, " ").trim();
+  if (!searchNormalized) return false;
+
+  const matchIdx = collapsedStr.indexOf(searchNormalized);
+  if (matchIdx < 0) return false;
+  const matchEnd = matchIdx + searchNormalized.length;
+
+  // Map collapsed indices back to original concat indices
+  const originalStart = collapsedToOriginal[matchIdx];
+  const originalEnd =
+    matchEnd < collapsedToOriginal.length
+      ? collapsedToOriginal[matchEnd]
+      : concat.length;
+
+  // Find the text nodes that contain the original-match start and end
+  const startEntry = indexMap.find((e) => originalStart < e.end);
+  const endEntry = indexMap.find((e) => originalEnd <= e.end);
+  if (!startEntry || !endEntry) return false;
+
+  const startOffsetInStartNode = originalStart - startEntry.start;
+  const endOffsetInEndNode = originalEnd - endEntry.start;
+
+  if (startEntry.node === endEntry.node) {
+    // Simple case: match within a single text node
+    const tn = startEntry.node;
+    const before = tn.nodeValue!.substring(0, startOffsetInStartNode);
+    const after = tn.nodeValue!.substring(endOffsetInEndNode);
+    tn.nodeValue = before + replaceText + after;
+  } else {
+    // Match spans multiple text nodes. Rewrite the first node to contain
+    // the prefix + replacement, the last node to contain the suffix,
+    // and remove the in-between text nodes.
+    const firstNode = startEntry.node;
+    const lastNode = endEntry.node;
+    const before = firstNode.nodeValue!.substring(0, startOffsetInStartNode);
+    const after = lastNode.nodeValue!.substring(endOffsetInEndNode);
+    firstNode.nodeValue = before + replaceText + after;
+    // Remove all nodes between first and last
+    let cur: Node | null = firstNode.nextSibling;
+    while (cur && cur !== lastNode) {
+      const next: Node | null = cur.nextSibling;
+      cur.parentNode?.removeChild(cur);
+      cur = next;
+    }
+    if (lastNode.parentNode) {
+      lastNode.parentNode.removeChild(lastNode);
+    }
+  }
+
+  return true;
+}
+
 export default function ResumeGenerate({ t }: { t: Strings }) {
   const rt = t.resume;
   const [styles, setStyles] = useState<Record<string, { file: string; author: string }>>({});
   const [apiKey, setApiKey] = useState("");
   const [modelType, setModelType] = useState("anthropic");
   const [baseUrl, setBaseUrl] = useState("https://api.minimaxi.com/anthropic");
+  const [llmProtocol, setLlmProtocol] = useState<LlmProtocol>("anthropic");
   const [styleName, setStyleName] = useState("");
   const [jobDesc, setJobDesc] = useState("");
   const [resumeLang, setResumeLang] = useState("zh");
@@ -45,22 +198,98 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [editMode, setEditMode] = useState<boolean>(false);
   const [editedHtml, setEditedHtml] = useState<string>("");
   const [savedOk, setSavedOk] = useState<boolean>(false);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  // AI Rewrite state (Roadmap §1)
+  const [rewriteDialogOpen, setRewriteDialogOpen] = useState<boolean>(false);
+  const [selectedText, setSelectedText] = useState<string>("");
+  const [surroundingContext, setSurroundingContext] = useState<string>("");
+  // Last selection captured from the editor (for the toolbar button)
+  const [lastSelection, setLastSelection] = useState<string>("");
+  // The WYSIWYG iframe's element (set by EditableResumePreview via onIframeReady).
+  // Used by handleApplyRewrite to mutate the document directly.
+  const [editorIframe, setEditorIframe] = useState<HTMLIFrameElement | null>(null);
+
+  // Backend warmup — track whether styles/settings loaded successfully
+  const [stylesError, setStylesError] = useState<string>("");
+
+  // Retry helper used by both mount and the "重试" button.
+  // Uses a ref for styleName to avoid recreating the callback when the
+  // style changes (which would cause an infinite loop with the mount
+  // useEffect).
+  const styleNameRef = useRef(styleName);
+  styleNameRef.current = styleName;
+
+  const loadStylesAndSettings = useCallback(() => {
+    setStylesError("");
+    let stylesLoaded = false;
+    let settingsLoaded = false;
+
+    const finishOne = () => {
+      // Once both calls have settled, show retry button if styles failed.
+      if (stylesLoaded && settingsLoaded) {
+        setStylesError("");
+      } else if (!stylesLoaded && !settingsLoaded) {
+        // Both failed — show error
+        setStylesError(
+          resumeLang === "zh"
+            ? "样式加载失败，点重试"
+            : "Styles failed to load. Click retry.",
+        );
+      }
+      // If only one failed, leave the existing error state intact
+      // (or cleared if previously set). The user's manual retry will
+      // re-run both calls.
+    };
+
+    getStyles()
+      .then((s) => {
+        stylesLoaded = true;
+        setStyles(s);
+        const keys = Object.keys(s);
+        if (keys.length > 0 && !styleNameRef.current) {
+          setStyleName(keys[0]);
+        }
+      })
+      .catch((e) => {
+        console.warn("Failed to load styles:", e?.message || e);
+      })
+      .finally(finishOne);
+
+    // Always overwrite defaults with backend-saved settings — even if
+    // the saved value is an empty string (user explicitly cleared it).
+    getSettings()
+      .then((cfg) => {
+        settingsLoaded = true;
+        setApiKey(cfg.llm_api_key ?? "");
+        setModelType(cfg.llm_model_type || "anthropic");
+        setBaseUrl(cfg.llm_base_url || "https://api.minimaxi.com/anthropic");
+        setLlmProtocol((cfg.llm_protocol as LlmProtocol) || "anthropic");
+        setResumeLang(cfg.resume_language || "zh");
+      })
+      .catch((e) => console.warn("Failed to load saved settings:", e))
+      .finally(finishOne);
+  }, [resumeLang]); // intentionally omit styleName
 
   useEffect(() => {
-    getStyles().then((s) => {
-      setStyles(s);
-      const keys = Object.keys(s);
-      if (keys.length > 0 && !styleName) setStyleName(keys[0]);
-    }).catch(() => {});
-    import("../api/client").then(({ getSettings }) => {
-      getSettings().then((cfg) => {
-        if (cfg.llm_api_key) setApiKey(cfg.llm_api_key);
-        if (cfg.llm_model_type) setModelType(cfg.llm_model_type);
-        if (cfg.llm_base_url) setBaseUrl(cfg.llm_base_url);
-        if (cfg.resume_language) setResumeLang(cfg.resume_language);
-      }).catch(() => {});
-    });
-  }, []);
+    loadStylesAndSettings();
+  }, [loadStylesAndSettings]);
+
+  // Fallback: if the styles list is still empty after 8 seconds (e.g.
+  // axios interceptor's 4-retry sequence ran out while backend was
+  // still warming up), poll once more. This handles the rare case of
+  // very slow backend startup (Chrome driver + model import can take
+  // 5-10s on first launch).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (Object.keys(styles).length === 0) {
+        console.warn("Styles still empty after 8s, polling once more");
+        loadStylesAndSettings();
+      }
+    }, 8000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadStylesAndSettings]);
 
   useEffect(() => {
     if (styleName && resumeLang) {
@@ -123,6 +352,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         api_key: apiKey,
         model_type: modelType,
         base_url: baseUrl,
+        llm_protocol: llmProtocol,
         style_name: styleName,
         job_description: jobDesc || undefined,
         resume_language: resumeLang,
@@ -188,11 +418,44 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
     window.open(getPreviewPageUrl(styleName, resumeLang), "_blank");
   };
 
-  const handleEditSave = (html: string) => {
+  const handleEditSave = async (html: string) => {
     setEditedHtml(html);
     setSavedOk(true);
-    setStatus(resumeLang === "zh" ? "✓ 编辑已保存（暂存于本地）" : "✓ Edits saved (local)");
+    setStatus(
+      resumeLang === "zh"
+        ? "✓ 已保存到历史记录（含 PDF + HTML）"
+        : "✓ Saved to history (PDF + HTML)",
+    );
     window.setTimeout(() => setSavedOk(false), 2500);
+
+    // Render the edited HTML to PDF + save pair on the backend so the
+    // new version appears in the history list. This also reuses the
+    // same HTML as the new `previewHtml` so switching back to preview
+    // mode shows the latest edits (and re-opening the editor reloads
+    // from the latest saved HTML).
+    setSaving(true);
+    try {
+      const result = await saveEditedResume(html, "resume_edited");
+      if (result.status === "success") {
+        setPreviewHtml(html);
+        setPreviewKey((k) => k + 1);
+        setDownloadFile(result.pdf_filename);
+        setDownloadHtmlFile(result.html_filename);
+        setStatus(
+          resumeLang === "zh"
+            ? `✓ 已保存：${result.pdf_filename}（可在历史记录中查看）`
+            : `✓ Saved: ${result.pdf_filename} (visible in history)`,
+        );
+      }
+    } catch (err: any) {
+      setStatus(
+        resumeLang === "zh"
+          ? `⚠️ 后端保存失败：${err?.response?.data?.detail || err?.message || "未知错误"}`
+          : `⚠️ Backend save failed: ${err?.response?.data?.detail || err?.message || "Unknown error"}`,
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleExportEdited = () => {
@@ -212,6 +475,68 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
 
   const handleEditReset = () => {
     setEditedHtml(previewHtml);
+  };
+
+  // AI Rewrite — open dialog with current selection
+  const handleOpenRewrite = (text: string) => {
+    if (!text || !text.trim()) {
+      setStatus(resumeLang === "zh" ? "⚠️ 请先在编辑器中选中需要改写的文本" : "⚠️ Select text first");
+      return;
+    }
+    setSelectedText(text);
+    // Build a context window: a small slice of the surrounding editedHtml
+    // so the LLM can see how the selected text fits in the resume.
+    const fullHtml = editedHtml || previewHtml || "";
+    if (fullHtml && text.length > 0) {
+      const idx = fullHtml.indexOf(text);
+      if (idx >= 0) {
+        const before = fullHtml.slice(Math.max(0, idx - 300), idx);
+        const after = fullHtml.slice(idx + text.length, idx + text.length + 300);
+        setSurroundingContext(`${before}⟨SELECTION⟩${after}`);
+      } else {
+        setSurroundingContext("");
+      }
+    } else {
+      setSurroundingContext("");
+    }
+    setRewriteDialogOpen(true);
+  };
+
+  // AI Rewrite — apply the rewritten text by mutating the iframe body
+  // directly (the parent state mirrors the mutation via the iframe's
+  // input event listener). This preserves rich-text formatting and avoids
+  // the "selected text vs HTML source" mismatch that breaks find-and-replace.
+  const handleApplyRewrite = (rewritten: string) => {
+    if (!selectedText || !rewritten) return;
+    const doc = editorIframe?.contentDocument;
+    if (!doc) {
+      setStatus(
+        resumeLang === "zh"
+          ? "⚠️ 无法定位编辑器，请重试"
+          : "⚠️ Cannot locate editor, please retry",
+      );
+      setRewriteDialogOpen(false);
+      return;
+    }
+    const replaced = replaceFirstTextOccurrence(doc.body, selectedText, rewritten);
+    if (!replaced) {
+      setStatus(
+        resumeLang === "zh"
+          ? "⚠️ 选中文本在文档中未找到（可能被格式化分散）"
+          : "⚠️ Selected text not found (may be split by formatting)",
+      );
+      setRewriteDialogOpen(false);
+      return;
+    }
+    // Trigger input event so the iframe's onChange handler fires and
+    // updates parent state via the existing `onChange` callback.
+    doc.dispatchEvent(new Event("input", { bubbles: true }));
+    setRewriteDialogOpen(false);
+    setStatus(
+      resumeLang === "zh"
+        ? "✓ 已应用 AI 改写（记得保存到本地或下载）"
+        : "✓ Rewrite applied (save or download to persist)",
+    );
   };
 
   // Load history list (PDF + HTML files)
@@ -286,11 +611,35 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{rt.modelType}</label>
                 <select
                   value={modelType}
-                  onChange={(e) => setModelType(e.target.value)}
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    setModelType(newType);
+                    // Auto-fill base_url AND protocol when picking a preset
+                    const preset = PRESET_BY_ID[newType];
+                    if (preset) {
+                      setBaseUrl(preset.defaultBaseUrl);
+                      setLlmProtocol(preset.protocol);
+                    }
+                  }}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                 >
-                  <option value="anthropic">Anthropic</option>
-                  <option value="openai">OpenAI</option>
+                  {MODEL_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{rt.modelProtocol}</label>
+                <select
+                  value={llmProtocol}
+                  onChange={(e) => setLlmProtocol(e.target.value as LlmProtocol)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="anthropic">{rt.protocolAnthropic}</option>
+                  <option value="openai_chat">{rt.protocolOpenaiChat}</option>
+                  <option value="openai_response">{rt.protocolOpenaiResponse}</option>
                 </select>
               </div>
               <div>
@@ -348,7 +697,25 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 </label>
               ))}
               {Object.keys(styles).length === 0 && (
-                <p className="text-sm text-gray-500 dark:text-gray-400">Loading styles...</p>
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    {stylesError
+                      ? stylesError
+                      : resumeLang === "zh"
+                      ? "正在加载样式..."
+                      : "Loading styles..."}
+                  </p>
+                  {stylesError && (
+                    <button
+                      type="button"
+                      onClick={loadStylesAndSettings}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {resumeLang === "zh" ? "重试" : "Retry"}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -497,6 +864,15 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 <>
                   <button
                     type="button"
+                    onClick={() => handleOpenRewrite(lastSelection)}
+                    disabled={!lastSelection || !lastSelection.trim()}
+                    className="inline-flex items-center gap-1 rounded-lg border border-brand-300 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+                    title="AI 智能改写（先在编辑器中选中文字）"
+                  >
+                    <Sparkles className="h-3 w-3" /> AI 改写
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleEditReset}
                     disabled={editedHtml === previewHtml}
                     className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
@@ -521,6 +897,15 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                   <Check className="h-3 w-3" /> 已保存
                 </span>
               )}
+
+              {editMode && lastSelection && lastSelection.trim() && (
+                <span className="inline-flex items-center gap-1 text-xs text-brand-600 dark:text-brand-400">
+                  <Sparkles className="h-3 w-3" />
+                  {resumeLang === "zh"
+                    ? `已选中 ${lastSelection.length} 字 — 点 AI 改写`
+                    : `Selected ${lastSelection.length} chars — click AI Rewrite`}
+                </span>
+              )}
             </div>
 
             {/* Preview / Editor area */}
@@ -533,10 +918,17 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                   </div>
                 ) : previewHtml && editMode ? (
                   <EditableResumePreview
-                    key={previewKey}
+                    // Stable initialHtml — typing only flows through
+                    // onChange (no iframe reload, preserves cursor).
+                    // AI rewrite mutates the iframe body directly via
+                    // editorIframe ref + onIframeReady callback.
+                    key={`editor-${previewKey}`}
                     initialHtml={previewHtml}
                     onSave={handleEditSave}
                     onChange={(html) => setEditedHtml(html)}
+                    onSelectionChange={(text) => setLastSelection(text)}
+                    onIframeReady={setEditorIframe}
+                    saving={saving}
                     placeholder={rt.previewEmpty}
                   />
                 ) : previewHtml ? (
@@ -638,6 +1030,21 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
           </div>
         </div>
       </div>
+
+      {/* AI Rewrite Dialog (Roadmap §1) */}
+      <AIRewriteDialog
+        isOpen={rewriteDialogOpen}
+        selectedText={selectedText}
+        surroundingContext={surroundingContext}
+        targetLanguage={resumeLang === "en" ? "en" : "zh"}
+        apiKey={apiKey}
+        modelType={modelType}
+        baseUrl={baseUrl}
+        llmProtocol={llmProtocol}
+        t={t}
+        onApply={handleApplyRewrite}
+        onClose={() => setRewriteDialogOpen(false)}
+      />
     </div>
   );
 }
