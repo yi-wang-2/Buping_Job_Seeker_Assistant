@@ -113,36 +113,113 @@ def HTML_to_PDF(html_content, driver):
         raise ValueError("Il contenuto HTML deve essere una stringa non vuota.")
 
     # Inject centering-safe CSS to avoid left/right offset issues in PDF.
-    # The original templates use `body { max-width: 700px; margin: 0 auto; }`
-    # which centers body within the viewport. But Chrome's printToPDF
-    # uses a different scaling model, causing the centered body to appear
-    # offset in the PDF. We override body width to fill the printable area.
     #
-    # We append the CSS to the existing <style> blocks (or before </head>).
+    # Problem: many resume templates (cloyola, josylad, etc.) include
+    # rules like `body { max-width: 700px; margin: 0 auto }` which centers
+    # the body within the browser viewport. When Chrome prints to PDF,
+    # it applies the CSS @page dimensions and margins, and the centered
+    # body becomes offset because the viewport vs printable-area
+    # coordinate systems differ.
+    #
+    # Fix: ensure the HTML has a complete <html><head><body> structure
+    # (some saved resumes are bare content without these tags), then
+    # inject a CSS block that overrides body width/margin to fill the
+    # printable area, AND use @page to disable CSS page margins (since
+    # CDP margins are applied on top of CSS @page margins).
     centering_css = """
 <style id="buping-pdf-centering-fix">
-  @page { size: A4; margin: 0; }
-  html, body { width: 100%; max-width: none; margin: 0 !important; padding: 0 !important; box-sizing: border-box; }
-  body { padding: 16px !important; }
+  @page { size: A4; margin: 0 !important; }
+  /* Reset every box to border-box so padding/border don't overflow */
+  *, *::before, *::after { box-sizing: border-box !important; }
+  /* html/body fill the page (background goes edge to edge) */
+  html, body {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  body {
+    /* Small inner padding — the page margin (0.75") provides breathing room */
+    padding: 8px !important;
+    text-align: left !important;
+    direction: ltr !important;
+    float: none !important;
+  }
+  /* Center the actual resume content (direct children of body) with
+     a comfortable reading width. The body itself stays full-width
+     so the background still fills the page, but the visible content
+     stays within ~720px (≈ 75% of A4 width) for better readability. */
+  body > * {
+    margin-left: auto !important;
+    margin-right: auto !important;
+    float: none !important;
+    max-width: 720px !important;
+    width: auto !important;
+  }
 </style>
 """
+
+    # Step 1: Ensure complete <!DOCTYPE><html><head><body> structure
+    stripped = html_content.strip()
+    has_doctype = stripped.lower().startswith("<!doctype")
+    has_html = "<html" in stripped.lower()
+    has_body = "<body" in stripped.lower()
+
+    # Prepend DOCTYPE first if missing (it must be the very first thing)
+    if not has_doctype:
+        html_content = "<!DOCTYPE html>\n" + html_content
+        stripped = html_content.strip()
+
+    if not has_html:
+        # Insert <html> wrapper if missing
+        if "</head>" in html_content:
+            html_content = html_content.replace(
+                "</head>", "</head>\n<html><body>", 1
+            )
+            if "</body>" in html_content:
+                html_content = html_content.replace("</body>", "</body></html>", 1)
+            else:
+                html_content = html_content + "</body></html>"
+        else:
+            # Wrap everything in <html><head></head><body>...
+            if "<body" not in html_content:
+                html_content = (
+                    f"<html><head></head><body>{html_content}</body></html>"
+                )
+            else:
+                # <body> exists but <html> doesn't
+                html_content = html_content.replace("<body", "<html><body", 1)
+                html_content = html_content.replace("</body>", "</body></html>", 1)
+
+    # Step 2: Inject centering CSS
+    # Priority: inject into existing </head>, then before <body>, then prepend.
     if "</head>" in html_content:
         html_content = html_content.replace("</head>", centering_css + "</head>", 1)
-    elif "<head>" in html_content:
-        html_content = html_content.replace("<head>", "<head>" + centering_css, 1)
+    elif "<body" in html_content:
+        html_content = html_content.replace("<body", centering_css + "<body", 1)
     else:
-        # No head tag — inject one before <body>
-        if "<body" in html_content:
-            html_content = html_content.replace("<body", centering_css + "<body", 1)
-        else:
-            html_content = centering_css + html_content
+        html_content = centering_css + html_content
 
-    # Codifica l'HTML in un URL di tipo data
-    encoded_html = urllib.parse.quote(html_content)
-    data_url = f"data:text/html;charset=utf-8,{encoded_html}"
-
+    # Load the HTML via a file:// URL to avoid the ~2MB data: URL
+    # limit on Windows. We write to a temp file, navigate to it,
+    # and clean up afterwards.
+    import os as _os
+    import tempfile as _tempfile
+    tmp_dir = _tempfile.mkdtemp(prefix="buping_pdf_")
+    tmp_html_path = _os.path.join(tmp_dir, "input.html")
     try:
-        driver.get(data_url)
+        with open(tmp_html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+
+        # Navigate Chrome to the temp file (file:// protocol supports
+        # arbitrarily large content without OS URL-length limits)
+        file_url = "file://" + tmp_html_path.replace("\\", "/")
+        try:
+            driver.get(file_url)
+        except Exception as e:
+            logger.error(f"Failed to load file:// URL ({len(html_content)} chars HTML): {e}")
+            raise RuntimeError(f"Failed to load HTML in Chrome: {e}")
+
         # Attendi che la pagina si carichi completamente
         time.sleep(2)  # Potrebbe essere necessario aumentare questo tempo per HTML complessi
 
@@ -158,6 +235,7 @@ def HTML_to_PDF(html_content, driver):
             "marginRight": 0.5,                # Margine destro in pollici
             "displayHeaderFooter": False,      # Non visualizzare intestazioni e piè di pagina
             "preferCSSPageSize": True,         # Preferire le dimensioni della pagina CSS
+            "scale": 1.0,                       # Disabilita auto-scaling che può causare asimmetria
             "generateDocumentOutline": False,  # Non generare un sommario del documento
             "generateTaggedPDF": False,        # Non generare PDF taggato
             "transferMode": "ReturnAsBase64"   # Restituire il PDF come stringa base64
@@ -166,3 +244,10 @@ def HTML_to_PDF(html_content, driver):
     except Exception as e:
         logger.error(f"Si è verificata un'eccezione WebDriver: {e}")
         raise RuntimeError(f"Si è verificata un'eccezione WebDriver: {e}")
+    finally:
+        # Clean up the temp directory
+        try:
+            import shutil as _shutil
+            _shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass

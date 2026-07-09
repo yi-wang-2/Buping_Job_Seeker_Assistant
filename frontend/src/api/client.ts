@@ -210,6 +210,17 @@ export interface UploadResumeResponse {
   ext: string;
   yaml_content: string;
   message: string;
+  parse_diagnostics?: {
+    llm_attempted?: boolean;
+    llm_call_success?: boolean;
+    llm_yaml_parse_success?: boolean;
+    used_fallback?: boolean;
+    fallback_reason?: string;
+    extracted_text_chars?: number;
+    llm_raw_chars?: number;
+    llm_yaml_candidate_chars?: number;
+    llm_yaml_error?: string;
+  };
 }
 
 export async function uploadResume(
@@ -219,6 +230,7 @@ export async function uploadResume(
     apiKey?: string;
     modelType?: string;
     baseUrl?: string;
+    llmProtocol?: string;
   },
 ): Promise<UploadResumeResponse> {
   const formData = new FormData();
@@ -227,6 +239,7 @@ export async function uploadResume(
   if (options?.apiKey) formData.append("api_key", options.apiKey);
   if (options?.modelType) formData.append("model_type", options.modelType);
   if (options?.baseUrl) formData.append("base_url", options.baseUrl);
+  if (options?.llmProtocol) formData.append("llm_protocol", options.llmProtocol);
   const { data } = await api.post("/settings/upload-resume", formData, {
     headers: {"Content-Type": "multipart/form-data"},
     timeout: 180000, // 3 min for LLM extraction

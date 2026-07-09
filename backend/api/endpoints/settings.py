@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from backend.services import config_service
 from src.libs.resume_and_cover_builder.document_parser import parse_document
+from src.logging import logger
 
 router = APIRouter()
 
@@ -96,6 +97,7 @@ async def upload_resume(
     api_key: str = "",
     model_type: str = "anthropic",
     base_url: str = "https://api.minimaxi.com/anthropic",
+    llm_protocol: str = "",
 ) -> dict:
     """Upload a resume document and extract structured YAML data.
 
@@ -139,6 +141,8 @@ async def upload_resume(
             api_key = secrets.get("llm_api_key", "")
             if not model_type or model_type == "anthropic":
                 model_type = secrets.get("llm_model_type", model_type)
+            if not llm_protocol:
+                llm_protocol = secrets.get("llm_protocol", "")
             if base_url == "https://api.minimaxi.com/anthropic":
                 base_url = secrets.get("llm_base_url", base_url)
         except Exception:
@@ -156,10 +160,22 @@ async def upload_resume(
             import config as cfg
             cfg.ANTHROPIC_BASE_URL = base_url
             cfg.LLM_API_URL = base_url
+            if llm_protocol:
+                cfg.LLM_PROTOCOL = llm_protocol
         except Exception:
             pass
 
     try:
+        logger.info(
+            "Upload resume parse request: filename={} ext={} target_lang={} model_type={} llm_protocol={} base_url={}",
+            filename.name,
+            ext,
+            target_lang,
+            model_type,
+            llm_protocol,
+            base_url,
+        )
+        parse_diagnostics = {}
         data = parse_document(
             filename.name,
             content,
@@ -167,7 +183,17 @@ async def upload_resume(
             model_type=model_type,
             base_url=base_url,
             target_lang=target_lang,
+            diagnostics=parse_diagnostics,
         )
+        logger.info(
+            "Upload resume parse result: filename={} personal_fields={} education_count={} experience_count={} project_count={}",
+            filename.name,
+            sum(1 for v in (data.get("personal_information") or {}).values() if str(v).strip()),
+            len(data.get("education_details") or []),
+            len(data.get("experience_details") or []),
+            len(data.get("projects") or []),
+        )
+        logger.info("Upload resume parse diagnostics: {}", parse_diagnostics)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
 
@@ -181,5 +207,6 @@ async def upload_resume(
         "filename": filename.name,
         "ext": ext,
         "yaml_content": yaml_str,
+        "parse_diagnostics": parse_diagnostics,
         "message": "文档解析成功，请在下方编辑器中检查并修改内容，然后保存。",
     }

@@ -481,12 +481,29 @@ def rewrite_text(
         )
 
     # ---- Apply config so downstream code uses the right key/URL/protocol ----
+    # Strip any path/query from base_url — langchain ChatOpenAI appends
+    # "/chat/completions" (or "/responses") automatically, so a full URL
+    # like "https://api.minimaxi.com/anthropic/v1/messages" would
+    # produce a 404 (".../v1/messages/chat/completions").
+    from urllib.parse import urlparse, urlunparse
+
+    def _strip_path(u: str) -> str:
+        if not u:
+            return u
+        try:
+            p = urlparse(u)
+            return urlunparse((p.scheme, p.netloc, "", "", "", ""))
+        except Exception:
+            return u
+
+    normalized_base_url = _strip_path(base_url) if base_url else ""
+
     rcb_config.API_KEY = api_key
-    if base_url:
-        rcb_config.LLM_API_URL = base_url
+    if normalized_base_url:
+        rcb_config.LLM_API_URL = normalized_base_url
         try:
             rcb_config.ANTHROPIC_AUTH_TOKEN = api_key
-            rcb_config.ANTHROPIC_BASE_URL = base_url
+            rcb_config.ANTHROPIC_BASE_URL = normalized_base_url
         except AttributeError:
             pass
     if model_type:

@@ -66,21 +66,54 @@ def _resolve_protocol() -> str:
     return "openai_chat"
 
 
-try:
-    proto = _resolve_protocol()
-    if proto == "anthropic":
-        from langchain_anthropic import ChatAnthropic as ChatModel
-    else:
-        from langchain_openai import ChatOpenAI as ChatModel
-except Exception:
-    # fallback to OpenAI Chat if imports fail
-    from langchain_openai import ChatOpenAI as ChatModel
+def _strip_base_url_path(base_url: str, proto: str = "openai_chat") -> str:
+    """Normalize base URLs without dropping required provider path prefixes.
+
+    langchain ChatOpenAI appends "/chat/completions" (or "/responses" for
+    the Responses API) to whatever base_url you give it. If a user pastes
+    a full URL like "https://api.minimaxi.com/anthropic/v1/messages",
+    the request would hit
+    ".../anthropic/v1/messages/chat/completions" and get 404.
+
+    This helper keeps only the scheme + host, discarding any path or
+    query string. For example:
+        "https://api.minimaxi.com"                   → "https://api.minimaxi.com"
+        "https://api.minimaxi.com/"                  → "https://api.minimaxi.com"
+        "https://api.minimaxi.com/v1"                → "https://api.minimaxi.com"
+        "https://api.minimaxi.com/anthropic/v1/messages" → "https://api.minimaxi.com"
+    """
+    if not base_url:
+        return base_url
+    from urllib.parse import urlparse, urlunparse
+
+    try:
+        parsed = urlparse(base_url)
+        path = (parsed.path or "").rstrip("/")
+
+        if proto == "anthropic":
+            if path.endswith("/v1/messages"):
+                path = path[: -len("/v1/messages")]
+            elif path.endswith("/messages"):
+                path = path[: -len("/messages")]
+        else:
+            for suffix in ("/chat/completions", "/completions", "/responses"):
+                if path.endswith(suffix):
+                    path = path[: -len(suffix)]
+                    break
+
+        return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+    except Exception:
+        return base_url.rstrip("/")
 
 
 def _create_chat_model(api_key: str):
     proto = _resolve_protocol()
 
     if proto == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic as ChatModel
+        except Exception:
+            from langchain_openai import ChatOpenAI as ChatModel
         # Anthropic Messages API (also used by Anthropic-compatible providers
         # such as MiniMax when configured to expose /anthropic endpoint)
         model_name = cfg.ANTHROPIC_MODEL or cfg.LLM_MODEL or ""
@@ -102,22 +135,41 @@ def _create_chat_model(api_key: str):
     # frontend/UI can display it correctly. To call the Responses API
     # specifically, langchain-openai >= 0.3 supports `output_version`
     # ("responses_v1") — see OpenAI provider docs.
+    from langchain_openai import ChatOpenAI as ChatModel
     model_name = (
         cfg.OPENAI_MODEL
         if proto == "openai_response" and getattr(cfg, "OPENAI_MODEL", None)
         else (cfg.LLM_MODEL or "gpt-4o-mini")
     )
-    base_url = getattr(cfg, "OPENAI_BASE_URL", None) or cfg.LLM_API_URL or ""
+    raw_base_url = getattr(cfg, "OPENAI_BASE_URL", None) or cfg.LLM_API_URL or ""
+
+    # IMPORTANT: langchain ChatOpenAI appends "/chat/completions" (or
+    # "/responses" for output_version=responses_v1) to whatever base_url
+    # you give it. So if a user pastes a full URL like
+    # "https://api.minimaxi.com/anthropic/v1/messages" we MUST strip the
+    # path — otherwise the request hits
+    # ".../anthropic/v1/messages/chat/completions" and gets 404.
+    base_url = _strip_base_url_path(raw_base_url, proto=proto)
+
+    # Detect Responses API support
+    use_responses = proto == "openai_response"
+
     if base_url:
         try:
-            return ChatModel(
-                model_name=model_name,
-                openai_api_key=api_key,
-                base_url=base_url,
-                temperature=0.4,
-                max_tokens=4096,
-            )
+            kwargs = {
+                "model_name": model_name,
+                "openai_api_key": api_key,
+                "base_url": base_url,
+                "temperature": 0.4,
+                "max_tokens": 4096,
+            }
+            if use_responses:
+                # langchain-openai >= 0.3: opt into Responses API
+                kwargs["output_version"] = "responses_v1"
+            return ChatModel(**kwargs)
         except TypeError:
+            # Older langchain-openai: try without output_version
+            kwargs.pop("output_version", None)
             return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4)
     try:
         return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4, max_tokens=4096)

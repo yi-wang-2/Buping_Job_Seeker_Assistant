@@ -48,6 +48,37 @@ const PRESET_BY_ID: Record<string, ModelPreset> = Object.fromEntries(
   MODEL_PRESETS.map((p) => [p.id, p])
 );
 
+type UploadParseDiagnostics = {
+  llm_attempted?: boolean;
+  llm_call_success?: boolean;
+  llm_yaml_parse_success?: boolean;
+  used_fallback?: boolean;
+  fallback_reason?: string;
+  extracted_text_chars?: number;
+  llm_raw_chars?: number;
+  llm_yaml_candidate_chars?: number;
+  llm_yaml_error?: string;
+};
+
+function formatUploadDiagnostics(d?: UploadParseDiagnostics): string[] {
+  if (!d) return [];
+  const llmStatus = !d.llm_attempted
+    ? "LLM: 未调用"
+    : d.llm_call_success
+      ? "LLM: 调用成功"
+      : "LLM: 调用失败";
+  const yamlStatus = d.llm_attempted
+    ? d.llm_yaml_parse_success
+      ? "YAML解析: 成功"
+      : "YAML解析: 失败"
+    : "YAML解析: 未执行";
+  const fallbackStatus = d.used_fallback
+    ? `结果来源: fallback规则${d.fallback_reason ? ` (${d.fallback_reason})` : ""}`
+    : "结果来源: LLM结构化结果";
+  const sizes = `文本: ${d.extracted_text_chars ?? 0} chars, LLM输出: ${d.llm_raw_chars ?? 0} chars`;
+  return [llmStatus, yamlStatus, fallbackStatus, sizes];
+}
+
 export default function SettingsPage({ t }: { t: Strings }) {
   const st = t.settings;
 
@@ -64,6 +95,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
 
   const [uploadStatus, setUploadStatus] = useState<"idle" | "parsing" | "success" | "error">("idle");
   const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadDiagnostics, setUploadDiagnostics] = useState<string[]>([]);
   const [uploadedFilename, setUploadedFilename] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -113,6 +145,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setResumeStatus(st.resumeSaved);
       setUploadStatus("idle");
       setUploadMessage("");
+      setUploadDiagnostics([]);
       setUploadedFilename("");
       setTimeout(() => setResumeStatus(""), 3000);
     } catch (err: any) {
@@ -128,21 +161,25 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const handleFileUpload = useCallback(async (file: File) => {
     setUploadStatus("parsing");
     setUploadMessage(st.uploadStatus);
+    setUploadDiagnostics([]);
     setUploadedFilename(file.name);
     try {
       const result = await uploadResume(file, resumeLang, {
         apiKey: apiKey || undefined,
         modelType,
         baseUrl,
+        llmProtocol,
       });
       setResumeContent(result.yaml_content);
       setUploadStatus("success");
       setUploadMessage(st.uploadSuccess);
+      setUploadDiagnostics(formatUploadDiagnostics(result.parse_diagnostics));
     } catch (err: any) {
       setUploadStatus("error");
       setUploadMessage(err?.response?.data?.detail || st.uploadError);
+      setUploadDiagnostics([]);
     }
-  }, [apiKey, modelType, baseUrl, resumeLang, st.uploadStatus, st.uploadSuccess, st.uploadError]);
+  }, [apiKey, modelType, baseUrl, llmProtocol, resumeLang, st.uploadStatus, st.uploadSuccess, st.uploadError]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -308,11 +345,20 @@ export default function SettingsPage({ t }: { t: Strings }) {
           </div>
         )}
         {uploadStatus === "success" && (
-          <div className="mt-4 flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-            <CheckCircle2 className="h-4 w-4" />
-            {uploadMessage}
-            {uploadedFilename && (
-              <span className="ml-1 font-medium">({uploadedFilename})</span>
+          <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4" />
+              <span>{uploadMessage}</span>
+              {uploadedFilename && (
+                <span className="font-medium">({uploadedFilename})</span>
+              )}
+            </div>
+            {uploadDiagnostics.length > 0 && (
+              <div className="mt-2 grid gap-1 pl-6 text-xs text-green-700/90 dark:text-green-300/90">
+                {uploadDiagnostics.map((item) => (
+                  <div key={item}>{item}</div>
+                ))}
+              </div>
             )}
           </div>
         )}

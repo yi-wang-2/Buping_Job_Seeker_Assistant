@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union
+import re
 import yaml
-from pydantic import BaseModel, EmailStr, HttpUrl, Field
+from pydantic import BaseModel, EmailStr, HttpUrl, Field, field_validator
 
 
 
@@ -29,6 +30,20 @@ class EducationDetails(BaseModel):
     start_date: Optional[str]
     year_of_completion: Optional[int]
     exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
+
+    @field_validator("year_of_completion", mode="before")
+    @classmethod
+    def normalize_year_of_completion(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+            match = re.search(r"\d{4}", value)
+            if match:
+                return int(match.group(0))
+        return value
 
 
 class ExperienceDetails(BaseModel):
