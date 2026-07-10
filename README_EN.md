@@ -23,7 +23,7 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
   - Supports 5 professional style templates
   - Detailed quantitative content, ATS-friendly
 
-- **馃憖 Real-Time Resume Preview**
+- **📋 Real-Time Resume Preview**
   - Preview directly from local YAML data (no LLM call, sub-second response)
   - Auto-refresh on style/language change
   - Iframe-based, fully styled preview
@@ -48,12 +48,12 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
   - YAML/JSON parsed directly (zero cost); other formats parsed via LLM
   - Parsed result auto-fills the YAML editor for review before saving
 
-- **馃搨📂 History Resume Preview**
+- **📂 History Resume Preview**
   - Dropdown picker for all historical resumes
   - One-click load any past resume into the preview
   - Auto-load newly generated resume into preview after completion
 
-- **馃搵📋 Interview Preparation Module**
+- **📋 Interview Preparation Module**
   - Auto-generate interview prep reports based on resume and JD
   - Includes: Technical questions, Behavioral interview (STAR), Resume deep-dive, Prep checklist
   - Bilingual support (Chinese/English)

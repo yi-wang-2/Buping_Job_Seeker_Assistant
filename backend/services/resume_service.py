@@ -463,6 +463,7 @@ def rewrite_text(
     )
     from langchain_core.messages import HumanMessage
     import src.libs.resume_and_cover_builder.config as rcb_config
+    import config as root_config
 
     # ---- 3-level API key fallback ----
     if not api_key or api_key.startswith("sk-your-"):
@@ -499,8 +500,11 @@ def rewrite_text(
     normalized_base_url = _strip_path(base_url) if base_url else ""
 
     rcb_config.API_KEY = api_key
+    root_config.ANTHROPIC_AUTH_TOKEN = api_key
     if normalized_base_url:
         rcb_config.LLM_API_URL = normalized_base_url
+        root_config.LLM_API_URL = normalized_base_url
+        root_config.ANTHROPIC_BASE_URL = normalized_base_url
         try:
             rcb_config.ANTHROPIC_AUTH_TOKEN = api_key
             rcb_config.ANTHROPIC_BASE_URL = normalized_base_url
@@ -508,11 +512,13 @@ def rewrite_text(
             pass
     if model_type:
         rcb_config.LLM_MODEL_TYPE = model_type
+        root_config.LLM_MODEL_TYPE = model_type
     if llm_protocol:
         try:
             rcb_config.LLM_PROTOCOL = llm_protocol
         except AttributeError:
             pass
+        root_config.LLM_PROTOCOL = llm_protocol
 
     # ---- Build prompt ----
     lang = "en" if target_language == "en" else "zh"
@@ -580,6 +586,7 @@ def generate_resume(
     from src.resume_schemas.resume import Resume
     from src.utils.chrome_utils import init_browser
     import src.libs.resume_and_cover_builder.config as rcb_config
+    import config as root_config
 
     # Save config first (so subsequent runs have it)
     if api_key:
@@ -621,7 +628,6 @@ def generate_resume(
         secrets = load_secrets()
         llm_protocol = secrets.get("llm_protocol", "")
     if not llm_protocol:
-        import config as root_config
         llm_protocol = getattr(root_config, "LLM_PROTOCOL", "anthropic")
     if llm_protocol not in ("anthropic", "openai_chat", "openai_response"):
         llm_protocol = "anthropic"  # safe default
@@ -629,8 +635,11 @@ def generate_resume(
     # Update the global config so downstream code uses the right key
     if api_key:
         rcb_config.API_KEY = api_key
+        root_config.ANTHROPIC_AUTH_TOKEN = api_key
     if base_url:
         rcb_config.LLM_API_URL = base_url
+        root_config.LLM_API_URL = base_url
+        root_config.ANTHROPIC_BASE_URL = base_url
         # Also set anthropic-specific config
         try:
             rcb_config.ANTHROPIC_AUTH_TOKEN = api_key
@@ -639,11 +648,13 @@ def generate_resume(
             pass
     if model_type:
         rcb_config.LLM_MODEL_TYPE = model_type
+        root_config.LLM_MODEL_TYPE = model_type
     # Apply the resolved protocol so _resolve_protocol() returns it
     try:
         rcb_config.LLM_PROTOCOL = llm_protocol
     except AttributeError:
         pass
+    root_config.LLM_PROTOCOL = llm_protocol
 
     if not api_key or api_key.startswith("sk-your-"):
         raise ValueError(

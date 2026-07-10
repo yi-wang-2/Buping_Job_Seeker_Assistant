@@ -156,6 +156,34 @@ def HTML_to_PDF(html_content, driver):
     max-width: 720px !important;
     width: auto !important;
   }
+  /* Keep second-level resume blocks visually intact when Chrome paginates.
+     Large first-level sections (for example, Projects) may span pages; their
+     child blocks move as units so we avoid large blank areas. */
+  header,
+  .entry,
+  .resume-card,
+  .skills-container,
+  #technical-stack,
+  #languages-other,
+  .compact-list,
+  .stack-list,
+  .inline-list {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    -webkit-column-break-inside: avoid !important;
+  }
+  h1,
+  h2,
+  h3,
+  .entry-header,
+  .entry-details {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+  li {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
 </style>
 """
 

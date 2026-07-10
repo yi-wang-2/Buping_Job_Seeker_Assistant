@@ -193,7 +193,7 @@ logger.add(log_path / "gpt_resume.log", rotation="1 day", compression="zip", ret
 class LLMResumer:
     def __init__(self, openai_api_key, strings):
         # instantiate appropriate chat model
-        api_key = cfg.ANTHROPIC_AUTH_TOKEN or openai_api_key
+        api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
         llm_client = _create_chat_model(api_key)
         self.llm_cheap = LoggerChatModel(llm_client)
         self.strings = strings
@@ -544,24 +544,21 @@ class LLMResumer:
 [/CERTIFICATIONS]
 
 [ADDITIONAL_SKILLS]
-<section id="skills-languages">
-    <h2>其他技能</h2>
-    <div class="two-column">
-      <div class="skills-column">
-          <h3>技术技能</h3>
-          <ul class="compact-list">
-              <li><strong>编程语言：</strong>[具体掌握的语言及熟练程度]</li>
-              <li><strong>框架/工具：</strong>[实际使用的框架和工具]</li>
-              <li><strong>其他：</strong>[其他相关技能]</li>
-          </ul>
-      </div>
-      <div class="languages-column">
-          <h3>语言能力</h3>
-          <ul class="compact-list">
-              <li><strong>[语言名称]：</strong>[读写听说是哪一级，如"CET-6"或"流利"</li>
-          </ul>
-      </div>
-    </div>
+<section id="technical-stack">
+    <h2>技术栈</h2>
+    <ul class="compact-list stack-list">
+        <li><strong>编程语言：</strong>[具体掌握的语言及熟练程度]</li>
+        <li><strong>图像处理/算法：</strong>[与岗位相关的算法、图像处理或ISP能力]</li>
+        <li><strong>嵌入式/硬件：</strong>[嵌入式开发、传感器、硬件调试等能力]</li>
+        <li><strong>平台与工具：</strong>[实际使用的平台、工具链和调试工具]</li>
+    </ul>
+</section>
+<section id="languages-other">
+    <h2>语言与其他</h2>
+    <ul class="compact-list inline-list">
+        <li><strong>语言能力：</strong>[中文、英文及证书/应用能力]</li>
+        <li><strong>兴趣爱好：</strong>[简要列出兴趣爱好，可省略与岗位无关或过长内容]</li>
+    </ul>
 </section>
 [/ADDITIONAL_SKILLS]
 

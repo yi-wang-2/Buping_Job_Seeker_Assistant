@@ -191,7 +191,82 @@ function EditableWYSIWYGEditor({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [lineHeight, setLineHeight] = useState(1.32);
+  const [moduleSpacing, setModuleSpacing] = useState(8);
   const initialBodyRef = useRef<string>("");
+
+  const serializeDocument = (doc: Document) => {
+    const doctype = doc.doctype
+      ? `<!DOCTYPE ${doc.doctype.name}>`
+      : "<!DOCTYPE html>";
+    return `${doctype}\n${doc.documentElement.outerHTML}`;
+  };
+
+  const emitDocumentChange = (doc: Document) => {
+    onChange(serializeDocument(doc));
+  };
+
+  const applyLayoutControls = (
+    doc: Document,
+    nextLineHeight = lineHeight,
+    nextModuleSpacing = moduleSpacing,
+  ) => {
+    const spacing = nextModuleSpacing;
+    const listSpacing = Math.max(1, Math.round(spacing / 4));
+    const titleTop = Math.max(4, spacing + 2);
+    const titleBottom = Math.max(2, Math.round(spacing / 2));
+    const entryPaddingY = Math.max(4, Math.round(spacing * 0.75));
+    const headerSpacing = Math.max(6, spacing + 2);
+
+    let style = doc.getElementById("buping-layout-controls") as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = "buping-layout-controls";
+      doc.head.appendChild(style);
+    }
+
+    style.textContent = `
+      body {
+        line-height: ${nextLineHeight} !important;
+      }
+      header {
+        margin-bottom: ${headerSpacing}px !important;
+      }
+      h2 {
+        margin-top: ${titleTop}px !important;
+        margin-bottom: ${titleBottom}px !important;
+      }
+      .entry,
+      .resume-card {
+        margin-bottom: ${spacing}px !important;
+        padding-top: ${entryPaddingY}px !important;
+        padding-bottom: ${entryPaddingY}px !important;
+      }
+      .compact-list,
+      .stack-list,
+      .inline-list {
+        margin-top: ${listSpacing}px !important;
+        margin-bottom: ${listSpacing}px !important;
+      }
+      .compact-list li,
+      .stack-list li,
+      .inline-list li {
+        margin-bottom: ${listSpacing}px !important;
+      }
+    `;
+  };
+
+  const updateLayoutControl = (nextLineHeight: number, nextModuleSpacing: number) => {
+    setLineHeight(nextLineHeight);
+    setModuleSpacing(nextModuleSpacing);
+
+    const iframe = iframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!doc) return;
+
+    applyLayoutControls(doc, nextLineHeight, nextModuleSpacing);
+    emitDocumentChange(doc);
+  };
 
   // Expose the iframe ref to the parent via the onIframeReady callback.
   // (We can't use forwardRef here because the parent component already
@@ -262,6 +337,7 @@ function EditableWYSIWYGEditor({
         ::selection { background: rgba(20, 184, 166, 0.3); }
       `;
       doc.head.appendChild(style);
+      applyLayoutControls(doc);
 
       // Tag block-level elements as editable targets
       const blockSelectors = "p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, .entry, .compact-list";
@@ -290,8 +366,7 @@ function EditableWYSIWYGEditor({
 
       // Hook input event to capture HTML changes (bubbles up from any block)
       doc.addEventListener("input", () => {
-        const html = doc.body?.innerHTML || "";
-        onChange(html);
+        emitDocumentChange(doc);
       });
 
       // Selection change for AI rewrite feature
@@ -320,7 +395,7 @@ function EditableWYSIWYGEditor({
     if (!doc) return;
     doc.execCommand(command, false, value);
     // Trigger an input event so React state updates
-    doc.dispatchEvent(new Event("input", { bubbles: true }));
+    emitDocumentChange(doc);
   };
 
   const handleLink = () => {
@@ -336,7 +411,7 @@ function EditableWYSIWYGEditor({
     } else {
       doc.execCommand("createLink", false, url);
     }
-    doc.dispatchEvent(new Event("input", { bubbles: true }));
+    emitDocumentChange(doc);
   };
 
   // Public reset: rewrite iframe body to the original
@@ -346,7 +421,8 @@ function EditableWYSIWYGEditor({
     const doc = iframe.contentDocument;
     if (!doc) return;
     doc.body.innerHTML = initialBodyRef.current;
-    doc.dispatchEvent(new Event("input", { bubbles: true }));
+    applyLayoutControls(doc);
+    emitDocumentChange(doc);
   };
 
   // Expose resetContent via global so external Reset button can use it
@@ -405,6 +481,35 @@ function EditableWYSIWYGEditor({
         <ToolButton title="清除格式" onClick={() => exec("removeFormat")}>
           <span className="text-[10px] font-bold">Tx</span>
         </ToolButton>
+        <Divider />
+        <div className="flex items-center gap-2 px-2 text-xs text-gray-600 dark:text-gray-300">
+          <label className="flex items-center gap-1" title="调整正文行间距">
+            <span>行距</span>
+            <input
+              type="range"
+              min="1.1"
+              max="1.7"
+              step="0.02"
+              value={lineHeight}
+              onChange={(e) => updateLayoutControl(Number(e.target.value), moduleSpacing)}
+              className="w-24 accent-brand-600"
+            />
+            <span className="w-8 tabular-nums">{lineHeight.toFixed(2)}</span>
+          </label>
+          <label className="flex items-center gap-1" title="调整模块和条目之间的距离">
+            <span>模块</span>
+            <input
+              type="range"
+              min="2"
+              max="20"
+              step="1"
+              value={moduleSpacing}
+              onChange={(e) => updateLayoutControl(lineHeight, Number(e.target.value))}
+              className="w-24 accent-brand-600"
+            />
+            <span className="w-7 tabular-nums">{moduleSpacing}px</span>
+          </label>
+        </div>
         <Divider />
         <ToolButton
           title="重置为原始"
