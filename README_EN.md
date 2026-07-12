@@ -31,6 +31,7 @@ An intelligent job seeker assistant powered by Large Language Models (LLM). It c
 - **✏️ WYSIWYG Editor (iframe + designMode)**
   - **What-You-See-Is-What-You-Get**: edit mode renders 100% identical styles to preview (colors/fonts/layout all preserved)
   - 18 toolbar buttons: undo/redo, 3 heading levels, bold/italic/underline/strikethrough, ordered/unordered lists, quote, divider, link, clear formatting
+  - Layout controls: adjust line height and module spacing in edit mode; saved HTML/PDF keeps the same settings
   - Powered by native `<iframe>` + `designMode="on"` with zero editor dependencies
   - Auto-save to localStorage every 1.5s (keeps 5 versions)
   - Standard shortcuts: Ctrl+Z/Y (undo/redo), Ctrl+B/I/U (bold/italic/underline)
@@ -289,14 +290,16 @@ After a resume is generated, you can edit it directly with full WYSIWYG fidelity
 3. **History preview**: Top-right dropdown lists all historical resumes; click to load any into preview
 4. **Switch to edit mode**: Click the "Edit Mode" button — preview becomes a WYSIWYG editor
 5. **WYSIWYG editing**: Modify text/formatting/lists/links directly inside the iframe — what you see is what you get
-6. **Auto-save**: Changes saved to localStorage 1.5s after the last edit
-7. **Save / Reset**: Click "Save" to commit, "Reset" to discard all changes
-8. **Shortcuts**: Ctrl+Z/Y (undo/redo), Ctrl+B/I/U (bold/italic/underline)
+6. **Layout controls**: Use the line-height and module-spacing sliders to adjust information density
+7. **Auto-save**: Changes saved to localStorage 1.5s after the last edit
+8. **Save / Reset**: Click "Save" to commit, "Reset" to discard all changes
+9. **Shortcuts**: Ctrl+Z/Y (undo/redo), Ctrl+B/I/U (bold/italic/underline)
 
 > **Technical Note**: The editor uses native `<iframe>` + `document.designMode = "on"`,
 > the same approach used by WordPress Gutenberg and early Notion.
 > 100% style fidelity; the previous TipTap dependency has been removed
-> (bundle size reduced by 113KB).
+> (bundle size reduced by 113KB). Edited resumes are saved as complete HTML
+> documents, so layout controls are preserved when generating PDFs.
 
 ### Tab 2: Customized Resume
 1. Paste target job description (JD)
@@ -332,7 +335,7 @@ Configure API Key, model, max_tokens, etc.
 | Template | Style |
 |----------|-------|
 | `cloyola` | Clean Professional |
-| `josylad_blue` | Blue Business |
+| `josylad_blue` | Blue Business, compressed spacing for higher information density |
 | `josylad_grey` | Grey Minimalist |
 | `krishnavalliappan` | Modern Tech |
 | `samodum_bold` | Bold Striking |

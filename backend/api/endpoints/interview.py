@@ -94,6 +94,7 @@ class MockInterviewSubmitRequest(BaseModel):
     session_id: str
     user_message: str
     history: list[dict] = []
+    context_window: int = 5
 
 
 class MockInterviewSubmitResponse(BaseModel):
@@ -110,6 +111,7 @@ def submit_mock_answer(req: MockInterviewSubmitRequest) -> MockInterviewSubmitRe
             session_id=req.session_id,
             user_message=req.user_message,
             history=req.history,
+            context_window=req.context_window,
         )
         return MockInterviewSubmitResponse(**result)
     except Exception as e:
@@ -138,3 +140,4 @@ def end_mock_interview(req: MockInterviewEndRequest) -> MockInterviewEndResponse
         return MockInterviewEndResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+

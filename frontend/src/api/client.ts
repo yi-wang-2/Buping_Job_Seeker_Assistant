@@ -178,6 +178,7 @@ export async function submitMockAnswer(params: {
   session_id: string;
   user_message: string;
   history: Array<{ role: string; content: string }>;
+  context_window?: number;
 }): Promise<{ history: Array<{ role: string; content: string }>; session_id: string | null; status: string }> {
   const { data } = await api.post("/interview/mock/submit", params);
   return data;

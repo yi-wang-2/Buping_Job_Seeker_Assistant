@@ -150,6 +150,7 @@ def submit_mock_answer(
     session_id: str,
     user_message: str,
     history: list[dict],
+    context_window: int = 5,
 ) -> dict[str, Any]:
     """Submit an answer in a mock interview. Returns {history, session_id, status}."""
     from src.libs.interview_prep.mock_interview import InterviewMessage, InterviewRound
@@ -171,6 +172,7 @@ def submit_mock_answer(
         job=interviewer.sessions[session_id].job,
         interview_type=stored["config"]["interview_type"],
         style=interviewer.sessions[session_id].style,
+        context_window=max(1, min(int(context_window or 5), 10)),
     )
     for entry in history:
         role = entry.get("role", "")
@@ -255,4 +257,8 @@ def end_mock_interview(session_id: str, history: list[dict]) -> dict[str, Any]:
     # Cleanup
     del _sessions[session_id]
 
-    return {"evaluation": evaluation, "file_path": str(output_path), "status": "success"}
+    return {
+        "evaluation": evaluation,
+        "file_path": str(output_path),
+        "status": "success",
+    }

@@ -105,6 +105,7 @@ class MockInterviewSession:
     started_at: float = 0.0
     ended_at: float = 0.0
     current_round: InterviewRound = InterviewRound.OPENING
+    context_window: int = 5
 
 
 def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name: str = ""):
@@ -213,9 +214,20 @@ def _build_dialogue_prompt(session: MockInterviewSession):
     """构造对话 Prompt（直接用 PromptValue 对象，不依赖模板变量）"""
     from langchain_core.prompt_values import StringPromptValue
     template = _build_system_prompt(session) + "\n\n"
+    context_window = max(1, min(int(getattr(session, "context_window", 5) or 5), 10))
+    recent_messages = session.messages[-(context_window * 2 + 1):]
+
+    template += (
+        "【最近对话上下文使用规则】\n"
+        "1. 优先基于候选人最近一次回答中的具体信息继续追问。\n"
+        "2. 如果最近回答已经充分，再自然切换到下一个相关主题。\n"
+        "3. 不要重复已经问过的问题；新问题要承接上下文。\n"
+        "4. 每次只问一个问题，问题要具体、可回答。\n\n"
+        f"【最近 {context_window} 轮对话】\n"
+    )
 
     # 拼接对话历史
-    for msg in session.messages[-12:]:
+    for msg in recent_messages:
         if msg.role == "interviewer":
             template += f"面试官: {msg.content}\n"
         else:
