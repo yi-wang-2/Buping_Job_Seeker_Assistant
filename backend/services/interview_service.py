@@ -23,14 +23,41 @@ DATA_FOLDER = Path("data_folder")
 OUTPUT_FOLDER = DATA_FOLDER / "output"
 
 
+def _normalize_interview_model_type(model_type: str, base_url: str = "") -> str:
+    """Map settings provider ids to the protocol ids used by interview LLM code."""
+    raw_model = (model_type or "").strip().lower()
+    raw_url = (base_url or "").strip().lower()
+    if raw_model in {"anthropic", "claude", "minimax-anth"} or "minimaxi.com/anthropic" in raw_url:
+        return "anthropic"
+    if raw_model in {
+        "openai",
+        "openai_chat",
+        "openai-resp",
+        "openai_response",
+        "minimax-chat",
+        "minimax-resp",
+        "deepseek",
+        "moonshot",
+        "qwen",
+        "doubao",
+        "yi",
+        "zhipu",
+        "ollama",
+    }:
+        return "openai"
+    return raw_model or "anthropic"
+
+
 def _get_effective_config(api_key: str = "", model_type: str = "", base_url: str = "", model_name: str = "") -> dict[str, str]:
     """Resolve effective LLM config from args > secrets > config.py."""
     secrets = load_secrets()
+    raw_model_type = model_type or secrets.get("llm_model_type", "anthropic")
+    effective_base_url = base_url or secrets.get("llm_base_url", "") or cfg.ANTHROPIC_BASE_URL
     return {
         "api_key": api_key or secrets.get("llm_api_key", "") or cfg.ANTHROPIC_AUTH_TOKEN,
-        "model_type": model_type or secrets.get("llm_model_type", "anthropic"),
-        "model_name": resolve_llm_model(model_type or secrets.get("llm_model_type", "anthropic"), model_name, secrets.get("llm_model", ""), secrets.get("llm_model_provider", "")),
-        "base_url": base_url or secrets.get("llm_base_url", "") or cfg.ANTHROPIC_BASE_URL,
+        "model_type": _normalize_interview_model_type(raw_model_type, effective_base_url),
+        "model_name": resolve_llm_model(raw_model_type, model_name, secrets.get("llm_model", ""), secrets.get("llm_model_provider", "")),
+        "base_url": effective_base_url,
     }
 
 
