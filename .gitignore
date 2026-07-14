@@ -170,6 +170,9 @@ reference/
 # Local code review reports (kept locally only, not synced to repo)
 # docs/review/
 
+# Local documentation (kept outside the repository)
+doc/
+
 # Local working notes and todo sub-files (kept locally only)
 # These are detailed development docs that should not be pushed to remote
 # 详细的开发记录拆分文件，仅本地维护，不推送到远程
