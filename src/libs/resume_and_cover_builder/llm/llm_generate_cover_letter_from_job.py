@@ -58,7 +58,7 @@ logger.add(log_path / "gpt_cover_letter_job_descr.log", rotation="1 day", compre
 
 class LLMCoverLetterJobDescription:
     def __init__(self, openai_api_key, strings):
-        api_key = cfg.ANTHROPIC_AUTH_TOKEN or openai_api_key
+        api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
         llm_client = _create_chat_model(api_key)
         self.llm_cheap = LoggerChatModel(llm_client)
         self.llm_embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)

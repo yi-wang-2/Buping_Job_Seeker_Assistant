@@ -18,6 +18,11 @@ langsmith==0.1.93
 Levenshtein==0.25.1
 loguru==0.7.2
 openai==1.37.1
+ChatTTS
+edge-tts==6.1.12
+kokoro>=0.9.4
+misaki[zh]>=0.9.4
+soundfile>=0.12.1
 pdfminer.six==20221105
 pytest>=8.3.3
 python-dotenv~=1.0.1

@@ -170,6 +170,9 @@ reference/
 # Local code review reports (kept locally only, not synced to repo)
 # docs/review/
 
+# Local documentation (kept outside the repository)
+doc/
+
 # Local working notes and todo sub-files (kept locally only)
 # These are detailed development docs that should not be pushed to remote
 # 详细的开发记录拆分文件，仅本地维护，不推送到远程
@@ -180,6 +183,19 @@ docs/FEATURES.md
 docs/PERFORMANCE.md
 docs/ROADMAP.md
 docs/NOTION_MCP_SETUP.md
+
+# Local planning note (kept locally only)
+# 本地规划笔记，仅本地维护，不推送到远程
+TODO.md
+
+# User-private files (templates live under data_folder_example/)
+# 个人隐私文件（模板位于 data_folder_example/ 下）
+# Copy the templates and fill in your own data; the populated copies stay local.
+data_folder/secrets.yaml
+data_folder/plain_text_resume_zh.yaml
+# ChatTTS local weights are multi-gigabyte runtime assets. Kokoro is kept in
+# Git LFS so its bundled offline voice remains reproducible.
+data_folder/models/ChatTTS/
 
 # Frontend
 frontend/node_modules/

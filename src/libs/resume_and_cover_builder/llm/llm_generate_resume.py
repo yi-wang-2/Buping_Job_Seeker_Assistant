@@ -48,19 +48,74 @@ class ContentBlockParser(BaseOutputParser):
     def _type(self) -> str:
         return 'content_block_parser'
 
-# choose model client dynamically
-try:
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
-        from langchain_anthropic import ChatAnthropic as ChatModel
-    else:
-        from langchain_openai import ChatOpenAI as ChatModel
-except Exception:
-    # fallback to OpenAI Chat if imports fail
-    from langchain_openai import ChatOpenAI as ChatModel
+# choose model client dynamically based on LLM_PROTOCOL
+# LLM_PROTOCOL is the wire protocol (independent of provider):
+#   - "anthropic"        → Anthropic Messages API (ChatAnthropic)
+#   - "openai_chat"      → OpenAI Chat Completions API (ChatOpenAI)
+#   - "openai_response"  → OpenAI Responses API (ChatOpenAI with Responses path)
+# LLM_MODEL_TYPE is the provider (anthropic/openai/deepseek/zhipu/...) — kept
+# for backward compatibility and as a label in the UI.
+def _resolve_protocol() -> str:
+    """Resolve LLM protocol with backward compatibility."""
+    proto = getattr(cfg, "LLM_PROTOCOL", None)
+    if proto:
+        return str(proto).lower()
+    # Fallback: derive from LLM_MODEL_TYPE (legacy behavior)
+    if cfg.LLM_MODEL_TYPE == "anthropic":
+        return "anthropic"
+    return "openai_chat"
+
+
+def _strip_base_url_path(base_url: str, proto: str = "openai_chat") -> str:
+    """Normalize base URLs without dropping required provider path prefixes.
+
+    langchain ChatOpenAI appends "/chat/completions" (or "/responses" for
+    the Responses API) to whatever base_url you give it. If a user pastes
+    a full URL like "https://api.minimaxi.com/anthropic/v1/messages",
+    the request would hit
+    ".../anthropic/v1/messages/chat/completions" and get 404.
+
+    This helper keeps only the scheme + host, discarding any path or
+    query string. For example:
+        "https://api.minimaxi.com"                   → "https://api.minimaxi.com"
+        "https://api.minimaxi.com/"                  → "https://api.minimaxi.com"
+        "https://api.minimaxi.com/v1"                → "https://api.minimaxi.com"
+        "https://api.minimaxi.com/anthropic/v1/messages" → "https://api.minimaxi.com"
+    """
+    if not base_url:
+        return base_url
+    from urllib.parse import urlparse, urlunparse
+
+    try:
+        parsed = urlparse(base_url)
+        path = (parsed.path or "").rstrip("/")
+
+        if proto == "anthropic":
+            if path.endswith("/v1/messages"):
+                path = path[: -len("/v1/messages")]
+            elif path.endswith("/messages"):
+                path = path[: -len("/messages")]
+        else:
+            for suffix in ("/chat/completions", "/completions", "/responses"):
+                if path.endswith(suffix):
+                    path = path[: -len(suffix)]
+                    break
+
+        return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+    except Exception:
+        return base_url.rstrip("/")
 
 
 def _create_chat_model(api_key: str):
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
+    proto = _resolve_protocol()
+
+    if proto == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic as ChatModel
+        except Exception:
+            from langchain_openai import ChatOpenAI as ChatModel
+        # Anthropic Messages API (also used by Anthropic-compatible providers
+        # such as MiniMax when configured to expose /anthropic endpoint)
         model_name = cfg.ANTHROPIC_MODEL or cfg.LLM_MODEL or ""
         base_url = cfg.ANTHROPIC_BASE_URL or ""
         try:
@@ -75,11 +130,51 @@ def _create_chat_model(api_key: str):
             except TypeError:
                 return ChatModel(model=model_name, api_key=api_key, temperature=0.4, max_tokens=4096)
 
-    model_name = cfg.LLM_MODEL or "gpt-4o-mini"
-    base_url = cfg.LLM_API_URL or ""
+    # OpenAI Chat Completions (default for openai_chat) OR Responses API
+    # We currently use ChatOpenAI for both; the protocol is recorded so the
+    # frontend/UI can display it correctly. To call the Responses API
+    # specifically, langchain-openai >= 0.3 supports `output_version`
+    # ("responses_v1") — see OpenAI provider docs.
+    from langchain_openai import ChatOpenAI as ChatModel
+    model_name = (
+        cfg.OPENAI_MODEL
+        if proto == "openai_response" and getattr(cfg, "OPENAI_MODEL", None)
+        else (cfg.LLM_MODEL or "gpt-4o-mini")
+    )
+    raw_base_url = getattr(cfg, "OPENAI_BASE_URL", None) or cfg.LLM_API_URL or ""
+
+    # IMPORTANT: langchain ChatOpenAI appends "/chat/completions" (or
+    # "/responses" for output_version=responses_v1) to whatever base_url
+    # you give it. So if a user pastes a full URL like
+    # "https://api.minimaxi.com/anthropic/v1/messages" we MUST strip the
+    # path — otherwise the request hits
+    # ".../anthropic/v1/messages/chat/completions" and gets 404.
+    base_url = _strip_base_url_path(raw_base_url, proto=proto)
+
+    # Detect Responses API support
+    use_responses = proto == "openai_response"
+
     if base_url:
-        return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4, max_tokens=4096)
-    return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4, max_tokens=4096)
+        try:
+            kwargs = {
+                "model_name": model_name,
+                "openai_api_key": api_key,
+                "base_url": base_url,
+                "temperature": 0.4,
+                "max_tokens": 4096,
+            }
+            if use_responses:
+                # langchain-openai >= 0.3: opt into Responses API
+                kwargs["output_version"] = "responses_v1"
+            return ChatModel(**kwargs)
+        except TypeError:
+            # Older langchain-openai: try without output_version
+            kwargs.pop("output_version", None)
+            return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4)
+    try:
+        return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4, max_tokens=4096)
+    except TypeError:
+        return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4)
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
@@ -98,7 +193,7 @@ logger.add(log_path / "gpt_resume.log", rotation="1 day", compression="zip", ret
 class LLMResumer:
     def __init__(self, openai_api_key, strings):
         # instantiate appropriate chat model
-        api_key = cfg.ANTHROPIC_AUTH_TOKEN or openai_api_key
+        api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
         llm_client = _create_chat_model(api_key)
         self.llm_cheap = LoggerChatModel(llm_client)
         self.strings = strings
@@ -449,24 +544,21 @@ class LLMResumer:
 [/CERTIFICATIONS]
 
 [ADDITIONAL_SKILLS]
-<section id="skills-languages">
-    <h2>其他技能</h2>
-    <div class="two-column">
-      <div class="skills-column">
-          <h3>技术技能</h3>
-          <ul class="compact-list">
-              <li><strong>编程语言：</strong>[具体掌握的语言及熟练程度]</li>
-              <li><strong>框架/工具：</strong>[实际使用的框架和工具]</li>
-              <li><strong>其他：</strong>[其他相关技能]</li>
-          </ul>
-      </div>
-      <div class="languages-column">
-          <h3>语言能力</h3>
-          <ul class="compact-list">
-              <li><strong>[语言名称]：</strong>[读写听说是哪一级，如"CET-6"或"流利"</li>
-          </ul>
-      </div>
-    </div>
+<section id="technical-stack">
+    <h2>技术栈</h2>
+    <ul class="compact-list stack-list">
+        <li><strong>编程语言：</strong>[具体掌握的语言及熟练程度]</li>
+        <li><strong>图像处理/算法：</strong>[与岗位相关的算法、图像处理或ISP能力]</li>
+        <li><strong>嵌入式/硬件：</strong>[嵌入式开发、传感器、硬件调试等能力]</li>
+        <li><strong>平台与工具：</strong>[实际使用的平台、工具链和调试工具]</li>
+    </ul>
+</section>
+<section id="languages-other">
+    <h2>语言与其他</h2>
+    <ul class="compact-list inline-list">
+        <li><strong>语言能力：</strong>[中文、英文及证书/应用能力]</li>
+        <li><strong>兴趣爱好：</strong>[简要列出兴趣爱好，可省略与岗位无关或过长内容]</li>
+    </ul>
 </section>
 [/ADDITIONAL_SKILLS]
 

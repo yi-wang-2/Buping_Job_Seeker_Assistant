@@ -94,6 +94,23 @@ h2 {
   padding-left: 15px;
 }
 
+#technical-stack .stack-list {
+  margin: 2px 0;
+  padding-left: 15px;
+}
+
+#languages-other .inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+  margin: 2px 0;
+  padding-left: 15px;
+}
+
+#languages-other .inline-list li {
+  flex: 1 1 260px;
+}
+
 a {
   color: #0077b5;
   text-decoration: none;

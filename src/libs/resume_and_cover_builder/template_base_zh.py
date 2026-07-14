@@ -211,26 +211,21 @@ prompt_certifications_template = """
 prompt_additional_skills_template = """
 - **使用的模板**
 ```
-<section id="skills-languages">
-    <h2>其他技能</h2>
-    <div class="two-column">
-      <ul class="compact-list">
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-      </ul>
-      <ul class="compact-list">
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li>[具体技能或技术]</li>
-          <li><strong>语言能力:</strong> </li>
-      </ul>
-    </div>
+<section id="technical-stack">
+    <h2>技术栈</h2>
+    <ul class="compact-list stack-list">
+        <li><strong>编程语言：</strong>[具体掌握的语言及熟练程度]</li>
+        <li><strong>图像处理/算法：</strong>[与岗位相关的算法、图像处理或ISP能力]</li>
+        <li><strong>嵌入式/硬件：</strong>[嵌入式开发、传感器、硬件调试等能力]</li>
+        <li><strong>平台与工具：</strong>[实际使用的平台、工具链和调试工具]</li>
+    </ul>
+</section>
+<section id="languages-other">
+    <h2>语言与其他</h2>
+    <ul class="compact-list inline-list">
+        <li><strong>语言能力：</strong>[中文、英文及证书/应用能力]</li>
+        <li><strong>兴趣爱好：</strong>[简要列出兴趣爱好，可省略与岗位无关或过长内容]</li>
+    </ul>
 </section>
 ```
 请以HTML格式提供结果，仅提供简历的HTML代码，不包含任何解释或其他文字，也不包含```html ```

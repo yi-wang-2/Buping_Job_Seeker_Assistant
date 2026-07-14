@@ -9,7 +9,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from backend.services import config_service
+from backend.services.resume_validation import validate_resume_data, validate_resume_yaml
 from src.libs.resume_and_cover_builder.document_parser import parse_document
+from src.logging import logger
 
 router = APIRouter()
 
@@ -17,7 +19,9 @@ router = APIRouter()
 class SettingsResponse(BaseModel):
     llm_api_key: str = ""
     llm_model_type: str = "anthropic"
+    llm_model: str = "MiniMax-M3"
     llm_base_url: str = "https://api.minimaxi.com/anthropic"
+    llm_protocol: str = "anthropic"  # "anthropic" | "openai_chat" | "openai_response"
     resume_language: str = "zh"
     system_language: str = "zh"
 
@@ -25,19 +29,36 @@ class SettingsResponse(BaseModel):
 class SaveSettingsRequest(BaseModel):
     llm_api_key: str = ""
     llm_model_type: str = "anthropic"
+    llm_model: str = ""
     llm_base_url: str = ""
+    llm_protocol: str = "anthropic"
     resume_language: str = "zh"
     system_language: str = "zh"
+
+
+class DiscoverModelsRequest(BaseModel):
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_protocol: str = "openai_chat"
 
 
 @router.get("", response_model=SettingsResponse)
 def get_settings() -> SettingsResponse:
     """Get current settings."""
     secrets = config_service.load_secrets()
+    model_type = secrets.get("llm_model_type", "anthropic")
+    model_name = config_service.resolve_llm_model(
+        model_type,
+        saved_model=secrets.get("llm_model", ""),
+        saved_provider=secrets.get("llm_model_provider", ""),
+    )
+    protocol = secrets.get("llm_protocol", "anthropic")
     return SettingsResponse(
         llm_api_key=secrets.get("llm_api_key", ""),
-        llm_model_type=secrets.get("llm_model_type", "anthropic"),
+        llm_model_type=model_type,
+        llm_model=model_name,
         llm_base_url=secrets.get("llm_base_url", "https://api.minimaxi.com/anthropic"),
+        llm_protocol=protocol,
         resume_language=secrets.get("resume_language", "zh"),
         system_language=secrets.get("system_language", "zh"),
     )
@@ -46,14 +67,31 @@ def get_settings() -> SettingsResponse:
 @router.put("")
 def save_settings(req: SaveSettingsRequest) -> dict:
     """Save settings."""
+    # Validate protocol value
+    valid_protocols = {"anthropic", "openai_chat", "openai_response"}
+    protocol = req.llm_protocol if req.llm_protocol in valid_protocols else "anthropic"
+
+    model_name = config_service.resolve_llm_model(req.llm_model_type, req.llm_model)
     config_service.save_secrets({
         "llm_api_key": req.llm_api_key,
         "llm_model_type": req.llm_model_type,
+        "llm_model": model_name,
+        "llm_model_provider": req.llm_model_type,
         "llm_base_url": req.llm_base_url,
+        "llm_protocol": protocol,
         "resume_language": req.resume_language,
         "system_language": req.system_language,
     })
     return {"status": "success", "message": "配置已保存！"}
+
+
+@router.post("/models")
+async def discover_models(req: DiscoverModelsRequest) -> dict:
+    """Return models only when the provider exposes a compatible list endpoint."""
+    models = await config_service.discover_llm_models(
+        req.llm_api_key, req.llm_base_url, req.llm_protocol
+    )
+    return {"models": models}
 
 
 class ResumeContentRequest(BaseModel):
@@ -72,7 +110,8 @@ def get_resume_content(language: str = "zh") -> dict:
 def save_resume_content(req: ResumeContentRequest) -> dict:
     """Save resume YAML content."""
     config_service.save_resume_content(req.content, req.language)
-    return {"status": "success", "message": "简历内容已保存！"}
+    validation = validate_resume_yaml(req.content)
+    return {"status": "success", "message": "简历内容已保存！", "validation": validation}
 
 
 SUPPORTED_EXTENSIONS = {
@@ -86,8 +125,10 @@ async def upload_resume(
     file: UploadFile = File(...),
     target_lang: str = "en",
     api_key: str = "",
-    model_type: str = "anthropic",
-    base_url: str = "https://api.minimaxi.com/anthropic",
+    model_type: str = "",
+    model_name: str = "",
+    base_url: str = "",
+    llm_protocol: str = "",
 ) -> dict:
     """Upload a resume document and extract structured YAML data.
 
@@ -131,7 +172,11 @@ async def upload_resume(
             api_key = secrets.get("llm_api_key", "")
             if not model_type or model_type == "anthropic":
                 model_type = secrets.get("llm_model_type", model_type)
-            if base_url == "https://api.minimaxi.com/anthropic":
+            if not llm_protocol:
+                llm_protocol = secrets.get("llm_protocol", "")
+            if not model_name:
+                model_name = secrets.get("llm_model", "")
+            if not base_url:
                 base_url = secrets.get("llm_base_url", base_url)
         except Exception:
             pass
@@ -148,18 +193,45 @@ async def upload_resume(
             import config as cfg
             cfg.ANTHROPIC_BASE_URL = base_url
             cfg.LLM_API_URL = base_url
+            if llm_protocol:
+                cfg.LLM_PROTOCOL = llm_protocol
+            if model_name:
+                cfg.LLM_MODEL = model_name
+                cfg.ANTHROPIC_MODEL = model_name
+                cfg.OPENAI_MODEL = model_name
         except Exception:
             pass
 
     try:
+        logger.info(
+            "Upload resume parse request: filename={} ext={} target_lang={} model_type={} llm_protocol={} base_url={}",
+            filename.name,
+            ext,
+            target_lang,
+            model_type,
+            llm_protocol,
+            base_url,
+        )
+        parse_diagnostics = {}
         data = parse_document(
             filename.name,
             content,
             api_key=api_key,
             model_type=model_type,
+            model_name=model_name,
             base_url=base_url,
             target_lang=target_lang,
+            diagnostics=parse_diagnostics,
         )
+        logger.info(
+            "Upload resume parse result: filename={} personal_fields={} education_count={} experience_count={} project_count={}",
+            filename.name,
+            sum(1 for v in (data.get("personal_information") or {}).values() if str(v).strip()),
+            len(data.get("education_details") or []),
+            len(data.get("experience_details") or []),
+            len(data.get("projects") or []),
+        )
+        logger.info("Upload resume parse diagnostics: {}", parse_diagnostics)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
 
@@ -173,5 +245,7 @@ async def upload_resume(
         "filename": filename.name,
         "ext": ext,
         "yaml_content": yaml_str,
+        "parse_diagnostics": parse_diagnostics,
+        "validation": validate_resume_data(data),
         "message": "文档解析成功，请在下方编辑器中检查并修改内容，然后保存。",
     }
