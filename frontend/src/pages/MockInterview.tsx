@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Bot, Send, Play, Square, Loader2, User, Download, Mic, MicOff, Volume2, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { Strings } from "../i18n";
-import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
+import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
 
 interface Message {
   role: "user" | "assistant";
@@ -68,6 +68,7 @@ export default function MockInterview({ t }: { t: Strings }) {
   const [interviewStyle, setInterviewStyle] = useState("专业型");
   const [resumeText, setResumeText] = useState("");
   const [jobDesc, setJobDesc] = useState("");
+  const [resumeLoadedFromFile, setResumeLoadedFromFile] = useState("");
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<Message[]>([]);
@@ -96,6 +97,25 @@ export default function MockInterview({ t }: { t: Strings }) {
   useEffect(() => {
     setSpeechInputSupported(Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition));
     setSpeechOutputSupported(true);
+    const loadSavedResume = async () => {
+      try {
+        let language = "zh";
+        try {
+          const settings = await getSettings();
+          language = settings.resume_language || "zh";
+        } catch {
+          language = "zh";
+        }
+        const result = await getResumeContent(language);
+        if (result.content?.trim()) {
+          setResumeText(result.content);
+          setResumeLoadedFromFile(language === "en" ? "data_folder/plain_text_resume.yaml" : "data_folder/plain_text_resume_zh.yaml");
+        }
+      } catch {
+        setResumeLoadedFromFile("");
+      }
+    };
+    void loadSavedResume();
     return () => {
       if (typingTimerRef.current !== null) {
         window.clearInterval(typingTimerRef.current);
@@ -567,7 +587,10 @@ export default function MockInterview({ t }: { t: Strings }) {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.resumeText}</label>
-                <textarea value={resumeText} onChange={(e) => setResumeText(e.target.value)} placeholder={mi.resumeTextPlaceholder} rows={4} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white resize-none" />
+                <textarea value={resumeText} onChange={(e) => { setResumeText(e.target.value); setResumeLoadedFromFile(""); }} placeholder={mi.resumeTextPlaceholder} rows={4} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white resize-none" />
+                {resumeLoadedFromFile && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">已自动加载：{resumeLoadedFromFile}</p>
+                )}
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.jobDesc}</label>
