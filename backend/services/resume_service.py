@@ -432,6 +432,7 @@ def rewrite_text(
     target_language: str = "zh",
     api_key: str = "",
     model_type: str = "anthropic",
+    model_name: str = "",
     base_url: str = "https://api.minimaxi.com/anthropic",
     llm_protocol: str = "",
 ) -> str:
@@ -464,6 +465,7 @@ def rewrite_text(
     from langchain_core.messages import HumanMessage
     import src.libs.resume_and_cover_builder.config as rcb_config
     import config as root_config
+    secrets = load_secrets()
 
     # ---- 3-level API key fallback ----
     if not api_key or api_key.startswith("sk-your-"):
@@ -486,18 +488,11 @@ def rewrite_text(
     # "/chat/completions" (or "/responses") automatically, so a full URL
     # like "https://api.minimaxi.com/anthropic/v1/messages" would
     # produce a 404 (".../v1/messages/chat/completions").
-    from urllib.parse import urlparse, urlunparse
+    from src.libs.resume_and_cover_builder.llm.llm_generate_resume import _strip_base_url_path
 
-    def _strip_path(u: str) -> str:
-        if not u:
-            return u
-        try:
-            p = urlparse(u)
-            return urlunparse((p.scheme, p.netloc, "", "", "", ""))
-        except Exception:
-            return u
-
-    normalized_base_url = _strip_path(base_url) if base_url else ""
+    normalized_base_url = _strip_base_url_path(
+        base_url, proto=llm_protocol or ("anthropic" if model_type == "anthropic" else "openai_chat")
+    ) if base_url else ""
 
     rcb_config.API_KEY = api_key
     root_config.ANTHROPIC_AUTH_TOKEN = api_key
@@ -513,6 +508,14 @@ def rewrite_text(
     if model_type:
         rcb_config.LLM_MODEL_TYPE = model_type
         root_config.LLM_MODEL_TYPE = model_type
+    if not model_name:
+        from backend.services.config_service import resolve_llm_model
+        model_name = resolve_llm_model(model_type, saved_model=secrets.get("llm_model", ""), saved_provider=secrets.get("llm_model_provider", ""))
+    if model_name:
+        rcb_config.LLM_MODEL = model_name
+        root_config.LLM_MODEL = model_name
+        root_config.ANTHROPIC_MODEL = model_name
+        root_config.OPENAI_MODEL = model_name
     if llm_protocol:
         try:
             rcb_config.LLM_PROTOCOL = llm_protocol
@@ -580,6 +583,7 @@ def generate_resume(
     resume_language: str = "zh",
     system_language: str = "zh",
     llm_protocol: str | None = None,
+    model_name: str = "",
 ) -> dict[str, Any]:
     """Generate a resume PDF. Returns {path, filename, status}."""
     from src.libs.resume_and_cover_builder import ResumeFacade, ResumeGenerator, StyleManager
@@ -588,11 +592,14 @@ def generate_resume(
     import src.libs.resume_and_cover_builder.config as rcb_config
     import config as root_config
 
+
     # Save config first (so subsequent runs have it)
     if api_key:
         save_secrets({
             "llm_api_key": api_key,
             "llm_model_type": model_type,
+            "llm_model": model_name,
+            "llm_model_provider": model_type,
             "llm_base_url": base_url,
             "llm_protocol": llm_protocol or "",
             "resume_language": resume_language,
@@ -622,6 +629,10 @@ def generate_resume(
     if not base_url:
         secrets = load_secrets()
         base_url = secrets.get("llm_base_url", "") or "https://api.minimaxi.com/anthropic"
+    if not model_name:
+        secrets = load_secrets()
+        from backend.services.config_service import resolve_llm_model
+        model_name = resolve_llm_model(model_type, saved_model=secrets.get("llm_model", ""), saved_provider=secrets.get("llm_model_provider", ""))
 
     # Resolve LLM protocol with fallback chain (param → secrets → config)
     if not llm_protocol:
@@ -649,6 +660,11 @@ def generate_resume(
     if model_type:
         rcb_config.LLM_MODEL_TYPE = model_type
         root_config.LLM_MODEL_TYPE = model_type
+    if model_name:
+        rcb_config.LLM_MODEL = model_name
+        root_config.LLM_MODEL = model_name
+        root_config.ANTHROPIC_MODEL = model_name
+        root_config.OPENAI_MODEL = model_name
     # Apply the resolved protocol so _resolve_protocol() returns it
     try:
         rcb_config.LLM_PROTOCOL = llm_protocol
@@ -665,6 +681,13 @@ def generate_resume(
     resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
     with open(resume_file, "r", encoding="utf-8") as f:
         plain_text_resume = f.read()
+    from backend.services.resume_validation import validate_resume_yaml
+    validation = validate_resume_yaml(plain_text_resume)
+    if not validation["valid"]:
+        missing = "；".join(
+            f'{item["path"]}: {item["message"]}' for item in validation["errors"]
+        )
+        raise ValueError(f"简历关键字段未填写完整，无法生成：{missing}")
 
     # Setup style
     style_manager = StyleManager()

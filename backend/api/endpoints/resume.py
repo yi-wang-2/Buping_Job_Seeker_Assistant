@@ -16,8 +16,9 @@ router = APIRouter()
 
 class GenerateResumeRequest(BaseModel):
     api_key: str = ""
-    model_type: str = "anthropic"
-    base_url: str = "https://api.minimaxi.com/anthropic"
+    model_type: str = ""
+    model_name: str = ""
+    base_url: str = ""
     llm_protocol: str = ""  # "anthropic" | "openai_chat" | "openai_response" — empty = auto
     style_name: str = ""
     job_description: Optional[str] = None
@@ -61,8 +62,9 @@ class RewriteRequest(BaseModel):
     context: str = ""  # Optional surrounding context (helps LLM understand)
     target_language: str = "zh"  # Output language: "zh" | "en"
     api_key: str = ""
-    model_type: str = "anthropic"
-    base_url: str = "https://api.minimaxi.com/anthropic"
+    model_type: str = ""
+    model_name: str = ""
+    base_url: str = ""
     llm_protocol: str = ""
 
 
@@ -142,6 +144,7 @@ async def rewrite_text(req: RewriteRequest) -> RewriteResponse:
             target_language=req.target_language,
             api_key=req.api_key,
             model_type=req.model_type,
+            model_name=req.model_name,
             base_url=req.base_url,
             llm_protocol=req.llm_protocol,
         )
@@ -174,6 +177,7 @@ async def generate_resume(req: GenerateResumeRequest) -> GenerateResumeResponse:
             resume_service.generate_resume,
             api_key=req.api_key,
             model_type=req.model_type,
+            model_name=req.model_name,
             base_url=req.base_url,
             llm_protocol=req.llm_protocol or None,
             style_name=req.style_name,

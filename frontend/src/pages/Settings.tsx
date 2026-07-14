@@ -7,7 +7,9 @@ import {
   getResumeContent,
   saveResumeContent,
   uploadResume,
+  type ResumeValidation,
 } from "../api/client";
+import { useAvailableModels } from "../hooks/useAvailableModels";
 
 // Preset list of supported LLM providers. Choosing one auto-fills the
 // base_url AND protocol fields. Protocol is decoupled from provider so
@@ -48,6 +50,20 @@ const PRESET_BY_ID: Record<string, ModelPreset> = Object.fromEntries(
   MODEL_PRESETS.map((p) => [p.id, p])
 );
 
+const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
+  anthropic: "claude-sonnet-4-20250514",
+  "minimax-anth": "MiniMax-M3",
+  openai: "gpt-4o-mini",
+  deepseek: "deepseek-chat",
+  zhipu: "glm-4-flash",
+  moonshot: "moonshot-v1-8k",
+  qwen: "qwen-plus",
+  yi: "yi-lightning",
+  "minimax-chat": "MiniMax-M3",
+  "openai-resp": "gpt-4o-mini",
+  "minimax-resp": "MiniMax-M3",
+};
+
 type UploadParseDiagnostics = {
   llm_attempted?: boolean;
   llm_call_success?: boolean;
@@ -84,8 +100,10 @@ export default function SettingsPage({ t }: { t: Strings }) {
 
   const [apiKey, setApiKey] = useState("");
   const [modelType, setModelType] = useState("anthropic");
+  const [modelName, setModelName] = useState("MiniMax-M3");
   const [baseUrl, setBaseUrl] = useState("https://api.minimaxi.com/anthropic");
   const [llmProtocol, setLlmProtocol] = useState<LlmProtocol>("anthropic");
+  const availableModels = useAvailableModels(apiKey, baseUrl, llmProtocol);
   const [resumeLang, setResumeLang] = useState("zh");
   const [configStatus, setConfigStatus] = useState("");
 
@@ -97,6 +115,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadDiagnostics, setUploadDiagnostics] = useState<string[]>([]);
   const [uploadedFilename, setUploadedFilename] = useState("");
+  const [resumeValidation, setResumeValidation] = useState<ResumeValidation | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -104,6 +123,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
     getSettings().then((cfg) => {
       setApiKey(cfg.llm_api_key);
       setModelType(cfg.llm_model_type);
+      setModelName(cfg.llm_model || DEFAULT_MODEL_BY_PROVIDER[cfg.llm_model_type] || "");
       setBaseUrl(cfg.llm_base_url);
       setLlmProtocol((cfg.llm_protocol as LlmProtocol) || "anthropic");
       setResumeLang(cfg.resume_language);
@@ -128,6 +148,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
       await saveSettings({
         llm_api_key: apiKey,
         llm_model_type: modelType,
+        llm_model: modelName.trim(),
         llm_base_url: baseUrl,
         llm_protocol: llmProtocol,
         resume_language: resumeLang,
@@ -141,7 +162,8 @@ export default function SettingsPage({ t }: { t: Strings }) {
 
   const handleSaveResume = async () => {
     try {
-      await saveResumeContent({ content: resumeContent, language: resumeLang });
+      const result = await saveResumeContent({ content: resumeContent, language: resumeLang });
+      setResumeValidation(result.validation || null);
       setResumeStatus(st.resumeSaved);
       setUploadStatus("idle");
       setUploadMessage("");
@@ -167,10 +189,12 @@ export default function SettingsPage({ t }: { t: Strings }) {
       const result = await uploadResume(file, resumeLang, {
         apiKey: apiKey || undefined,
         modelType,
+        modelName,
         baseUrl,
         llmProtocol,
       });
       setResumeContent(result.yaml_content);
+      setResumeValidation(result.validation || null);
       setUploadStatus("success");
       setUploadMessage(st.uploadSuccess);
       setUploadDiagnostics(formatUploadDiagnostics(result.parse_diagnostics));
@@ -178,8 +202,9 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setUploadStatus("error");
       setUploadMessage(err?.response?.data?.detail || st.uploadError);
       setUploadDiagnostics([]);
+      setResumeValidation(null);
     }
-  }, [apiKey, modelType, baseUrl, llmProtocol, resumeLang, st.uploadStatus, st.uploadSuccess, st.uploadError]);
+  }, [apiKey, modelType, modelName, baseUrl, llmProtocol, resumeLang, st.uploadStatus, st.uploadSuccess, st.uploadError]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -233,6 +258,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
                 if (preset) {
                   setBaseUrl(preset.defaultBaseUrl);
                   setLlmProtocol(preset.protocol);
+                  setModelName(DEFAULT_MODEL_BY_PROVIDER[newType] || "");
                 }
               }}
               className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
@@ -246,6 +272,27 @@ export default function SettingsPage({ t }: { t: Strings }) {
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {st.modelTypeHint}
             </p>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">模型名称 / Model ID</label>
+            {availableModels.length > 0 && (
+              <select
+                value={availableModels.includes(modelName) ? modelName : ""}
+                onChange={(e) => e.target.value && setModelName(e.target.value)}
+                className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              >
+                <option value="">选择供应商模型…</option>
+                {availableModels.map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
+            )}
+            <input
+              type="text"
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              placeholder="deepseek-chat"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">切换供应商时会填入推荐值，也可输入该供应商支持的任意模型 ID。</p>
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -263,6 +310,11 @@ export default function SettingsPage({ t }: { t: Strings }) {
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {st.modelProtocolHint}
             </p>
+            {llmProtocol === "openai_response" && (
+              <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                Responses API 需要供应商及当前客户端版本同时支持；系统会严格按此选择发送，不会自动切换协议。若调用失败，请根据真实错误调整配置。
+              </p>
+            )}
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{st.baseUrl}</label>
@@ -369,6 +421,36 @@ export default function SettingsPage({ t }: { t: Strings }) {
           </div>
         )}
       </div>
+
+      {resumeValidation && (resumeValidation.errors.length > 0 || resumeValidation.warnings.length > 0) && (
+        <div className={`rounded-xl border p-4 ${resumeValidation.valid ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20" : "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-900/20"}`}>
+          <div className={`mb-2 flex items-center gap-2 font-semibold ${resumeValidation.valid ? "text-amber-800 dark:text-amber-300" : "text-red-800 dark:text-red-300"}`}>
+            <AlertCircle className="h-5 w-5" />
+            {resumeValidation.valid ? "简历信息有待完善" : "缺少关键字段，暂时不能生成简历"}
+          </div>
+          <div className="space-y-1 text-sm text-gray-700 dark:text-gray-200">
+            {resumeValidation.errors.length > 0 && (
+              <div className="mb-3">
+                <div className="mb-1 font-semibold text-red-800 dark:text-red-300">必须补齐（否则不能生成）</div>
+                {resumeValidation.errors.map((item) => (
+                  <div key={`error-${item.path}`}><span className="font-mono text-red-700 dark:text-red-300">{item.path}</span>：{item.message}</div>
+                ))}
+              </div>
+            )}
+            {resumeValidation.warnings.length > 0 && (
+              <div>
+                <div className="mb-1 font-semibold text-amber-800 dark:text-amber-300">完善建议（不影响生成）</div>
+                {resumeValidation.warnings.map((item) => (
+                  <div key={`warning-${item.path}`}><span className="font-mono text-amber-700 dark:text-amber-300">{item.path}</span>：{item.message}</div>
+                ))}
+              </div>
+            )}
+          </div>
+          {!resumeValidation.valid && (
+            <p className="mt-3 text-sm font-medium text-red-700 dark:text-red-300">可以先保存草稿，但必须补齐以上红色关键字段后才能生成。</p>
+          )}
+        </div>
+      )}
 
       {/* Resume Editor */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">

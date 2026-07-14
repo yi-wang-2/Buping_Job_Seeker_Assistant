@@ -190,6 +190,9 @@ TODO.md
 # Copy the templates and fill in your own data; the populated copies stay local.
 data_folder/secrets.yaml
 data_folder/plain_text_resume_zh.yaml
+# ChatTTS local weights are multi-gigabyte runtime assets. Kokoro is kept in
+# Git LFS so its bundled offline voice remains reproducible.
+data_folder/models/ChatTTS/
 
 # Frontend
 frontend/node_modules/

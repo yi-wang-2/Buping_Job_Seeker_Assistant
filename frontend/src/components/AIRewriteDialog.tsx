@@ -16,6 +16,7 @@ interface AIRewriteDialogProps {
   targetLanguage: "zh" | "en";
   apiKey: string;
   modelType: string;
+  modelName: string;
   baseUrl: string;
   llmProtocol: string;
   t: Strings;
@@ -30,6 +31,7 @@ export default function AIRewriteDialog({
   targetLanguage,
   apiKey,
   modelType,
+  modelName,
   baseUrl,
   llmProtocol,
   t,
@@ -104,6 +106,7 @@ export default function AIRewriteDialog({
         target_language: targetLanguage,
         api_key: apiKey || undefined,
         model_type: modelType || undefined,
+        model_name: modelName || undefined,
         base_url: baseUrl || undefined,
         llm_protocol: llmProtocol || undefined,
       });

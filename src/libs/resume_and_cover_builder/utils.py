@@ -86,6 +86,7 @@ class LoggerChatModel:
         max_retries = 3  # Reduced from 15 to avoid hour-long waits
         retry_delay = 5
         max_total_wait = 60  # Cap total retry wait time at 60 seconds
+        last_error: Exception | None = None
 
         for attempt in range(max_retries):
             try:
@@ -94,6 +95,7 @@ class LoggerChatModel:
                 LLMLogger.log_request(prompts=messages, parsed_reply=parsed_reply)
                 return reply
             except HTTPStatusError as err:
+                last_error = err
                 # Check status code — fail fast on auth/config errors
                 status_code = err.response.status_code if hasattr(err, "response") else 0
                 if status_code in NON_RETRYABLE_STATUS_CODES:
@@ -109,15 +111,17 @@ class LoggerChatModel:
                     logger.warning(f"HTTP error: Waiting {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
                     time.sleep(wait_time)
             except openai.RateLimitError as err:
+                last_error = err
                 wait_time = min(self.parse_wait_time_from_error_message(str(err)), max_total_wait)
                 logger.warning(f"Rate limit: Waiting {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
                 time.sleep(wait_time)
             except Exception as e:
+                last_error = e
                 # Check if this is a non-retryable HTTP error (401, 400, etc.)
                 error_str = str(e)
                 is_non_retryable = any(
                     code in error_str
-                    for code in ["401", "400", "403", "404", "invalid api key", "authentication_error"]
+                    for code in ["401", "400", "403", "404", "invalid api key", "authentication_error", "unexpected keyword argument"]
                 )
                 if is_non_retryable:
                     logger.error(f"Non-retryable error: {error_str[:200]}")
@@ -129,7 +133,8 @@ class LoggerChatModel:
                 retry_delay = min(retry_delay * 2, 30)  # Cap delay at 30s
 
         logger.critical("Failed to get a response from the model after multiple attempts.")
-        raise Exception("Failed to get a response from the model after multiple attempts.")
+        detail = str(last_error) if last_error else "unknown model error"
+        raise Exception(f"Failed to get a response from the model: {detail}")
 
     def parse_llmresult(self, llmresult: AIMessage) -> Dict[str, Dict]:
         # Parse the LLM result into a structured format.

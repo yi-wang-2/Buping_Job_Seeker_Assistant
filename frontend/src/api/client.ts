@@ -45,6 +45,7 @@ export async function getStyles(): Promise<Record<string, { file: string; author
 export async function generateResume(params: {
   api_key?: string;
   model_type?: string;
+  model_name?: string;
   base_url?: string;
   llm_protocol?: string;
   style_name?: string;
@@ -125,6 +126,7 @@ export interface RewriteRequest {
   target_language?: "zh" | "en";
   api_key?: string;
   model_type?: string;
+  model_name?: string;
   base_url?: string;
   llm_protocol?: string;
 }
@@ -148,6 +150,7 @@ export async function rewriteText(params: RewriteRequest): Promise<RewriteRespon
 export async function generateInterviewPrep(params: {
   api_key?: string;
   model_type?: string;
+  model_name?: string;
   base_url?: string;
   job_description?: string;
   interview_type?: string;
@@ -161,6 +164,7 @@ export async function generateInterviewPrep(params: {
 export async function startMockInterview(params: {
   api_key?: string;
   model_type?: string;
+  model_name?: string;
   base_url?: string;
   resume_text?: string;
   job_description?: string;
@@ -184,10 +188,50 @@ export async function submitMockAnswer(params: {
   return data;
 }
 
+export function getMockInterviewDownloadUrl(filename: string): string {
+  return `/api/interview/mock/download/${encodeURIComponent(filename)}`;
+}
+
+export async function synthesizeMockInterviewSpeech(params: {
+  text: string;
+  provider?: string;
+  voice?: string;
+  rate?: string;
+}, signal?: AbortSignal): Promise<Blob> {
+  const { data } = await api.post("/interview/mock/tts", params, {
+    responseType: "blob",
+    timeout: 120000,
+    signal,
+  });
+  return data;
+}
+
+export async function streamMockInterviewSpeech(params: {
+  text: string;
+  provider?: string;
+  voice?: string;
+  rate?: string;
+}, signal?: AbortSignal): Promise<Response> {
+  const response = await fetch("/api/interview/mock/tts/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+    signal,
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `TTS stream failed with ${response.status}`);
+  }
+  if (!response.body) {
+    throw new Error("TTS stream returned empty body");
+  }
+  return response;
+}
+
 export async function endMockInterview(params: {
   session_id: string;
   history: Array<{ role: string; content: string }>;
-}): Promise<{ evaluation: string; file_path: string; status: string }> {
+}): Promise<{ evaluation: string; file_path: string; pdf_filename?: string; status: string }> {
   const { data } = await api.post("/interview/mock/end", params);
   return data;
 }
@@ -196,6 +240,7 @@ export async function endMockInterview(params: {
 export async function getSettings(): Promise<{
   llm_api_key: string;
   llm_model_type: string;
+  llm_model: string;
   llm_base_url: string;
   llm_protocol: string;
   resume_language: string;
@@ -211,6 +256,7 @@ export interface UploadResumeResponse {
   ext: string;
   yaml_content: string;
   message: string;
+  validation?: ResumeValidation;
   parse_diagnostics?: {
     llm_attempted?: boolean;
     llm_call_success?: boolean;
@@ -230,6 +276,7 @@ export async function uploadResume(
   options?: {
     apiKey?: string;
     modelType?: string;
+    modelName?: string;
     baseUrl?: string;
     llmProtocol?: string;
   },
@@ -239,6 +286,7 @@ export async function uploadResume(
   formData.append("target_lang", targetLang);
   if (options?.apiKey) formData.append("api_key", options.apiKey);
   if (options?.modelType) formData.append("model_type", options.modelType);
+  if (options?.modelName) formData.append("model_name", options.modelName);
   if (options?.baseUrl) formData.append("base_url", options.baseUrl);
   if (options?.llmProtocol) formData.append("llm_protocol", options.llmProtocol);
   const { data } = await api.post("/settings/upload-resume", formData, {
@@ -251,12 +299,33 @@ export async function uploadResume(
 export async function saveSettings(params: {
   llm_api_key?: string;
   llm_model_type?: string;
+  llm_model?: string;
   llm_base_url?: string;
   llm_protocol?: string;
   resume_language?: string;
   system_language?: string;
 }): Promise<{ status: string; message: string }> {
   const { data } = await api.put("/settings", params);
+  return data;
+}
+
+export interface ResumeValidationItem {
+  path: string;
+  message: string;
+}
+
+export interface ResumeValidation {
+  valid: boolean;
+  errors: ResumeValidationItem[];
+  warnings: ResumeValidationItem[];
+}
+
+export async function discoverModels(params: {
+  llm_api_key: string;
+  llm_base_url: string;
+  llm_protocol: string;
+}): Promise<{ models: string[] }> {
+  const { data } = await api.post("/settings/models", params, { timeout: 15000 });
   return data;
 }
 
@@ -268,7 +337,7 @@ export async function getResumeContent(language: string = "zh"): Promise<{ conte
 export async function saveResumeContent(params: {
   content: string;
   language: string;
-}): Promise<{ status: string; message: string }> {
+}): Promise<{ status: string; message: string; validation?: ResumeValidation }> {
   const { data } = await api.put("/settings/resume-content", params);
   return data;
 }

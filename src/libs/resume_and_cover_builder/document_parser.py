@@ -330,7 +330,7 @@ $resume_text
 
 
 def _call_llm(prompt: str, api_key: str, model_type: str = "anthropic",
-              base_url: str = "https://api.minimaxi.com/anthropic") -> str:
+              base_url: str = "https://api.minimaxi.com/anthropic", model_name: str = "") -> str:
     """Call the LLM with a prompt and return the text response.
 
     Uses the underlying LLM client directly (not LoggerChatModel.__call__,
@@ -364,6 +364,10 @@ def _call_llm(prompt: str, api_key: str, model_type: str = "anthropic",
 
         cfg.LLM_MODEL_TYPE = normalized_model_type
         cfg.LLM_API_URL = normalized_base_url
+        if model_name:
+            cfg.LLM_MODEL = model_name
+            cfg.ANTHROPIC_MODEL = model_name
+            cfg.OPENAI_MODEL = model_name
         cfg.LLM_PROTOCOL = normalized_protocol
         if normalized_protocol == "anthropic":
             cfg.ANTHROPIC_BASE_URL = normalized_base_url
@@ -645,6 +649,7 @@ def parse_document(
     *,
     api_key: str = "",
     model_type: str = "anthropic",
+    model_name: str = "",
     base_url: str = "https://api.minimaxi.com/anthropic",
     target_lang: str = "en",
     diagnostics: dict[str, Any] | None = None,
@@ -720,6 +725,7 @@ def parse_document(
         prompt,
         api_key=api_key,
         model_type=model_type,
+        model_name=model_name,
         base_url=base_url,
     )
     if diagnostics is not None:

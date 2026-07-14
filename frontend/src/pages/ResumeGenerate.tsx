@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Edit3, Save, RotateCcw, Check, History as HistoryIcon, Sparkle } from "lucide-react";
 import type { Strings } from "../i18n";
-import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveEditedResume } from "../api/client";
+import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
 import { EditableResumePreview } from "../components/editor";
+import { useAvailableModels } from "../hooks/useAvailableModels";
 
 // Preset list of supported LLM providers — kept in sync with Settings page.
 // Choosing a preset auto-fills base_url AND protocol fields.
@@ -39,6 +40,12 @@ const MODEL_PRESETS: ReadonlyArray<ModelPreset> = [
 const PRESET_BY_ID: Record<string, ModelPreset> = Object.fromEntries(
   MODEL_PRESETS.map((p) => [p.id, p])
 );
+const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
+  anthropic: "claude-sonnet-4-20250514", "minimax-anth": "MiniMax-M3",
+  openai: "gpt-4o-mini", deepseek: "deepseek-chat", zhipu: "glm-4-flash",
+  moonshot: "moonshot-v1-8k", qwen: "qwen-plus", yi: "yi-lightning",
+  "minimax-chat": "MiniMax-M3", "openai-resp": "gpt-4o-mini", "minimax-resp": "MiniMax-M3",
+};
 
 interface HistoryFile {
   name: string;
@@ -169,11 +176,15 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [styles, setStyles] = useState<Record<string, { file: string; author: string }>>({});
   const [apiKey, setApiKey] = useState("");
   const [modelType, setModelType] = useState("anthropic");
+  const [modelName, setModelName] = useState("MiniMax-M3");
   const [baseUrl, setBaseUrl] = useState("https://api.minimaxi.com/anthropic");
   const [llmProtocol, setLlmProtocol] = useState<LlmProtocol>("anthropic");
+  const availableModels = useAvailableModels(apiKey, baseUrl, llmProtocol);
   const [styleName, setStyleName] = useState("");
   const [jobDesc, setJobDesc] = useState("");
   const [resumeLang, setResumeLang] = useState("zh");
+  const [systemLanguage, setSystemLanguage] = useState("zh");
+  const [configSaveStatus, setConfigSaveStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [downloadFile, setDownloadFile] = useState("");
@@ -263,9 +274,11 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         settingsLoaded = true;
         setApiKey(cfg.llm_api_key ?? "");
         setModelType(cfg.llm_model_type || "anthropic");
+        setModelName(cfg.llm_model || DEFAULT_MODEL_BY_PROVIDER[cfg.llm_model_type] || "");
         setBaseUrl(cfg.llm_base_url || "https://api.minimaxi.com/anthropic");
         setLlmProtocol((cfg.llm_protocol as LlmProtocol) || "anthropic");
         setResumeLang(cfg.resume_language || "zh");
+        setSystemLanguage(cfg.system_language || "zh");
       })
       .catch((e) => console.warn("Failed to load saved settings:", e))
       .finally(finishOne);
@@ -297,6 +310,24 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleName, resumeLang]);
+
+  const handleSaveLlmConfig = async () => {
+    try {
+      await saveSettings({
+        llm_api_key: apiKey,
+        llm_model_type: modelType,
+        llm_model: modelName.trim(),
+        llm_base_url: baseUrl,
+        llm_protocol: llmProtocol,
+        resume_language: resumeLang,
+        system_language: systemLanguage,
+      });
+      setConfigSaveStatus(resumeLang === "zh" ? "配置已保存" : "Configuration saved");
+      window.setTimeout(() => setConfigSaveStatus(""), 3000);
+    } catch (err: any) {
+      setConfigSaveStatus(err?.response?.data?.detail || err?.message || "Save failed");
+    }
+  };
 
   const handleGenerate = async () => {
     if (loading) return; // Prevent double click
@@ -351,6 +382,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
       const result = await generateResume({
         api_key: apiKey,
         model_type: modelType,
+        model_name: modelName,
         base_url: baseUrl,
         llm_protocol: llmProtocol,
         style_name: styleName,
@@ -619,6 +651,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                     if (preset) {
                       setBaseUrl(preset.defaultBaseUrl);
                       setLlmProtocol(preset.protocol);
+                      setModelName(DEFAULT_MODEL_BY_PROVIDER[newType] || "");
                     }
                   }}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
@@ -631,6 +664,26 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 </select>
               </div>
               <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">模型名称 / Model ID</label>
+                {availableModels.length > 0 && (
+                  <select
+                    value={availableModels.includes(modelName) ? modelName : ""}
+                    onChange={(e) => e.target.value && setModelName(e.target.value)}
+                    className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                  >
+                    <option value="">选择供应商模型…</option>
+                    {availableModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                )}
+                <input
+                  type="text"
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
+                  placeholder="deepseek-chat"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+              <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{rt.modelProtocol}</label>
                 <select
                   value={llmProtocol}
@@ -641,6 +694,11 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                   <option value="openai_chat">{rt.protocolOpenaiChat}</option>
                   <option value="openai_response">{rt.protocolOpenaiResponse}</option>
                 </select>
+                {llmProtocol === "openai_response" && (
+                  <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                    Responses API 需要供应商及客户端同时支持；系统会按当前选择发送，不会自动切换。
+                  </p>
+                )}
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{rt.baseUrl}</label>
@@ -662,6 +720,19 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                   <option value="zh">中文</option>
                   <option value="en">English</option>
                 </select>
+              </div>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleSaveLlmConfig}
+                  className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+                >
+                  <Save className="h-4 w-4" />
+                  {resumeLang === "zh" ? "保存 LLM 配置" : "Save LLM config"}
+                </button>
+                {configSaveStatus && (
+                  <span className="text-xs text-gray-600 dark:text-gray-300">{configSaveStatus}</span>
+                )}
               </div>
             </div>
           </div>
@@ -1039,6 +1110,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         targetLanguage={resumeLang === "en" ? "en" : "zh"}
         apiKey={apiKey}
         modelType={modelType}
+        modelName={modelName}
         baseUrl={baseUrl}
         llmProtocol={llmProtocol}
         t={t}

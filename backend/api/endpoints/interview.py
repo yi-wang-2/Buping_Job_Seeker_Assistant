@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from backend.services import interview_service
@@ -16,7 +17,8 @@ router = APIRouter()
 
 class InterviewPrepRequest(BaseModel):
     api_key: str = ""
-    model_type: str = "anthropic"
+    model_type: str = ""
+    model_name: str = ""
     base_url: str = ""
     job_description: str = ""
     interview_type: str = "综合面试"
@@ -37,6 +39,7 @@ def generate_interview_prep(req: InterviewPrepRequest) -> InterviewPrepResponse:
         result = interview_service.generate_interview_prep(
             api_key=req.api_key,
             model_type=req.model_type,
+            model_name=req.model_name,
             base_url=req.base_url,
             job_description=req.job_description,
             interview_type=req.interview_type,
@@ -52,7 +55,8 @@ def generate_interview_prep(req: InterviewPrepRequest) -> InterviewPrepResponse:
 
 class MockInterviewStartRequest(BaseModel):
     api_key: str = ""
-    model_type: str = "anthropic"
+    model_type: str = ""
+    model_name: str = ""
     base_url: str = ""
     resume_text: str = ""
     job_description: str = ""
@@ -76,6 +80,7 @@ def start_mock_interview(req: MockInterviewStartRequest) -> MockInterviewStartRe
         result = interview_service.start_mock_interview(
             api_key=req.api_key,
             model_type=req.model_type,
+            model_name=req.model_name,
             base_url=req.base_url,
             resume_text=req.resume_text,
             job_description=req.job_description,
@@ -126,7 +131,69 @@ class MockInterviewEndRequest(BaseModel):
 class MockInterviewEndResponse(BaseModel):
     evaluation: str
     file_path: str
+    pdf_path: str = ""
+    pdf_filename: str = ""
     status: str
+
+
+class MockInterviewTTSRequest(BaseModel):
+    text: str
+    provider: str = "minimax"
+    voice: str = ""
+    rate: str = "+0%"
+
+
+@router.post("/mock/tts")
+async def synthesize_mock_interview_tts(req: MockInterviewTTSRequest) -> Response:
+    """Synthesize mock interviewer speech."""
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    try:
+        audio, media_type = await interview_service.synthesize_mock_interview_speech(
+            text=req.text,
+            voice=req.voice,
+            rate=req.rate,
+            provider=req.provider,
+        )
+        return Response(
+            content=audio,
+            media_type=media_type,
+            headers={"Cache-Control": "no-store"},
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/mock/tts/stream")
+async def stream_mock_interview_tts(req: MockInterviewTTSRequest) -> StreamingResponse:
+    """Stream mock interviewer speech."""
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    try:
+        if (req.provider or "minimax").lower() == "minimax":
+            interview_service.validate_minimax_tts_config()
+        return StreamingResponse(
+            interview_service.stream_mock_interview_speech(
+                text=req.text,
+                voice=req.voice,
+                rate=req.rate,
+                provider=req.provider,
+            ),
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/mock/tts/diagnostics")
+def get_mock_interview_tts_diagnostics() -> dict:
+    """Return TTS runtime diagnostics."""
+    return interview_service.get_tts_diagnostics()
 
 
 @router.post("/mock/end", response_model=MockInterviewEndResponse)
@@ -141,3 +208,18 @@ def end_mock_interview(req: MockInterviewEndRequest) -> MockInterviewEndResponse
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/mock/download/{filename}")
+def download_mock_interview_pdf(filename: str) -> FileResponse:
+    """Download a generated mock interview PDF report."""
+    from pathlib import Path
+
+    safe_name = Path(filename).name
+    if not safe_name.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF reports can be downloaded")
+
+    file_path = Path("data_folder/output/mock_interview") / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(path=str(file_path), filename=safe_name, media_type="application/pdf")
