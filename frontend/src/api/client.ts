@@ -5,6 +5,13 @@ const api = axios.create({
   timeout: 300000, // 5 min for LLM calls
 });
 
+const API_KEY_SESSION_KEY = "buping_llm_api_key";
+
+export async function getCurrentUser(): Promise<{ authenticated: boolean; user_id: string }> {
+  const { data } = await api.get("/me");
+  return data;
+}
+
 // Retry on connection failures (e.g. backend not yet up after
 // `start-dev.bat` launches both servers). Chrome driver init + model
 // imports can take 3-6 seconds, so we use exponential backoff up to
@@ -247,6 +254,7 @@ export async function getSettings(): Promise<{
   system_language: string;
 }> {
   const { data } = await api.get("/settings");
+  data.llm_api_key = window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "";
   return data;
 }
 
@@ -305,7 +313,10 @@ export async function saveSettings(params: {
   resume_language?: string;
   system_language?: string;
 }): Promise<{ status: string; message: string }> {
-  const { data } = await api.put("/settings", params);
+  if (params.llm_api_key) window.sessionStorage.setItem(API_KEY_SESSION_KEY, params.llm_api_key);
+  else window.sessionStorage.removeItem(API_KEY_SESSION_KEY);
+  const { llm_api_key: _apiKey, ...cloudSettings } = params;
+  const { data } = await api.put("/settings", cloudSettings);
   return data;
 }
 
