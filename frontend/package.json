@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/prepare-sites.mjs",
+    "build": "tsc -b && vite build",
+    "build:cloud": "tsc -b && vite build --mode cloud && node scripts/prepare-sites.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

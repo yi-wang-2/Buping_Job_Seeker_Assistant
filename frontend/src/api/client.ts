@@ -6,6 +6,7 @@ const api = axios.create({
 });
 
 const API_KEY_SESSION_KEY = "buping_llm_api_key";
+const IS_CLOUD = import.meta.env.VITE_DEPLOYMENT_MODE === "cloud";
 
 export async function getCurrentUser(): Promise<{ authenticated: boolean; user_id: string }> {
   const { data } = await api.get("/me");
@@ -254,7 +255,7 @@ export async function getSettings(): Promise<{
   system_language: string;
 }> {
   const { data } = await api.get("/settings");
-  data.llm_api_key = window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "";
+  if (IS_CLOUD) data.llm_api_key = window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "";
   return data;
 }
 
@@ -313,6 +314,10 @@ export async function saveSettings(params: {
   resume_language?: string;
   system_language?: string;
 }): Promise<{ status: string; message: string }> {
+  if (!IS_CLOUD) {
+    const { data } = await api.put("/settings", params);
+    return data;
+  }
   if (params.llm_api_key) window.sessionStorage.setItem(API_KEY_SESSION_KEY, params.llm_api_key);
   else window.sessionStorage.removeItem(API_KEY_SESSION_KEY);
   const { llm_api_key: _apiKey, ...cloudSettings } = params;

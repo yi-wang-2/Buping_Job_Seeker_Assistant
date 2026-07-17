@@ -7,7 +7,6 @@ import MockInterview from "./pages/MockInterview";
 import History from "./pages/History";
 import SettingsPage from "./pages/Settings";
 import { getStrings, useLang } from "./i18n";
-import AuthGate from "./components/AuthGate";
 
 const SIDEBAR_OPEN_KEY = "buping_sidebar_open";
 
@@ -32,7 +31,6 @@ export default function App() {
   const toggleSidebar = () => setSidebarOpen((prev) => !prev);
 
   return (
-    <AuthGate>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <Sidebar
         t={t}
@@ -65,10 +63,19 @@ export default function App() {
           {/* Footer */}
           <footer className="mt-12 border-t border-gray-200 pt-6 dark:border-gray-700">
             <p className="text-center text-xs text-gray-400 dark:text-gray-500">{t.footer}</p>
+            <p className="mt-2 text-center text-xs">
+              <a
+                href="https://github.com/yi-wang-2/Buping_Job_Seeker_Assistant"
+                target="_blank"
+                rel="noreferrer"
+                className="text-brand-600 hover:underline dark:text-brand-400"
+              >
+                GitHub · Buping Job Seeker Assistant
+              </a>
+            </p>
           </footer>
         </div>
       </main>
     </div>
-    </AuthGate>
   );
 }
