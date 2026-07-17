@@ -7,6 +7,10 @@
 [![uv](https://img.shields.io/badge/uv-powered-DE5FE9?logo=astral&logoColor=white)](https://docs.astral.sh/uv/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+## 在线体验
+
+GPT 部署版本：[立即访问](https://buping-job-assistant.daniel26yw.chatgpt.site/)
+
 > **人生之路总是坎坷，这也造就了我们不平凡的人生.**
 
 AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具。覆盖从简历优化、岗位匹配、面试准备到职业发展的完整求职周期。
