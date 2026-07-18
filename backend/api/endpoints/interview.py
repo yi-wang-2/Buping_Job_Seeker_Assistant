@@ -143,6 +143,12 @@ class MockInterviewTTSRequest(BaseModel):
     rate: str = "+0%"
 
 
+@router.get("/mock/tts/voices")
+def get_mock_interview_tts_voices() -> dict:
+    """List selectable voices that are available in the local runtime."""
+    return interview_service.get_mock_interview_tts_voices()
+
+
 @router.post("/mock/tts")
 async def synthesize_mock_interview_tts(req: MockInterviewTTSRequest) -> Response:
     """Synthesize mock interviewer speech."""

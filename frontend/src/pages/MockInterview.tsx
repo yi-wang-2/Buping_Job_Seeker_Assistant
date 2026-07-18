@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Bot, Send, Play, Square, Loader2, User, Download, Mic, MicOff, Volume2, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { Strings } from "../i18n";
-import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
+import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getMockInterviewTTSVoices, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
 
 interface Message {
   role: "user" | "assistant";
@@ -22,10 +22,10 @@ type SpeechRecognitionLike = {
 };
 
 const MINIMAX_VOICE_OPTIONS = [
-  { id: "Chinese (Mandarin)_HK_Flight_Attendant", label: "自然女声" },
-  { id: "Chinese (Mandarin)_Lyrical_Voice", label: "温和女声" },
-  { id: "Chinese (Mandarin)_Male_Announcer", label: "稳重男声" },
-  { id: "male-qn-qingse", label: "清澈男声" },
+  { id: "Chinese (Mandarin)_Reliable_Executive", label: "沉稳高管", gender: "male" },
+  { id: "male-qn-jingying", label: "精英青年", gender: "male" },
+  { id: "female-chengshu", label: "成熟女性", gender: "female" },
+  { id: "Chinese (Mandarin)_Wise_Women", label: "阅历姐姐", gender: "female" },
 ];
 
 const TTS_PROVIDER_OPTIONS = [
@@ -87,8 +87,12 @@ export default function MockInterview({ t }: { t: Strings }) {
   const [voiceStatus, setVoiceStatus] = useState("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
   const [ttsProvider, setTtsProvider] = useState<TTSProvider>("minimax");
-  const [ttsVoice, setTtsVoice] = useState("Chinese (Mandarin)_HK_Flight_Attendant");
-  const [ttsSpeed, setTtsSpeed] = useState(1.08);
+  const [minimaxVoice, setMinimaxVoice] = useState("Chinese (Mandarin)_Reliable_Executive");
+  const [kokoroVoice, setKokoroVoice] = useState("zf_001");
+  const [kokoroVoiceOptions, setKokoroVoiceOptions] = useState<Array<{ id: string; label: string }>>([
+    { id: "zf_001", label: "女声 zf_001" },
+  ]);
+  const [ttsSpeed, setTtsSpeed] = useState(1);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -116,6 +120,14 @@ export default function MockInterview({ t }: { t: Strings }) {
       }
     };
     void loadSavedResume();
+    void getMockInterviewTTSVoices()
+      .then((result) => {
+        if (result.kokoro?.length) {
+          setKokoroVoiceOptions(result.kokoro);
+          setKokoroVoice((current) => result.kokoro.some((voice) => voice.id === current) ? current : result.kokoro[0].id);
+        }
+      })
+      .catch(() => undefined);
     return () => {
       if (typingTimerRef.current !== null) {
         window.clearInterval(typingTimerRef.current);
@@ -163,6 +175,16 @@ export default function MockInterview({ t }: { t: Strings }) {
     setIsListening(false);
   };
 
+  const selectedVoiceGender = () => {
+    if (ttsProvider === "minimax") {
+      return MINIMAX_VOICE_OPTIONS.find((voice) => voice.id === minimaxVoice)?.gender || "female";
+    }
+    if (ttsProvider === "kokoro") {
+      return kokoroVoice.startsWith("zm_") ? "male" : "female";
+    }
+    return "female";
+  };
+
   const speakWithBrowserFallback = (text: string) => {
     if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
       return;
@@ -170,9 +192,13 @@ export default function MockInterview({ t }: { t: Strings }) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "zh-CN";
-    utterance.rate = 0.95;
+    utterance.rate = ttsSpeed;
     utterance.pitch = 1;
-    utterance.onstart = () => setVoiceStatus("正在使用浏览器播报");
+    const browserVoices = window.speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith("zh"));
+    const preferMale = selectedVoiceGender() === "male";
+    const preferredNames = preferMale ? ["Yunxi", "Yunjian", "Kangkang"] : ["Xiaoxiao", "Xiaoyi", "Huihui"];
+    utterance.voice = browserVoices.find((voice) => preferredNames.some((name) => voice.name.includes(name))) || browserVoices[0] || null;
+    utterance.onstart = () => setVoiceStatus(`主语音不可用，正在使用浏览器${preferMale ? "男声" : "女声"}播报`);
     utterance.onend = () => setVoiceStatus("");
     utterance.onerror = () => setVoiceStatus("语音播报失败");
     window.speechSynthesis.speak(utterance);
@@ -282,7 +308,7 @@ export default function MockInterview({ t }: { t: Strings }) {
     const cleanText = text.replace(/[#*_`>-]/g, "").trim();
     if (!cleanText) return;
     const rate = `${Math.round((ttsSpeed - 1) * 100)}%`;
-    const providerVoice = ttsProvider === "minimax" ? ttsVoice : ttsProvider === "kokoro" ? "zf_001" : "";
+    const providerVoice = ttsProvider === "minimax" ? minimaxVoice : ttsProvider === "kokoro" ? kokoroVoice : "";
     const audioCacheKey = `${ttsProvider}|${providerVoice}|${ttsSpeed.toFixed(2)}|${cleanText}`;
 
     stopSpeaking();
@@ -681,10 +707,10 @@ export default function MockInterview({ t }: { t: Strings }) {
                     </select>
                     {ttsProvider === "minimax" && (
                     <select
-                      value={ttsVoice}
+                      value={minimaxVoice}
                       onChange={(event) => {
                         stopSpeaking();
-                        setTtsVoice(event.target.value);
+                        setMinimaxVoice(event.target.value);
                       }}
                       title="选择语音音色"
                       className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
@@ -693,6 +719,29 @@ export default function MockInterview({ t }: { t: Strings }) {
                         <option key={option.id} value={option.id}>{option.label}</option>
                       ))}
                     </select>
+                    )}
+                    {ttsProvider === "kokoro" && (
+                      <select
+                        value={kokoroVoice}
+                        onChange={(event) => {
+                          stopSpeaking();
+                          setKokoroVoice(event.target.value);
+                        }}
+                        title="选择本地 Kokoro 音色"
+                        className="h-8 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                      >
+                        {kokoroVoiceOptions.map((option) => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {ttsProvider === "chattts" && (
+                      <span
+                        title="当前 ChatTTS 接口不支持选择固定说话人"
+                        className="flex h-8 items-center rounded-lg border border-gray-200 px-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                      >
+                        自动音色
+                      </span>
                     )}
                     <label className="flex h-8 items-center gap-2 rounded-lg border border-gray-200 px-2 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300">
                       <span>语速</span>

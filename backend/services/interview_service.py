@@ -131,6 +131,20 @@ def _get_kokoro_model_dir(repo_id: str) -> Path:
     return Path(os.getenv("KOKORO_MODEL_DIR", "") or DATA_FOLDER / "models" / default_name)
 
 
+def get_mock_interview_tts_voices() -> dict[str, list[dict[str, str]]]:
+    """Return locally available TTS voices without loading a speech model."""
+    voices_dir = _get_kokoro_model_dir(_get_kokoro_repo_id()) / "voices"
+    kokoro_voices: list[dict[str, str]] = []
+    if voices_dir.is_dir():
+        for voice_path in sorted(voices_dir.glob("*.pt")):
+            voice_id = voice_path.stem
+            gender = "女声" if voice_id.startswith(("af_", "bf_", "zf_")) else "男声"
+            kokoro_voices.append({"id": voice_id, "label": f"{gender} {voice_id}"})
+    if not kokoro_voices:
+        kokoro_voices.append({"id": _KOKORO_DEFAULT_VOICE, "label": f"女声 {_KOKORO_DEFAULT_VOICE}"})
+    return {"kokoro": kokoro_voices}
+
+
 def _markdown_line_to_pdf_html(text: str) -> str:
     escaped = html_lib.escape(text.strip())
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
@@ -358,30 +372,9 @@ async def synthesize_mock_interview_speech(
             # ChatTTS is preferred for quality, but edge-tts is a lighter network fallback.
             primary_error = exc
 
-    try:
-        import edge_tts
-    except ModuleNotFoundError as exc:
-        if primary_error is not None:
-            raise RuntimeError(f"{provider_name} failed: {primary_error}; edge-tts is not installed.") from exc
-        raise RuntimeError("edge-tts is not installed. Please install project dependencies.") from exc
-
-    try:
-        edge_voice = voice if voice and voice.startswith("zh-") else "zh-CN-XiaoxiaoNeural"
-        communicate = edge_tts.Communicate(clean_text, voice=edge_voice, rate=rate or "+0%")
-        chunks: list[bytes] = []
-        async for chunk in communicate.stream():
-            if chunk.get("type") == "audio":
-                chunks.append(chunk.get("data", b""))
-    except Exception as exc:
-        if primary_error is not None:
-            raise RuntimeError(f"{provider_name} failed: {primary_error}; edge-tts synthesis failed: {exc}") from exc
-        raise RuntimeError(f"edge-tts synthesis failed: {exc}") from exc
-    audio = b"".join(chunks)
-    if not audio:
-        raise RuntimeError("TTS returned empty audio")
-    result = (audio, "audio/mpeg")
-    _cache_tts_result(cache_key, result)
-    return result
+    if primary_error is not None:
+        raise RuntimeError(f"{provider_name} TTS failed: {primary_error}") from primary_error
+    raise RuntimeError(f"Unsupported TTS provider: {provider_name}")
 
 
 async def stream_mock_interview_speech(
@@ -436,15 +429,16 @@ def _get_minimax_tts_url() -> str:
 
 
 def _get_minimax_voice(voice: str = "") -> str:
-    return voice or os.getenv("MINIMAX_TTS_VOICE", "Chinese (Mandarin)_HK_Flight_Attendant")
+    return voice or os.getenv("MINIMAX_TTS_VOICE", "Chinese (Mandarin)_Reliable_Executive")
 
 
 def _rate_to_minimax_speed(rate: str) -> float:
-    base_speed = float(os.getenv("MINIMAX_TTS_SPEED", "1.08"))
     match = re.match(r"^([+-]?\d+)%$", (rate or "").strip())
     if match:
-        base_speed += int(match.group(1)) / 100.0
-    return max(0.5, min(base_speed, 2.0))
+        speed = 1.0 + int(match.group(1)) / 100.0
+    else:
+        speed = float(os.getenv("MINIMAX_TTS_SPEED", "1.0"))
+    return max(0.5, min(speed, 2.0))
 
 
 def _build_minimax_tts_payload(text: str, voice: str = "", rate: str = "+0%", stream: bool = False) -> dict[str, Any]:

@@ -182,7 +182,18 @@ export async function startMockInterview(params: {
   interview_type?: string;
   interview_style?: string;
 }): Promise<{ history: Array<{ role: string; content: string }>; session_id: string | null; status: string }> {
-  const { data } = await api.post("/interview/mock/start", params);
+  let payload = params;
+  if (IS_CLOUD && !params.api_key) {
+    const settings = await getSettings();
+    payload = {
+      ...params,
+      api_key: settings.llm_api_key,
+      model_type: settings.llm_model_type,
+      model_name: settings.llm_model,
+      base_url: settings.llm_base_url,
+    };
+  }
+  const { data } = await api.post("/interview/mock/start", payload);
   return data;
 }
 
@@ -198,6 +209,13 @@ export async function submitMockAnswer(params: {
 
 export function getMockInterviewDownloadUrl(filename: string): string {
   return `/api/interview/mock/download/${encodeURIComponent(filename)}`;
+}
+
+export async function getMockInterviewTTSVoices(): Promise<{
+  kokoro: Array<{ id: string; label: string }>;
+}> {
+  const { data } = await api.get("/interview/mock/tts/voices");
+  return data;
 }
 
 export async function synthesizeMockInterviewSpeech(params: {
