@@ -5,6 +5,7 @@ import ResumeGenerate from "./pages/ResumeGenerate";
 import InterviewPrep from "./pages/InterviewPrep";
 import MockInterview from "./pages/MockInterview";
 import History from "./pages/History";
+import JobTracker from "./pages/JobTracker";
 import SettingsPage from "./pages/Settings";
 import { getStrings, useLang } from "./i18n";
 
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="/interview-prep" element={<InterviewPrep t={t} />} />
             <Route path="/mock-interview" element={<MockInterview t={t} />} />
             <Route path="/history" element={<History t={t} />} />
+            <Route path="/job-tracker" element={<JobTracker t={t} />} />
             <Route path="/settings" element={<SettingsPage t={t} />} />
             <Route path="*" element={<Navigate to="/resume" replace />} />
           </Routes>

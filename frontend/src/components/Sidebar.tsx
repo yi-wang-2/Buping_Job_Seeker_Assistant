@@ -8,6 +8,7 @@ import {
   Globe,
   PanelLeftClose,
   PanelLeftOpen,
+  ClipboardList,
 } from "lucide-react";
 import type { Lang, Strings } from "../i18n";
 
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/interview-prep", icon: BookOpen, key: "interviewPrep" as const },
   { to: "/mock-interview", icon: Bot, key: "mockInterview" as const },
   { to: "/history", icon: Clock, key: "history" as const },
+  { to: "/job-tracker", icon: ClipboardList, key: "jobTracker" as const },
   { to: "/settings", icon: Settings, key: "settings" as const },
 ];
 

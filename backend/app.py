@@ -26,6 +26,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (ROOT / "data_folder" / "output").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "output" / "interview_prep").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "output" / "mock_interview").mkdir(parents=True, exist_ok=True)
+    (ROOT / "data_folder" / "job_tracker").mkdir(parents=True, exist_ok=True)
+    (ROOT / "data_folder" / "job_tracker" / "icon").mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -49,6 +51,10 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(api_router)
+
+    # Serve job tracker icons from the project data folder
+    JOB_TRACKER_ICON = ROOT / "data_folder" / "job_tracker" / "icon"
+    app.mount("/api/job-tracker/icon", StaticFiles(directory=str(JOB_TRACKER_ICON)), name="job_tracker_icon")
 
     # Serve frontend static files in production
     if FRONTEND_DIST.exists():

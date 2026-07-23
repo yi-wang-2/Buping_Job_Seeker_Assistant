@@ -389,3 +389,40 @@ export async function clearHistory(): Promise<{ status: string; message: string;
   const { data } = await api.delete("/history");
   return data;
 }
+
+// ---- Job Tracker ----
+
+export interface JobEntry {
+  id: number;
+  company: string;
+  role: string;
+  base: string;
+  remark: string;
+  link: string;
+  status: string;
+  icon: string;
+  notes: string;
+}
+
+export async function getJobTrackerRecords(): Promise<{ records: JobEntry[]; count: number }> {
+  const { data } = await api.get("/job-tracker");
+  return data;
+}
+
+export async function saveJobTrackerRecords(
+  records: JobEntry[],
+): Promise<{ status: string; saved: number; path: string }> {
+  const { data } = await api.put("/job-tracker", { records });
+  return data;
+}
+
+export async function getJobTrackerStats(): Promise<{
+  total: number;
+  interviewing: number;
+  offers: number;
+  rejected: number;
+  company_counts: Record<string, number>;
+}> {
+  const { data } = await api.get("/job-tracker/stats");
+  return data;
+}
