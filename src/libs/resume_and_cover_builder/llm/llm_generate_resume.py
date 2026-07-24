@@ -175,6 +175,31 @@ def _create_chat_model(api_key: str):
         return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4, max_tokens=4096)
     except TypeError:
         return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4)
+
+
+def _create_gateway_chat_model(api_key: str, *, skill: str, max_output_tokens: int = 4096):
+    """Build the common Gateway adapter for incrementally migrated resume calls."""
+    from src.libs.ai_engine.observability import JsonlTraceSink
+    from src.libs.ai_engine.observability.langchain_tracing import GatewayChatClient
+    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+
+    protocol = _resolve_protocol()
+    provider = "anthropic" if protocol == "anthropic" else "openai"
+    if protocol == "anthropic":
+        model = cfg.ANTHROPIC_MODEL or cfg.LLM_MODEL or "MiniMax-M3"
+        base_url = cfg.ANTHROPIC_BASE_URL or ""
+    else:
+        model = cfg.LLM_MODEL or getattr(cfg, "OPENAI_MODEL", "") or "gpt-4o-mini"
+        raw_base_url = getattr(cfg, "OPENAI_BASE_URL", None) or cfg.LLM_API_URL or ""
+        base_url = _strip_base_url_path(raw_base_url, proto=protocol)
+    gateway = LLMGateway(
+        GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2),
+        trace_sink=JsonlTraceSink(),
+    )
+    return GatewayChatClient(
+        gateway, provider=provider, model=model, skill=skill,
+        temperature=0.4, max_output_tokens=max_output_tokens,
+    )
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
@@ -196,6 +221,7 @@ class LLMResumer:
         api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
         llm_client = _create_chat_model(api_key)
         self.llm_cheap = LoggerChatModel(llm_client)
+        self.gateway_chat = _create_gateway_chat_model(api_key, skill="resume_writer")
         self.strings = strings
 
     @staticmethod

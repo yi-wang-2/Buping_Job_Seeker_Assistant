@@ -1,0 +1,18 @@
+{
+  "context.token_reduction_percent": { "min": 25 },
+  "context.fact_retention_percent": { "min": 100 },
+  "context.p95_latency_ms": { "max": 25 },
+  "cache.hit_rate_percent": { "min": 80 },
+  "cache.p95_read_latency_ms": { "max": 25 },
+  "memory.round_trip_percent": { "min": 100 },
+  "memory.p95_write_latency_ms": { "max": 100 },
+  "memory.p95_read_latency_ms": { "max": 50 },
+  "gateway.p95_overhead_ms": { "max": 10 },
+  "gateway.usage_accuracy_percent": { "min": 100 },
+  "skills.registered_skills": { "min": 7 },
+  "skills.unique_skill_names": { "min": 7 },
+  "skills.valid_budget_percent": { "min": 100 },
+  "skills.prompt_contract_coverage_percent": { "min": 100 },
+  "skills.incremental_detection_percent": { "min": 100 },
+  "skills.execution_success_percent": { "min": 100 }
+}

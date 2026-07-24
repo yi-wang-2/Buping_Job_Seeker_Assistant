@@ -1,18 +1,20 @@
 import { useState } from "react";
 import { BookOpen, Download, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Strings } from "../i18n";
-import { generateInterviewPrep } from "../api/client";
+import { generateInterviewPrep, getInterviewPrepDownloadUrl } from "../api/client";
+import { useSessionState } from "../hooks/useSessionState";
 
 export default function InterviewPrep({ t }: { t: Strings }) {
   const ip = t.interviewPrep;
-  const [jobDesc, setJobDesc] = useState("");
-  const [interviewType, setInterviewType] = useState("综合面试");
-  const [questionCount, setQuestionCount] = useState(10);
+  const [jobDesc, setJobDesc] = useSessionState("buping_interview_prep_job_desc", "");
+  const [interviewType, setInterviewType] = useSessionState("buping_interview_prep_type", "综合面试");
+  const [questionCount, setQuestionCount] = useSessionState("buping_interview_prep_question_count", 10);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
-  const [report, setReport] = useState("");
-  const [filePath, setFilePath] = useState("");
+  const [status, setStatus] = useSessionState("buping_interview_prep_status", "");
+  const [report, setReport] = useSessionState("buping_interview_prep_report", "");
+  const [downloads, setDownloads] = useSessionState("buping_interview_prep_downloads", { md: "", pdf: "" });
 
   const handleGenerate = async () => {
     if (!jobDesc.trim()) {
@@ -22,17 +24,21 @@ export default function InterviewPrep({ t }: { t: Strings }) {
     setLoading(true);
     setStatus(ip.generating);
     setReport("");
+    setDownloads({ md: "", pdf: "" });
     try {
       const result = await generateInterviewPrep({
         job_description: jobDesc,
         interview_type: interviewType,
         question_count: questionCount,
       });
+      const nextDownloads = { md: result.md_filename, pdf: result.pdf_filename };
+      const successStatus = "✅ 报告生成成功！";
       setReport(result.report);
-      setFilePath(result.file_path);
-      setStatus("✅ 报告生成成功！");
+      setDownloads(nextDownloads);
+      setStatus(successStatus);
     } catch (err: any) {
-      setStatus(`❌ ${err.response?.data?.detail || err.message}`);
+      const errorStatus = `❌ ${err.response?.data?.detail || err.message}`;
+      setStatus(errorStatus);
     } finally {
       setLoading(false);
     }
@@ -123,9 +129,28 @@ export default function InterviewPrep({ t }: { t: Strings }) {
           {/* Report */}
           {report && (
             <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-              <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">{ip.report}</h3>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{ip.report}</h3>
+                <div className="flex gap-2">
+                  <a href={getInterviewPrepDownloadUrl(downloads.md)} download className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                    <Download className="h-4 w-4" /> Markdown
+                  </a>
+                  <a href={getInterviewPrepDownloadUrl(downloads.pdf)} download className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700">
+                    <Download className="h-4 w-4" /> PDF
+                  </a>
+                </div>
+              </div>
               <div className="markdown-body prose prose-sm max-w-none dark:prose-invert">
-                <ReactMarkdown>{report}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    table: ({ children }) => (
+                      <div className="markdown-table-wrap"><table>{children}</table></div>
+                    ),
+                  }}
+                >
+                  {report}
+                </ReactMarkdown>
               </div>
             </div>
           )}

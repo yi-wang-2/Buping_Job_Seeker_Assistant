@@ -8,6 +8,27 @@ const api = axios.create({
 const API_KEY_SESSION_KEY = "buping_llm_api_key";
 const IS_CLOUD = import.meta.env.VITE_DEPLOYMENT_MODE === "cloud";
 
+export interface AIMetrics {
+  period_days: number;
+  summary: {
+    calls: number; successful_calls: number; errors: number; success_rate: number;
+    input_tokens: number; output_tokens: number; total_tokens: number; retries: number;
+    avg_latency_ms: number; p95_latency_ms: number; cache_hits: number; cache_entries: number;
+    cache_hit_rate: number; memory_items: number; context_original_tokens: number;
+    context_final_tokens: number; context_saved_tokens: number; context_compression_rate: number;
+    compressed_items: number; dropped_items: number;
+  };
+  by_skill: Array<{ skill: string; calls: number; tokens: number; errors: number; avg_latency_ms: number }>;
+  by_model: Array<{ model: string; calls: number; tokens: number }>;
+  timeline: Array<{ date: string; calls: number; tokens: number; errors: number }>;
+  recent: Array<Record<string, any>>;
+}
+
+export async function getAIMetrics(days = 30): Promise<AIMetrics> {
+  const { data } = await api.get("/ai-metrics", { params: { days } });
+  return data;
+}
+
 export async function getCurrentUser(): Promise<{ authenticated: boolean; user_id: string }> {
   const { data } = await api.get("/me");
   return data;
@@ -164,9 +185,13 @@ export async function generateInterviewPrep(params: {
   interview_type?: string;
   question_count?: number;
   resume_language?: string;
-}): Promise<{ report: string; file_path: string; status: string }> {
+}): Promise<{ report: string; file_path: string; md_filename: string; pdf_filename: string; status: string }> {
   const { data } = await api.post("/interview/prep", params);
   return data;
+}
+
+export function getInterviewPrepDownloadUrl(filename: string): string {
+  return `/api/interview/prep/download/${encodeURIComponent(filename)}`;
 }
 
 export async function startMockInterview(params: {
@@ -215,6 +240,24 @@ export async function getMockInterviewTTSVoices(): Promise<{
   kokoro: Array<{ id: string; label: string }>;
 }> {
   const { data } = await api.get("/interview/mock/tts/voices");
+  return data;
+}
+
+export async function getMemorySettings(): Promise<{ memory_enabled: boolean; cache_enabled: boolean }> {
+  const { data } = await api.get("/memory/settings");
+  return data;
+}
+
+export async function saveMemorySettings(settings: {
+  memory_enabled: boolean;
+  cache_enabled: boolean;
+}): Promise<{ memory_enabled: boolean; cache_enabled: boolean }> {
+  const { data } = await api.put("/memory/settings", settings);
+  return data;
+}
+
+export async function clearAIMemory(): Promise<{ deleted: number }> {
+  const { data } = await api.delete("/memory");
   return data;
 }
 

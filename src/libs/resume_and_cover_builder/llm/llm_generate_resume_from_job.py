@@ -32,9 +32,12 @@ class LLMResumeJobDescription(LLMResumer):
             job_description_text (str): The plain text job description to be used.
         """
         prompt = ChatPromptTemplate.from_template(self.strings.summarize_prompt_template)
-        chain = prompt | self.llm_cheap | StrOutputParser()
-        output = chain.invoke({"text": job_description_text})
-        self.job_description = output
+        messages = prompt.format_messages(text=job_description_text)
+        response = self.gateway_chat.invoke(
+            messages,
+            trace_metadata={"operation": "summarize_job_description"},
+        )
+        self.job_description = response.content.strip()
     
     def generate_all_sections(self) -> dict:
         """

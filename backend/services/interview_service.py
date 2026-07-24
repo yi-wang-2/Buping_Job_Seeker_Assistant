@@ -71,7 +71,7 @@ def generate_interview_prep(
     question_count: int = 10,
     resume_language: str = "zh",
 ) -> dict[str, Any]:
-    """Generate interview preparation report. Returns {report, file_path, status}."""
+    """Generate interview preparation report and persist Markdown/PDF downloads."""
     from src.libs.interview_prep import InterviewPrepGenerator
 
     effective = _get_effective_config(api_key, model_type, base_url, model_name)
@@ -101,7 +101,16 @@ def generate_interview_prep(
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(report)
 
-    return {"report": report, "file_path": str(output_path), "status": "success"}
+    pdf_path = output_dir / f"interview_prep_{timestamp}.pdf"
+    _write_markdown_pdf(report, pdf_path, title="Interview Preparation Report")
+
+    return {
+        "report": report,
+        "file_path": str(output_path),
+        "md_filename": output_path.name,
+        "pdf_filename": pdf_path.name,
+        "status": "success",
+    }
 
 
 # In-memory mock interview sessions
@@ -150,14 +159,15 @@ def _markdown_line_to_pdf_html(text: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped)
 
 
-def _write_mock_interview_pdf(markdown_text: str, output_path: Path) -> None:
-    """Render a mock interview markdown report to PDF."""
+def _write_markdown_pdf(markdown_text: str, output_path: Path, title: str) -> None:
+    """Render a Markdown report to a readable, CJK-capable PDF."""
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
@@ -170,15 +180,43 @@ def _write_mock_interview_pdf(markdown_text: str, output_path: Path) -> None:
         styles[style_name].leading = max(styles[style_name].leading, styles[style_name].fontSize + 4)
     styles["BodyText"].fontSize = 10
     styles["BodyText"].spaceAfter = 6
+    styles["Title"].fontSize = 22
+    styles["Title"].textColor = colors.HexColor("#172554")
+    styles["Heading2"].fontSize = 15
+    styles["Heading2"].textColor = colors.HexColor("#1d4ed8")
+    styles["Heading2"].spaceBefore = 14
+    styles["Heading3"].fontSize = 12
+    styles["Heading3"].textColor = colors.HexColor("#334155")
+    bullet_style = ParagraphStyle(
+        "ReportBullet", parent=styles["BodyText"], leftIndent=12, firstLineIndent=-8,
+    )
+    table_header_style = ParagraphStyle(
+        "TableHeader", parent=styles["BodyText"], fontSize=8, leading=11,
+        textColor=colors.white, alignment=1,
+    )
+    table_cell_style = ParagraphStyle(
+        "TableCell", parent=styles["BodyText"], fontSize=8, leading=11, spaceAfter=0,
+    )
+
+    def split_table_row(value: str) -> list[str]:
+        return [cell.strip() for cell in value.strip().strip("|").split("|")]
+
+    def is_table_separator(value: str) -> bool:
+        cells = split_table_row(value)
+        return len(cells) > 1 and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
 
     story = []
-    for raw_line in markdown_text.splitlines():
+    lines = markdown_text.splitlines()
+    index = 0
+    while index < len(lines):
+        raw_line = lines[index]
         line = raw_line.strip()
+        index += 1
         if not line:
             story.append(Spacer(1, 4))
             continue
         if line == "---":
-            story.append(Spacer(1, 8))
+            story.append(HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#cbd5e1"), spaceBefore=6, spaceAfter=8))
             continue
 
         if line.startswith("# "):
@@ -187,8 +225,53 @@ def _write_mock_interview_pdf(markdown_text: str, output_path: Path) -> None:
             story.append(Paragraph(_markdown_line_to_pdf_html(line[3:]), styles["Heading2"]))
         elif line.startswith("### "):
             story.append(Paragraph(_markdown_line_to_pdf_html(line[4:]), styles["Heading3"]))
+        elif "|" in line and index < len(lines) and is_table_separator(lines[index]):
+            header = split_table_row(line)
+            index += 1  # Markdown table separator
+            rows = [header]
+            while index < len(lines) and "|" in lines[index]:
+                rows.append(split_table_row(lines[index]))
+                index += 1
+            column_count = max(len(row) for row in rows)
+            normalized = [row + [""] * (column_count - len(row)) for row in rows]
+            table_data = [
+                [Paragraph(_markdown_line_to_pdf_html(cell), table_header_style if row_index == 0 else table_cell_style) for cell in row]
+                for row_index, row in enumerate(normalized)
+            ]
+            available_width = A4[0] - 36 * mm
+            if column_count == 5:
+                width_weights = [1.2, 0.65, 2.1, 1.8, 0.65]
+                weight_total = sum(width_weights)
+                column_widths = [available_width * weight / weight_total for weight in width_weights]
+            else:
+                column_widths = [available_width / column_count] * column_count
+            table = Table(table_data, colWidths=column_widths, repeatRows=1, hAlign="LEFT")
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563eb")),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.extend([table, Spacer(1, 8)])
+        elif re.match(r"^[-*+]\s+", line):
+            content = re.sub(r"^[-*+]\s+", "", line)
+            story.append(Paragraph(f"- {_markdown_line_to_pdf_html(content)}", bullet_style))
+        elif re.match(r"^\d+[.)]\s+", line):
+            marker, content = re.match(r"^(\d+[.)])\s+(.*)$", line).groups()
+            story.append(Paragraph(f"{marker} {_markdown_line_to_pdf_html(content)}", bullet_style))
         else:
             story.append(Paragraph(_markdown_line_to_pdf_html(line), styles["BodyText"]))
+
+    def add_page_number(canvas, document):
+        canvas.saveState()
+        canvas.setFont("STSong-Light", 8)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        canvas.drawCentredString(A4[0] / 2, 9 * mm, f"{document.page}")
+        canvas.restoreState()
 
     doc = SimpleDocTemplate(
         str(output_path),
@@ -197,9 +280,14 @@ def _write_mock_interview_pdf(markdown_text: str, output_path: Path) -> None:
         rightMargin=18 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title="Mock Interview Evaluation",
+        title=title,
     )
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+
+
+def _write_mock_interview_pdf(markdown_text: str, output_path: Path) -> None:
+    """Render a mock interview markdown report to PDF."""
+    _write_markdown_pdf(markdown_text, output_path, title="Mock Interview Evaluation")
 
 
 def start_mock_interview(

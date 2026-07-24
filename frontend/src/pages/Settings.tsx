@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle } from "lucide-react";
+import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2 } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
   getSettings,
@@ -7,6 +7,9 @@ import {
   getResumeContent,
   saveResumeContent,
   uploadResume,
+  clearAIMemory,
+  getMemorySettings,
+  saveMemorySettings,
   type ResumeValidation,
 } from "../api/client";
 import { useAvailableModels } from "../hooks/useAvailableModels";
@@ -106,6 +109,9 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const availableModels = useAvailableModels(apiKey, baseUrl, llmProtocol);
   const [resumeLang, setResumeLang] = useState("zh");
   const [configStatus, setConfigStatus] = useState("");
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [cacheEnabled, setCacheEnabled] = useState(true);
+  const [memoryStatus, setMemoryStatus] = useState("");
 
   const [resumeContent, setResumeContent] = useState("");
   const [resumeStatus, setResumeStatus] = useState("");
@@ -128,6 +134,10 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setLlmProtocol((cfg.llm_protocol as LlmProtocol) || "anthropic");
       setResumeLang(cfg.resume_language);
       loadResume(cfg.resume_language);
+    }).catch(() => {});
+    getMemorySettings().then((settings) => {
+      setMemoryEnabled(settings.memory_enabled);
+      setCacheEnabled(settings.cache_enabled);
     }).catch(() => {});
   }, []);
 
@@ -157,6 +167,25 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setTimeout(() => setConfigStatus(""), 3000);
     } catch (err: any) {
       setConfigStatus(`❌ ${err.message}`);
+    }
+  };
+
+  const handleSaveMemorySettings = async () => {
+    try {
+      await saveMemorySettings({ memory_enabled: memoryEnabled, cache_enabled: cacheEnabled });
+      setMemoryStatus("隐私设置已保存");
+    } catch (err: any) {
+      setMemoryStatus(`❌ ${err.message}`);
+    }
+  };
+
+  const handleClearMemory = async () => {
+    if (!window.confirm("确定清空全部 AI 长期记忆吗？此操作不可撤销。")) return;
+    try {
+      const result = await clearAIMemory();
+      setMemoryStatus(`已删除 ${result.deleted} 条长期记忆`);
+    } catch (err: any) {
+      setMemoryStatus(`❌ ${err.message}`);
     }
   };
 
@@ -351,6 +380,33 @@ export default function SettingsPage({ t }: { t: Strings }) {
               {configStatus}
             </span>
           )}
+        </div>
+      </div>
+
+      {/* AI memory and cache privacy controls */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <Brain className="h-5 w-5 text-brand-500" />
+          AI 记忆与隐私
+        </h3>
+        <div className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
+          <label className="flex items-center justify-between gap-4">
+            <span>保存求职偏好、简历风格和历史上下文</span>
+            <input type="checkbox" checked={memoryEnabled} onChange={(event) => setMemoryEnabled(event.target.checked)} className="h-4 w-4 accent-brand-600" />
+          </label>
+          <label className="flex items-center justify-between gap-4">
+            <span>启用本地 Prompt 响应缓存</span>
+            <input type="checkbox" checked={cacheEnabled} onChange={(event) => setCacheEnabled(event.target.checked)} className="h-4 w-4 accent-brand-600" />
+          </label>
+        </div>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <button onClick={handleSaveMemorySettings} className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+            <Save className="h-4 w-4" />保存隐私设置
+          </button>
+          <button onClick={handleClearMemory} className="flex items-center gap-2 rounded-lg border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20">
+            <Trash2 className="h-4 w-4" />清空长期记忆
+          </button>
+          {memoryStatus && <span className={`text-sm ${memoryStatus.startsWith("❌") ? "text-red-600" : "text-green-600"}`}>{memoryStatus}</span>}
         </div>
       </div>
 

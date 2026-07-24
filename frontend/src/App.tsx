@@ -7,6 +7,7 @@ import MockInterview from "./pages/MockInterview";
 import History from "./pages/History";
 import JobTracker from "./pages/JobTracker";
 import SettingsPage from "./pages/Settings";
+import AIMonitoring from "./pages/AIMonitoring";
 import { getStrings, useLang } from "./i18n";
 
 const SIDEBAR_OPEN_KEY = "buping_sidebar_open";
@@ -58,6 +59,7 @@ export default function App() {
             <Route path="/mock-interview" element={<MockInterview t={t} />} />
             <Route path="/history" element={<History t={t} />} />
             <Route path="/job-tracker" element={<JobTracker t={t} />} />
+            <Route path="/ai-monitoring" element={<AIMonitoring t={t} />} />
             <Route path="/settings" element={<SettingsPage t={t} />} />
             <Route path="*" element={<Navigate to="/resume" replace />} />
           </Routes>

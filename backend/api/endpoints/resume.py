@@ -307,3 +307,33 @@ async def save_edited(req: SaveEditedRequest) -> SaveEditedResponse:
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Resume source version history (local SQLite)
+# ---------------------------------------------------------------------------
+
+@router.get("/versions")
+def list_resume_versions(language: str = "zh", limit: int = 50) -> dict:
+    from src.libs.ai_engine.memory import SQLiteMemoryRepository
+
+    return {"items": SQLiteMemoryRepository().list_resume_versions(language=language, limit=limit)}
+
+
+@router.post("/versions/{version_id}/restore")
+def restore_resume_version(version_id: str) -> dict:
+    from backend.services import config_service
+    from src.libs.ai_engine.memory import SQLiteMemoryRepository
+
+    repository = SQLiteMemoryRepository()
+    try:
+        version = repository.get_resume_version(version_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Resume version not found") from exc
+    config_service.save_resume_content(version["content"], version["language"])
+    return {
+        "status": "success",
+        "version_id": version_id,
+        "language": version["language"],
+        "content": version["content"],
+    }

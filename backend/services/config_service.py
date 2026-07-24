@@ -116,3 +116,17 @@ def save_resume_content(content: str, language: str = "zh") -> None:
     filepath = DATA_FOLDER / filename
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
+    # Resume history is local and follows the same privacy switch as AI memory.
+    try:
+        from src.libs.ai_engine.memory import SQLiteMemoryRepository
+
+        repository = SQLiteMemoryRepository()
+        if repository.get_setting("memory_enabled", True):
+            repository.save_resume_version(
+                content,
+                language=language,
+                change_summary="用户保存简历内容",
+            )
+    except Exception:
+        # Saving the primary resume must not fail because optional history is unavailable.
+        pass

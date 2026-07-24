@@ -70,6 +70,10 @@ coverage.xml
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+data_folder/ai_memory.sqlite3
+data_folder/ai_memory.sqlite3-shm
+data_folder/ai_memory.sqlite3-wal
+artifacts/
 
 # Flask stuff:
 instance/

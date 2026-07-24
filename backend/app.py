@@ -28,6 +28,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (ROOT / "data_folder" / "output" / "mock_interview").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "job_tracker").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "job_tracker" / "icon").mkdir(parents=True, exist_ok=True)
+    # Apply local AI memory/cache schema migrations before serving requests.
+    from src.libs.ai_engine.memory import SQLiteMemoryRepository
+
+    SQLiteMemoryRepository(ROOT / "data_folder" / "ai_memory.sqlite3")
     yield
 
 

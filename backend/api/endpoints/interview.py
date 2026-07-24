@@ -29,6 +29,8 @@ class InterviewPrepRequest(BaseModel):
 class InterviewPrepResponse(BaseModel):
     report: str
     file_path: str
+    md_filename: str
+    pdf_filename: str
     status: str
 
 
@@ -49,6 +51,24 @@ def generate_interview_prep(req: InterviewPrepRequest) -> InterviewPrepResponse:
         return InterviewPrepResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prep/download/{filename}")
+def download_interview_prep(filename: str) -> FileResponse:
+    """Download a generated interview preparation report as Markdown or PDF."""
+    from pathlib import Path
+
+    safe_name = Path(filename).name
+    suffix = Path(safe_name).suffix.lower()
+    if suffix not in {".md", ".pdf"}:
+        raise HTTPException(status_code=400, detail="Only Markdown and PDF reports can be downloaded")
+
+    file_path = Path("data_folder/output/interview_prep") / safe_name
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    media_type = "text/markdown; charset=utf-8" if suffix == ".md" else "application/pdf"
+    return FileResponse(path=str(file_path), filename=safe_name, media_type=media_type)
 
 
 # ---- Mock Interview ----

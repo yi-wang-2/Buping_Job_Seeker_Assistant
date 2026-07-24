@@ -452,19 +452,9 @@ def rewrite_text(
 
     Strategy:
         - Resolve API key via fallback chain (param → secrets → config).
-        - Set rcb_config globals so the existing LLM infra picks them up.
-        - Build a focused single-turn prompt and call the chat model
-          directly (returns AIMessage; we extract its text content).
+        - Normalize the provider endpoint without mutating global model config.
+        - Execute the versioned text_rewriter Skill through AIRuntime.
     """
-    from src.libs.resume_and_cover_builder.llm.llm_generate_resume import (
-        _create_chat_model,
-    )
-    from src.libs.resume_and_cover_builder.llm.llm_generate_resume import (
-        ContentBlockParser,
-    )
-    from langchain_core.messages import HumanMessage
-    import src.libs.resume_and_cover_builder.config as rcb_config
-    import config as root_config
     secrets = load_secrets()
 
     # ---- 3-level API key fallback ----
@@ -494,78 +484,40 @@ def rewrite_text(
         base_url, proto=llm_protocol or ("anthropic" if model_type == "anthropic" else "openai_chat")
     ) if base_url else ""
 
-    rcb_config.API_KEY = api_key
-    root_config.ANTHROPIC_AUTH_TOKEN = api_key
-    if normalized_base_url:
-        rcb_config.LLM_API_URL = normalized_base_url
-        root_config.LLM_API_URL = normalized_base_url
-        root_config.ANTHROPIC_BASE_URL = normalized_base_url
-        try:
-            rcb_config.ANTHROPIC_AUTH_TOKEN = api_key
-            rcb_config.ANTHROPIC_BASE_URL = normalized_base_url
-        except AttributeError:
-            pass
-    if model_type:
-        rcb_config.LLM_MODEL_TYPE = model_type
-        root_config.LLM_MODEL_TYPE = model_type
     if not model_name:
         from backend.services.config_service import resolve_llm_model
         model_name = resolve_llm_model(model_type, saved_model=secrets.get("llm_model", ""), saved_provider=secrets.get("llm_model_provider", ""))
-    if model_name:
-        rcb_config.LLM_MODEL = model_name
-        root_config.LLM_MODEL = model_name
-        root_config.ANTHROPIC_MODEL = model_name
-        root_config.OPENAI_MODEL = model_name
-    if llm_protocol:
-        try:
-            rcb_config.LLM_PROTOCOL = llm_protocol
-        except AttributeError:
-            pass
-        root_config.LLM_PROTOCOL = llm_protocol
 
-    # ---- Build prompt ----
-    lang = "en" if target_language == "en" else "zh"
-    system_prompt = _REWRITE_SYSTEM_PROMPTS.get(lang, _REWRITE_SYSTEM_PROMPTS["zh"]).get(mode)
-    if system_prompt is None:
-        raise ValueError(f"Unsupported rewrite mode: {mode}")
+    # ---- Execute through the unified AI Runtime ----
+    from src.libs.ai_engine.observability import JsonlTraceSink
+    from src.libs.ai_engine.memory import SQLiteMemoryRepository
+    from src.libs.ai_engine.optimization import PromptCache
+    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+    from src.libs.ai_engine.runtime import AIRuntime
+    from src.libs.ai_engine.skills import SkillRegistry
+    from src.libs.ai_engine.skills.builtin import TextRewriterSkill
 
-    # Use string.Template to avoid .format() choking on { } in the user's text
-    from string import Template
-    if context:
-        user_prompt_template = Template(
-            "【上下文（仅供参考，无需修改）】\n$context\n\n"
-            "【需要改写的文本】\n$text\n"
-        )
-        user_prompt = user_prompt_template.substitute(context=context, text=text)
-    else:
-        user_prompt_template = Template("【需要改写的文本】\n$text\n")
-        user_prompt = user_prompt_template.substitute(text=text)
-
-    # ---- Call LLM directly (no LoggerChatModel — it's designed for chains) ----
-    client = _create_chat_model(api_key)
-    response = client.invoke([
-        {"role": "system", "content": system_prompt},
-        HumanMessage(content=user_prompt),
-    ])
-
-    # Extract content (string or list of content blocks)
-    content = getattr(response, "content", response)
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict):
-                if block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-            elif isinstance(block, str):
-                parts.append(block)
-        content = "".join(parts)
-
-    rewritten = (str(content) if content else "").strip()
-
-    # Strip any leading/trailing markdown fences the LLM might add
-    import re as _re
-    rewritten = _re.sub(r"^```[a-zA-Z]*\s*", "", rewritten)
-    rewritten = _re.sub(r"\s*```\s*$", "", rewritten)
+    provider = model_type or ("anthropic" if llm_protocol == "anthropic" else "openai")
+    memory_repository = SQLiteMemoryRepository()
+    gateway = LLMGateway(
+        GatewayConfig(api_key=api_key, base_url=normalized_base_url, max_retries=2),
+        trace_sink=JsonlTraceSink(),
+    )
+    registry = SkillRegistry()
+    registry.register(TextRewriterSkill(_REWRITE_SYSTEM_PROMPTS))
+    cache = PromptCache(memory_repository.path) if memory_repository.get_setting("cache_enabled", True) else None
+    result = AIRuntime(gateway, registry, cache=cache).execute(
+        "text_rewriter",
+        {
+            "text": text,
+            "mode": mode,
+            "context": context,
+            "target_language": target_language,
+        },
+        provider=provider,
+        model=model_name,
+    )
+    rewritten = result.content.strip()
 
     if not rewritten:
         # Defensive: if LLM returned empty, return the original

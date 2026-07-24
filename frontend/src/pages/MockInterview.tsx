@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Bot, Send, Play, Square, Loader2, User, Download, Mic, MicOff, Volume2, RotateCcw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { Strings } from "../i18n";
+import { useSessionState } from "../hooks/useSessionState";
 import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getMockInterviewTTSVoices, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
 
 interface Message {
@@ -60,41 +61,43 @@ export default function MockInterview({ t }: { t: Strings }) {
   const audioUrlRef = useRef("");
   const audioCacheRef = useRef<Map<string, Blob>>(new Map());
   const ttsAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
-  const [companyName, setCompanyName] = useState("MiniMax");
-  const [companyIndustry, setCompanyIndustry] = useState("AI");
-  const [jobTitle, setJobTitle] = useState("Python 后端工程师");
-  const [interviewType, setInterviewType] = useState("技术面试");
-  const [interviewStyle, setInterviewStyle] = useState("专业型");
-  const [resumeText, setResumeText] = useState("");
-  const [jobDesc, setJobDesc] = useState("");
-  const [resumeLoadedFromFile, setResumeLoadedFromFile] = useState("");
+  const [companyName, setCompanyName] = useSessionState("buping_mock_company", "MiniMax");
+  const [companyIndustry, setCompanyIndustry] = useSessionState("buping_mock_industry", "AI");
+  const [jobTitle, setJobTitle] = useSessionState("buping_mock_job_title", "Python 后端工程师");
+  const [interviewType, setInterviewType] = useSessionState("buping_mock_type", "技术面试");
+  const [interviewStyle, setInterviewStyle] = useSessionState("buping_mock_style", "专业型");
+  const [resumeText, setResumeText] = useSessionState("buping_mock_resume", "");
+  const [jobDesc, setJobDesc] = useSessionState("buping_mock_job_desc", "");
+  const [resumeLoadedFromFile, setResumeLoadedFromFile] = useSessionState("buping_mock_resume_source", "");
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [history, setHistory] = useState<Message[]>([]);
-  const [userInput, setUserInput] = useState("");
+  const [sessionId, setSessionId] = useSessionState<string | null>("buping_mock_session_id", null);
+  const [history, setHistory] = useSessionState<Message[]>("buping_mock_history", []);
+  const [userInput, setUserInput] = useSessionState("buping_mock_user_input", "");
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
-  const [evaluation, setEvaluation] = useState("");
-  const [reportPdfFile, setReportPdfFile] = useState("");
+  const [status, setStatus] = useSessionState("buping_mock_status", "");
+  const [evaluation, setEvaluation] = useSessionState("buping_mock_evaluation", "");
+  const [reportPdfFile, setReportPdfFile] = useSessionState("buping_mock_report_pdf", "");
   const [animatedMessageIndex, setAnimatedMessageIndex] = useState<number | null>(null);
   const [animatedContent, setAnimatedContent] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [speechInputSupported, setSpeechInputSupported] = useState(false);
   const [speechOutputSupported, setSpeechOutputSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useSessionState("buping_mock_voice_output", false);
   const [voiceStatus, setVoiceStatus] = useState("");
-  const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
-  const [ttsProvider, setTtsProvider] = useState<TTSProvider>("minimax");
-  const [minimaxVoice, setMinimaxVoice] = useState("Chinese (Mandarin)_Reliable_Executive");
-  const [kokoroVoice, setKokoroVoice] = useState("zf_001");
+  const [interviewMode, setInterviewMode] = useSessionState<"text" | "voice">("buping_mock_mode", "text");
+  const [ttsProvider, setTtsProvider] = useSessionState<TTSProvider>("buping_mock_tts_provider", "minimax");
+  const [minimaxVoice, setMinimaxVoice] = useSessionState("buping_mock_minimax_voice", "Chinese (Mandarin)_Reliable_Executive");
+  const [kokoroVoice, setKokoroVoice] = useSessionState("buping_mock_kokoro_voice", "zf_001");
   const [kokoroVoiceOptions, setKokoroVoiceOptions] = useState<Array<{ id: string; label: string }>>([
     { id: "zf_001", label: "女声 zf_001" },
   ]);
-  const [ttsSpeed, setTtsSpeed] = useState(1);
+  const [ttsSpeed, setTtsSpeed] = useSessionState("buping_mock_tts_speed", 1);
 
   useEffect(() => {
+    mountedRef.current = true;
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history, animatedContent]);
 
@@ -111,7 +114,7 @@ export default function MockInterview({ t }: { t: Strings }) {
           language = "zh";
         }
         const result = await getResumeContent(language);
-        if (result.content?.trim()) {
+        if (result.content?.trim() && !resumeText.trim()) {
           setResumeText(result.content);
           setResumeLoadedFromFile(language === "en" ? "data_folder/plain_text_resume.yaml" : "data_folder/plain_text_resume_zh.yaml");
         }
@@ -129,6 +132,7 @@ export default function MockInterview({ t }: { t: Strings }) {
       })
       .catch(() => undefined);
     return () => {
+      mountedRef.current = false;
       if (typingTimerRef.current !== null) {
         window.clearInterval(typingTimerRef.current);
       }
@@ -500,7 +504,8 @@ export default function MockInterview({ t }: { t: Strings }) {
         interview_type: interviewType,
         interview_style: interviewStyle,
       });
-      startTypewriter(result.history as Message[]);
+      if (mountedRef.current) startTypewriter(result.history as Message[]);
+      else setHistory(result.history as Message[]);
       setSessionId(result.session_id);
       setStatus(result.status);
       setEvaluation("");
@@ -532,7 +537,8 @@ export default function MockInterview({ t }: { t: Strings }) {
         history: previousHistory,
         context_window: 5,
       });
-      startTypewriter(result.history as Message[]);
+      if (mountedRef.current) startTypewriter(result.history as Message[]);
+      else setHistory(result.history as Message[]);
       setStatus(result.status);
     } catch (err: any) {
       setHistory(previousHistory);

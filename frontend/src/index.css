@@ -61,6 +61,9 @@
   padding-left: 1.5em;
   margin-bottom: 0.8em;
 }
+.markdown-body ul { list-style-type: disc; }
+.markdown-body ol { list-style-type: decimal; }
+.markdown-body ul ul { list-style-type: circle; }
 .markdown-body li { margin-bottom: 0.3em; }
 .markdown-body code {
   background: #f1f5f9;
@@ -90,13 +93,24 @@
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 640px;
+}
+.markdown-table-wrap {
+  width: 100%;
+  overflow-x: auto;
   margin-bottom: 1em;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
 }
 .markdown-body th, .markdown-body td {
-  border: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
   padding: 0.5em 0.75em;
   text-align: left;
+  vertical-align: top;
 }
+.markdown-body tr:last-child td { border-bottom: 0; }
+.markdown-body th:last-child, .markdown-body td:last-child { border-right: 0; }
 .markdown-body th {
   background: #f8fafc;
   font-weight: 600;

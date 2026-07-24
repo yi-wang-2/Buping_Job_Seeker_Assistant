@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Edit3, Save, RotateCcw, Check, History as HistoryIcon, Sparkle } from "lucide-react";
 import type { Strings } from "../i18n";
+import { useSessionState } from "../hooks/useSessionState";
 import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
@@ -180,23 +181,24 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [baseUrl, setBaseUrl] = useState("https://api.minimaxi.com/anthropic");
   const [llmProtocol, setLlmProtocol] = useState<LlmProtocol>("anthropic");
   const availableModels = useAvailableModels(apiKey, baseUrl, llmProtocol);
-  const [styleName, setStyleName] = useState("");
-  const [jobDesc, setJobDesc] = useState("");
+  const [styleName, setStyleName] = useSessionState("buping_resume_style", "");
+  const [jobDesc, setJobDesc] = useSessionState("buping_resume_job_desc", "");
   const [resumeLang, setResumeLang] = useState("zh");
   const [systemLanguage, setSystemLanguage] = useState("zh");
   const [configSaveStatus, setConfigSaveStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
-  const [downloadFile, setDownloadFile] = useState("");
-  const [downloadHtmlFile, setDownloadHtmlFile] = useState<string>(""); // e.g. "resume_20250615_103045.html"
+  const [status, setStatus] = useSessionState("buping_resume_status", "");
+  const [downloadFile, setDownloadFile] = useSessionState("buping_resume_download_pdf", "");
+  const [downloadHtmlFile, setDownloadHtmlFile] = useSessionState<string>("buping_resume_download_html", ""); // e.g. "resume_20250615_103045.html"
   // Generation progress state (0-100, -1 = idle, stage label)
   const [genProgress, setGenProgress] = useState<number>(-1);
   const [genStage, setGenStage] = useState<string>("");
 
   // Preview state
   const [previewing, setPreviewing] = useState(false);
-  const [previewHtml, setPreviewHtml] = useState<string>("");
+  const [previewHtml, setPreviewHtml] = useSessionState<string>("buping_resume_preview_html", "");
   const [previewKey, setPreviewKey] = useState<number>(0);
+  const skipRestoredPreviewRef = useRef(Boolean(previewHtml));
   const previewRef = useRef<HTMLIFrameElement | null>(null);
 
   // History picker
@@ -206,9 +208,9 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [loadingPreviewFile, setLoadingPreviewFile] = useState<string>(""); // currently loading filename
 
   // Edit mode state
-  const [editMode, setEditMode] = useState<boolean>(false);
-  const [editedHtml, setEditedHtml] = useState<string>("");
-  const [savedOk, setSavedOk] = useState<boolean>(false);
+  const [editMode, setEditMode] = useSessionState<boolean>("buping_resume_edit_mode", false);
+  const [editedHtml, setEditedHtml] = useSessionState<string>("buping_resume_edited_html", "");
+  const [savedOk, setSavedOk] = useSessionState<boolean>("buping_resume_saved_ok", false);
   const [saving, setSaving] = useState<boolean>(false);
 
   // AI Rewrite state (Roadmap §1)
@@ -305,6 +307,10 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   }, [loadStylesAndSettings]);
 
   useEffect(() => {
+    if (skipRestoredPreviewRef.current) {
+      skipRestoredPreviewRef.current = false;
+      return;
+    }
     if (styleName && resumeLang) {
       handlePreview();
     }

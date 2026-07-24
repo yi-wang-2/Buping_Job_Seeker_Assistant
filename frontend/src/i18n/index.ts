@@ -10,6 +10,7 @@ const strings = {
       mockInterview: "模拟面试",
       history: "历史记录",
       jobTracker: "求职记录",
+      aiMonitoring: "AI 监控",
       settings: "设置",
     },
     sidebar: {
@@ -186,6 +187,7 @@ const strings = {
       mockInterview: "Mock Interview",
       history: "History",
       jobTracker: "Job Tracker",
+      aiMonitoring: "AI Monitoring",
       settings: "Settings",
     },
     sidebar: {

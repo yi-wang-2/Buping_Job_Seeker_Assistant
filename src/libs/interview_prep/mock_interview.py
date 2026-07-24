@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, List, Optional
+from datetime import datetime, timezone
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import BaseOutputParser
@@ -106,10 +107,25 @@ class MockInterviewSession:
     ended_at: float = 0.0
     current_round: InterviewRound = InterviewRound.OPENING
     context_window: int = 5
+    last_context_metrics: dict[str, int] = field(default_factory=dict)
 
 
 def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name: str = ""):
     """创建 LLM 模型（复用 interview_generator 的模式）"""
+    from src.libs.ai_engine.observability import JsonlTraceSink
+    from src.libs.ai_engine.observability.langchain_tracing import GatewayChatClient
+    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+
+    model = model_name or ("MiniMax-M3" if model_type == "anthropic" else "gpt-4o-mini")
+    gateway = LLMGateway(
+        GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2),
+        trace_sink=JsonlTraceSink(),
+    )
+    return GatewayChatClient(
+        gateway, provider=model_type, model=model, skill="mock_interviewer",
+        temperature=0.6, max_output_tokens=1024,
+    )
+
     if model_type == "anthropic":
         from langchain_anthropic import ChatAnthropic
         model = model_name or "MiniMax-M3"
@@ -122,7 +138,7 @@ def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name:
         if base_url:
             kwargs["base_url"] = base_url
         try:
-            return ChatAnthropic(**kwargs)
+            client = ChatAnthropic(**kwargs)
         except TypeError:
             if "base_url" in kwargs:
                 kwargs["anthropic_api_url"] = kwargs.pop("base_url")
@@ -130,7 +146,11 @@ def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name:
                 kwargs["max_tokens_to_sample"] = kwargs.pop("max_tokens")
             if "model" in kwargs:
                 kwargs["model_name"] = kwargs.pop("model")
-            return ChatAnthropic(**kwargs)
+            client = ChatAnthropic(**kwargs)
+        return TracedChatClient(
+            client, provider=model_type, model=model, skill="mock_interviewer",
+            temperature=0.6, max_output_tokens=1024,
+        )
 
     from langchain_openai import ChatOpenAI
     model = model_name or "gpt-4o-mini"
@@ -142,7 +162,10 @@ def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name:
     }
     if base_url:
         kwargs["base_url"] = base_url
-    return ChatOpenAI(**kwargs)
+    return TracedChatClient(
+        ChatOpenAI(**kwargs), provider=model_type, model=model, skill="mock_interviewer",
+        temperature=0.6, max_output_tokens=1024,
+    )
 
 
 def _build_system_prompt(session: MockInterviewSession) -> str:
@@ -211,30 +234,60 @@ def _next_round(session: MockInterviewSession) -> InterviewRound:
 
 
 def _build_dialogue_prompt(session: MockInterviewSession):
-    """构造对话 Prompt（直接用 PromptValue 对象，不依赖模板变量）"""
+    """Build a budgeted dialogue prompt while preserving the session state machine."""
     from langchain_core.prompt_values import StringPromptValue
-    template = _build_system_prompt(session) + "\n\n"
+    from src.libs.ai_engine.context import (
+        ContextItem, ContextKind, ContextManager, TokenBudget, TokenBudgetAllocator,
+    )
+
     context_window = max(1, min(int(getattr(session, "context_window", 5) or 5), 10))
     recent_messages = session.messages[-(context_window * 2 + 1):]
-
-    template += (
+    rules = (
         "【最近对话上下文使用规则】\n"
         "1. 优先基于候选人最近一次回答中的具体信息继续追问。\n"
         "2. 如果最近回答已经充分，再自然切换到下一个相关主题。\n"
         "3. 不要重复已经问过的问题；新问题要承接上下文。\n"
         "4. 每次只问一个问题，问题要具体、可回答。\n\n"
-        f"【最近 {context_window} 轮对话】\n"
+        f"【最近 {context_window} 轮对话】"
     )
-
-    # 拼接对话历史
-    for msg in recent_messages:
-        if msg.role == "interviewer":
-            template += f"面试官: {msg.content}\n"
-        else:
-            template += f"候选人: {msg.content}\n"
-
-    template += "\n面试官:"
-    # 用 StringPromptValue 包装，绕过模板变量检查
+    items = [
+        ContextItem(
+            "mock-system", ContextKind.SYSTEM,
+            _build_system_prompt(session) + "\n\n" + rules,
+            "skill", priority=100, relevance=1, protected=True,
+        )
+    ]
+    for index, msg in enumerate(recent_messages):
+        speaker = "面试官" if msg.role == "interviewer" else "候选人"
+        items.append(ContextItem(
+            f"mock-history-{index}", ContextKind.HISTORY,
+            f"{speaker}: {msg.content}", "conversation",
+            priority=min(100, 60 + index), relevance=min(1, .7 + index * .03),
+            created_at=datetime.fromtimestamp(msg.timestamp, timezone.utc),
+            metadata={"timestamp": msg.timestamp},
+        ))
+    budget = TokenBudget(
+        model_context_limit=16000, reserved_output=1024,
+        reserved_system=2000, safety_margin=800,
+    )
+    allocation = TokenBudgetAllocator().allocate(
+        budget,
+        {"system": .72, "history": .28},
+    )
+    bundle = ContextManager().build(items, allocation)
+    system = next(item.content for item in bundle.items if item.kind == ContextKind.SYSTEM)
+    history = sorted(
+        (item for item in bundle.items if item.kind == ContextKind.HISTORY),
+        key=lambda item: float(item.metadata.get("timestamp", 0)),
+    )
+    template = system + "\n\n" + "\n".join(item.content for item in history) + "\n\n面试官:"
+    session.last_context_metrics = {
+        "context_original_tokens": sum(decision.original_tokens for decision in bundle.decisions),
+        "context_final_tokens": bundle.total_tokens,
+        "context_items_kept": len(bundle.items),
+        "context_items_compressed": sum(decision.action == "compressed" for decision in bundle.decisions),
+        "context_items_dropped": sum(decision.action == "dropped" for decision in bundle.decisions),
+    }
     return StringPromptValue(text=template)
 
 
@@ -345,7 +398,7 @@ class MockInterviewer:
 
         # 生成开场白（直接用 llm.invoke，避免 chain 的 dict 参数问题）
         prompt = _build_dialogue_prompt(session)
-        result = self.llm.invoke(prompt.to_messages())
+        result = self.llm.invoke(prompt.to_messages(), trace_metadata=session.last_context_metrics)
         opening = _PlainTextParser().parse(result)
 
         session.messages.append(InterviewMessage(
@@ -383,7 +436,7 @@ class MockInterviewer:
 
         # 生成下一个问题
         prompt = _build_dialogue_prompt(session)
-        result = self.llm.invoke(prompt.to_messages())
+        result = self.llm.invoke(prompt.to_messages(), trace_metadata=session.last_context_metrics)
         next_question = _PlainTextParser().parse(result)
 
         # 记录面试官问题
