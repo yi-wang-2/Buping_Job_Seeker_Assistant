@@ -278,6 +278,20 @@ def get_available_styles() -> dict[str, dict[str, str]]:
     return styles
 
 
+def _sanitize_edited_resume_html(html_content: str) -> str:
+    """Remove transient WYSIWYG state while preserving resume styling."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    editor_style = soup.find(id="buping-editor-style")
+    if editor_style:
+        editor_style.decompose()
+    for element in soup.select("[data-buping-block], [contenteditable]"):
+        element.attrs.pop("data-buping-block", None)
+        element.attrs.pop("contenteditable", None)
+    return str(soup)
+
+
 def convert_html_to_pdf(
     html_content: str,
     filename_base: str = "edited",
@@ -301,6 +315,11 @@ def convert_html_to_pdf(
 
     if not html_content or not html_content.strip():
         raise ValueError("HTML content cannot be empty")
+
+    # Defense in depth: editor-only DOM attributes and highlight CSS must
+    # never be persisted or rendered, even when an older frontend submits
+    # unsanitized iframe HTML.
+    html_content = _sanitize_edited_resume_html(html_content)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pdf_filename = f"{filename_base}_{timestamp}.pdf"

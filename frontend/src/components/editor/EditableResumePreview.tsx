@@ -196,10 +196,19 @@ function EditableWYSIWYGEditor({
   const initialBodyRef = useRef<string>("");
 
   const serializeDocument = (doc: Document) => {
+    // Serialize a clone so editor-only affordances never leak into previews,
+    // downloaded HTML, or PDFs. Layout controls intentionally remain because
+    // line-height/module-spacing are user-visible document changes.
+    const root = doc.documentElement.cloneNode(true) as HTMLElement;
+    root.querySelector("#buping-editor-style")?.remove();
+    root.querySelectorAll<HTMLElement>("[data-buping-block], [contenteditable]").forEach((el) => {
+      el.removeAttribute("data-buping-block");
+      el.removeAttribute("contenteditable");
+    });
     const doctype = doc.doctype
       ? `<!DOCTYPE ${doc.doctype.name}>`
       : "<!DOCTYPE html>";
-    return `${doctype}\n${doc.documentElement.outerHTML}`;
+    return `${doctype}\n${root.outerHTML}`;
   };
 
   const emitDocumentChange = (doc: Document) => {
@@ -288,14 +297,12 @@ function EditableWYSIWYGEditor({
     return initialHtml;
   }, [initialHtml, placeholder]);
 
-  // After iframe loads, set up block-scoped editing.
+  // After iframe loads, set up module-scoped editing.
   //
   // Strategy: instead of `designMode = "on"` (which makes the whole
-  // document editable), we make individual BLOCK elements
-  // contenteditable. This way:
-  //   1. Only the block the user clicked can be selected
-  //   2. AI rewrite naturally operates on the active block only
-  //   3. Other blocks remain read-only (less error-prone)
+  // document editable), we make resume modules (header/section) editable.
+  // A module can contain multiple paragraphs/list items, so users can select
+  // and edit several bullets in one operation without crossing the whole CV.
   const handleIframeLoad = () => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -317,7 +324,7 @@ function EditableWYSIWYGEditor({
       style.id = "buping-editor-style";
       style.textContent = `
         body { cursor: default; }
-        /* Blocks are clickable but not editable until clicked */
+        /* Modules are clickable but not editable until clicked */
         [data-buping-block] {
           cursor: pointer;
           transition: outline-color 0.15s ease;
@@ -339,9 +346,15 @@ function EditableWYSIWYGEditor({
       doc.head.appendChild(style);
       applyLayoutControls(doc);
 
-      // Tag block-level elements as editable targets
-      const blockSelectors = "p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, .entry, .compact-list";
-      doc.body.querySelectorAll<HTMLElement>(blockSelectors).forEach((el) => {
+      // Prefer semantic resume modules. For older/custom templates without
+      // header/section elements, fall back to direct body children.
+      let modules = Array.from(doc.body.querySelectorAll<HTMLElement>("header, section"));
+      if (modules.length === 0) {
+        modules = Array.from(doc.body.children).filter(
+          (el) => !["SCRIPT", "STYLE", "LINK"].includes(el.tagName),
+        ) as HTMLElement[];
+      }
+      modules.forEach((el) => {
         el.setAttribute("data-buping-block", "true");
         el.setAttribute("contenteditable", "false");
       });
@@ -352,11 +365,11 @@ function EditableWYSIWYGEditor({
           .querySelectorAll<HTMLElement>('[data-buping-block="true"]')
           .forEach((other) => other.setAttribute("contenteditable", "false"));
         el.setAttribute("contenteditable", "true");
-        el.focus();
       };
 
-      // Click handler: activate the clicked block
-      doc.body.addEventListener("click", (e) => {
+      // Activate before the browser starts a drag selection. Avoid calling
+      // focus() here because that would collapse a multi-item selection.
+      doc.body.addEventListener("mousedown", (e) => {
         const target = e.target as HTMLElement;
         const block = target.closest<HTMLElement>('[data-buping-block="true"]');
         if (block) {
