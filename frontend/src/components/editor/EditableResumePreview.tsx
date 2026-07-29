@@ -233,6 +233,8 @@ function EditableWYSIWYGEditor({
       style.id = "buping-layout-controls";
       doc.head.appendChild(style);
     }
+    style.dataset.lineHeight = String(nextLineHeight);
+    style.dataset.moduleSpacing = String(nextModuleSpacing);
 
     style.textContent = `
       body {
@@ -263,6 +265,35 @@ function EditableWYSIWYGEditor({
         margin-bottom: ${listSpacing}px !important;
       }
     `;
+  };
+
+  const readSavedLayoutControls = (doc: Document) => {
+    const style = doc.getElementById("buping-layout-controls") as HTMLStyleElement | null;
+    if (!style) return { savedLineHeight: 1.32, savedModuleSpacing: 8 };
+
+    const lineHeightFromData = style.dataset.lineHeight
+      ? Number(style.dataset.lineHeight)
+      : Number.NaN;
+    const moduleSpacingFromData = style.dataset.moduleSpacing
+      ? Number(style.dataset.moduleSpacing)
+      : Number.NaN;
+    const lineHeightFromCss = Number(
+      style.textContent.match(/body\s*\{[^}]*line-height:\s*([0-9.]+)/s)?.[1],
+    );
+    const moduleSpacingFromCss = Number(
+      style.textContent.match(/\.entry[\s\S]*?margin-bottom:\s*([0-9.]+)px/)?.[1],
+    );
+
+    return {
+      savedLineHeight:
+        lineHeightFromData > 0 ? lineHeightFromData : lineHeightFromCss > 0 ? lineHeightFromCss : 1.32,
+      savedModuleSpacing:
+        moduleSpacingFromData >= 0
+          ? moduleSpacingFromData
+          : moduleSpacingFromCss >= 0
+            ? moduleSpacingFromCss
+            : 8,
+    };
   };
 
   const updateLayoutControl = (nextLineHeight: number, nextModuleSpacing: number) => {
@@ -319,7 +350,14 @@ function EditableWYSIWYGEditor({
       // Save body innerHTML for reset
       initialBodyRef.current = doc.body?.innerHTML || "";
 
+      // Restore saved layout values before applying editor controls. Without
+      // this, opening a saved resume would overwrite its CSS with defaults.
+      const { savedLineHeight, savedModuleSpacing } = readSavedLayoutControls(doc);
+      setLineHeight(savedLineHeight);
+      setModuleSpacing(savedModuleSpacing);
+
       // Inject base styles + active-block highlight
+      doc.getElementById("buping-editor-style")?.remove();
       const style = doc.createElement("style");
       style.id = "buping-editor-style";
       style.textContent = `
@@ -344,7 +382,7 @@ function EditableWYSIWYGEditor({
         ::selection { background: rgba(20, 184, 166, 0.3); }
       `;
       doc.head.appendChild(style);
-      applyLayoutControls(doc);
+      applyLayoutControls(doc, savedLineHeight, savedModuleSpacing);
 
       // Prefer semantic resume modules. For older/custom templates without
       // header/section elements, fall back to direct body children.
