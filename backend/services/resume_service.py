@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import html as html_lib
 import logging
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from string import Template
@@ -21,6 +23,18 @@ OUTPUT_FOLDER = DATA_FOLDER / "output"
 STYLES_DIR = Path("src/libs/resume_and_cover_builder/resume_style")
 
 OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup_public_artifacts(max_age_seconds: int = 3600) -> None:
+    """Remove expired, unguessable public-demo PDF/HTML artifacts."""
+    cutoff = time.time() - max_age_seconds
+    for pattern in ("public_*.pdf", "public_*.html"):
+        for artifact in OUTPUT_FOLDER.glob(pattern):
+            try:
+                if artifact.stat().st_mtime < cutoff:
+                    artifact.unlink()
+            except OSError:
+                pass
 
 
 # Lightweight preview HTML template — used by preview_resume() to render
@@ -220,6 +234,7 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
 def generate_preview_html(
     style_name: str,
     resume_language: str = "zh",
+    resume_content: str = "",
 ) -> dict[str, Any]:
     """Generate a lightweight HTML preview from the local YAML resume.
 
@@ -237,8 +252,11 @@ def generate_preview_html(
     )
     if not resume_file.exists():
         raise FileNotFoundError(f"Resume file not found: {resume_file}")
-    with open(resume_file, "r", encoding="utf-8") as f:
-        yaml_text = f.read()
+    if resume_content.strip():
+        yaml_text = resume_content
+    else:
+        with open(resume_file, "r", encoding="utf-8") as f:
+            yaml_text = f.read()
     data = yaml.safe_load(yaml_text) or {}
 
     # Resolve style CSS.
@@ -286,10 +304,37 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     editor_style = soup.find(id="buping-editor-style")
     if editor_style:
         editor_style.decompose()
+    page_guide_style = soup.find(id="buping-page-guide-style")
+    if page_guide_style:
+        page_guide_style.decompose()
+    page_guides = soup.find(id="buping-page-guides")
+    if page_guides:
+        page_guides.decompose()
+    print_emulation = soup.find(id="buping-print-layout-emulation")
+    if print_emulation:
+        print_emulation.decompose()
     for element in soup.select("[data-buping-block], [contenteditable]"):
         element.attrs.pop("data-buping-block", None)
         element.attrs.pop("contenteditable", None)
+    for page_break in soup.select("[data-buping-page-break]"):
+        page_break.decompose()
     return str(soup)
+
+
+def render_html_to_pdf_bytes(html_content: str) -> bytes:
+    """Render HTML with the exact same Chrome print pipeline used for downloads."""
+    import base64 as _b64
+    from src.utils.chrome_utils import HTML_to_PDF, init_browser
+
+    sanitized_html = _sanitize_edited_resume_html(html_content)
+    driver = init_browser()
+    try:
+        return _b64.b64decode(HTML_to_PDF(sanitized_html, driver))
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
 
 def convert_html_to_pdf(
@@ -310,9 +355,6 @@ def convert_html_to_pdf(
     Returns:
         {"status", "pdf_filename", "html_filename", "pdf_size"}.
     """
-    import base64 as _b64
-    from src.utils.chrome_utils import HTML_to_PDF, init_browser
-
     if not html_content or not html_content.strip():
         raise ValueError("HTML content cannot be empty")
 
@@ -321,9 +363,16 @@ def convert_html_to_pdf(
     # unsanitized iframe HTML.
     html_content = _sanitize_edited_resume_html(html_content)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_filename = f"{filename_base}_{timestamp}.pdf"
-    html_filename = f"{filename_base}_{timestamp}.html"
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE:
+        cleanup_public_artifacts()
+        token = uuid.uuid4().hex
+        pdf_filename = f"public_{token}.pdf"
+        html_filename = f"public_{token}.html"
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_filename = f"{filename_base}_{timestamp}.pdf"
+        html_filename = f"{filename_base}_{timestamp}.html"
 
     pdf_path = OUTPUT_FOLDER / pdf_filename
     html_path = OUTPUT_FOLDER / html_filename
@@ -331,17 +380,9 @@ def convert_html_to_pdf(
     # Write the HTML file (so user can re-preview later)
     html_path.write_text(html_content, encoding="utf-8")
 
-    # Render to PDF using Chrome headless
-    driver = init_browser()
-    try:
-        pdf_b64 = HTML_to_PDF(html_content, driver)
-        pdf_bytes = _b64.b64decode(pdf_b64)
-        pdf_path.write_bytes(pdf_bytes)
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+    # Render through the same function used by the WYSIWYG PDF preview.
+    pdf_bytes = render_html_to_pdf_bytes(html_content)
+    pdf_path.write_bytes(pdf_bytes)
 
     return {
         "status": "success",
@@ -475,6 +516,9 @@ def rewrite_text(
         - Execute the versioned text_rewriter Skill through AIRuntime.
     """
     secrets = load_secrets()
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and (not api_key or api_key.startswith("sk-your-")):
+        raise ValueError("Public demo requires your own API key for each AI request.")
 
     # ---- 3-level API key fallback ----
     if not api_key or api_key.startswith("sk-your-"):
@@ -555,6 +599,7 @@ def generate_resume(
     system_language: str = "zh",
     llm_protocol: str | None = None,
     model_name: str = "",
+    resume_content: str = "",
 ) -> dict[str, Any]:
     """Generate a resume PDF. Returns {path, filename, status}."""
     from src.libs.resume_and_cover_builder import ResumeFacade, ResumeGenerator, StyleManager
@@ -564,8 +609,12 @@ def generate_resume(
     import config as root_config
 
 
-    # Save config first (so subsequent runs have it)
-    if api_key:
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and (not api_key or api_key.startswith("sk-your-")):
+        raise ValueError("Public demo requires your own API key for each AI request.")
+
+    # Local installs persist configuration; public demo credentials must never be saved.
+    if api_key and not PUBLIC_DEMO_MODE:
         save_secrets({
             "llm_api_key": api_key,
             "llm_model_type": model_type,
@@ -649,9 +698,14 @@ def generate_resume(
         )
 
     # Load resume content
-    resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
-    with open(resume_file, "r", encoding="utf-8") as f:
-        plain_text_resume = f.read()
+    if resume_content.strip():
+        plain_text_resume = resume_content
+    elif PUBLIC_DEMO_MODE:
+        raise ValueError("Public demo requires the current browser resume content.")
+    else:
+        resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
+        with open(resume_file, "r", encoding="utf-8") as f:
+            plain_text_resume = f.read()
     from backend.services.resume_validation import validate_resume_yaml
     validation = validate_resume_yaml(plain_text_resume)
     if not validation["valid"]:
@@ -703,13 +757,16 @@ def generate_resume(
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"resume_{timestamp}.pdf"
 
+        if PUBLIC_DEMO_MODE:
+            cleanup_public_artifacts()
+            filename = f"public_{uuid.uuid4().hex}.pdf"
         output_path = OUTPUT_FOLDER / filename
         with open(output_path, "wb") as f:
             f.write(pdf_data)
 
-        # Also save as resume_base.pdf
-        with open(OUTPUT_FOLDER / "resume_base.pdf", "wb") as f:
-            f.write(pdf_data)
+        if not PUBLIC_DEMO_MODE:
+            with open(OUTPUT_FOLDER / "resume_base.pdf", "wb") as f:
+                f.write(pdf_data)
 
         # Save HTML alongside the PDF for later preview
         html_filename = filename.replace(".pdf", ".html")

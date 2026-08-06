@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -24,17 +25,21 @@ class GenerateResumeRequest(BaseModel):
     job_description: Optional[str] = None
     resume_language: str = "zh"
     system_language: str = "zh"
+    resume_content: str = ""
 
 
 class GenerateResumeResponse(BaseModel):
     path: str
     filename: str
+    html_filename: str = ""
+    html_path: str = ""
     status: str
 
 
 class PreviewResumeRequest(BaseModel):
     style_name: str = ""
     resume_language: str = "zh"
+    resume_content: str = ""
 
 
 class PreviewResumeResponse(BaseModel):
@@ -184,6 +189,7 @@ async def generate_resume(req: GenerateResumeRequest) -> GenerateResumeResponse:
             job_description=req.job_description,
             resume_language=req.resume_language,
             system_language=req.system_language,
+            resume_content=req.resume_content,
         )
         return GenerateResumeResponse(**result)
     except Exception as e:
@@ -203,6 +209,7 @@ async def preview_resume(req: PreviewResumeRequest) -> PreviewResumeResponse:
             resume_service.generate_preview_html,
             style_name=req.style_name,
             resume_language=req.resume_language,
+            resume_content=req.resume_content,
         )
         return PreviewResumeResponse(**result)
     except FileNotFoundError as e:
@@ -232,7 +239,12 @@ def download_resume(filename: str) -> FileResponse:
     """Download a generated resume PDF."""
     from pathlib import Path
 
-    file_path = Path("data_folder/output") / filename
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    safe_name = Path(filename).name
+    if PUBLIC_DEMO_MODE and not re.fullmatch(r"public_[0-9a-f]{32}\.pdf", safe_name):
+        raise HTTPException(status_code=404, detail="File not found")
+    resume_service.cleanup_public_artifacts()
+    file_path = Path("data_folder/output") / safe_name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path=str(file_path), filename=filename, media_type="application/pdf")
@@ -251,6 +263,10 @@ async def preview_saved_resume(html_filename: str) -> dict:
 
     # Sanitize to prevent path traversal
     safe_name = Path(html_filename).name
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and not re.fullmatch(r"public_[0-9a-f]{32}\.html", safe_name):
+        raise HTTPException(status_code=404, detail="Saved HTML not found")
+    resume_service.cleanup_public_artifacts()
     file_path = Path("data_folder/output") / safe_name
     if not file_path.exists() or not file_path.suffix == ".html":
         raise HTTPException(status_code=404, detail=f"Saved HTML not found: {safe_name}")

@@ -17,6 +17,8 @@ education_details:
   - education_level: "本科"
     institution: "示例大学"
     field_of_study: "示例专业"
+    research_direction: ""
+    research_topics: []
     final_evaluation_grade: ""
     year_of_completion: "2020"
     start_date: "2016"

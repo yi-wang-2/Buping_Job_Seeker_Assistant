@@ -15,6 +15,9 @@ from src.libs.ai_engine.skills.builtin import CareerAdvisorSkill, JDAnalyzerSkil
 
 
 def _resolve_config(api_key: str, provider: str, model: str, base_url: str) -> dict[str, str]:
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and not api_key:
+        raise ValueError("Public demo requires your own API key for each AI request.")
     secrets = load_secrets()
     effective_provider = provider or str(secrets.get("llm_model_type", "anthropic"))
     effective_key = api_key or str(secrets.get("llm_api_key", ""))

@@ -18,6 +18,7 @@ import {
   Unlink,
 } from "lucide-react";
 import { extractStyleFromHtml } from "./extractStyle";
+import { installPrintLayoutEmulation, paginateResumeDom } from "./domPagination";
 
 interface EditableResumePreviewProps {
   initialHtml: string;
@@ -201,6 +202,10 @@ function EditableWYSIWYGEditor({
     // line-height/module-spacing are user-visible document changes.
     const root = doc.documentElement.cloneNode(true) as HTMLElement;
     root.querySelector("#buping-editor-style")?.remove();
+    root.querySelector("#buping-page-guide-style")?.remove();
+    root.querySelector("#buping-page-guides")?.remove();
+    root.querySelectorAll("[data-buping-page-break]").forEach((el) => el.remove());
+    root.querySelector("#buping-print-layout-emulation")?.remove();
     root.querySelectorAll<HTMLElement>("[data-buping-block], [contenteditable]").forEach((el) => {
       el.removeAttribute("data-buping-block");
       el.removeAttribute("contenteditable");
@@ -305,6 +310,7 @@ function EditableWYSIWYGEditor({
     if (!doc) return;
 
     applyLayoutControls(doc, nextLineHeight, nextModuleSpacing);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
     emitDocumentChange(doc);
   };
 
@@ -383,6 +389,9 @@ function EditableWYSIWYGEditor({
       `;
       doc.head.appendChild(style);
       applyLayoutControls(doc, savedLineHeight, savedModuleSpacing);
+      installPrintLayoutEmulation(doc);
+      window.requestAnimationFrame(() => paginateResumeDom(doc));
+      void doc.fonts?.ready.then(() => paginateResumeDom(doc));
 
       // Prefer semantic resume modules. For older/custom templates without
       // header/section elements, fall back to direct body children.
@@ -418,6 +427,7 @@ function EditableWYSIWYGEditor({
       // Hook input event to capture HTML changes (bubbles up from any block)
       doc.addEventListener("input", () => {
         emitDocumentChange(doc);
+        window.setTimeout(() => paginateResumeDom(doc), 300);
       });
 
       // Selection change for AI rewrite feature
@@ -473,6 +483,7 @@ function EditableWYSIWYGEditor({
     if (!doc) return;
     doc.body.innerHTML = initialBodyRef.current;
     applyLayoutControls(doc);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
     emitDocumentChange(doc);
   };
 

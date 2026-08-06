@@ -161,6 +161,7 @@ class MockInterviewTTSRequest(BaseModel):
     provider: str = "minimax"
     voice: str = ""
     rate: str = "+0%"
+    api_key: str = ""
 
 
 @router.get("/mock/tts/voices")
@@ -180,6 +181,7 @@ async def synthesize_mock_interview_tts(req: MockInterviewTTSRequest) -> Respons
             voice=req.voice,
             rate=req.rate,
             provider=req.provider,
+            api_key=req.api_key,
         )
         return Response(
             content=audio,
@@ -199,13 +201,14 @@ async def stream_mock_interview_tts(req: MockInterviewTTSRequest) -> StreamingRe
         raise HTTPException(status_code=400, detail="Text cannot be empty")
     try:
         if (req.provider or "minimax").lower() == "minimax":
-            interview_service.validate_minimax_tts_config()
+            interview_service.validate_minimax_tts_config(req.api_key)
         return StreamingResponse(
             interview_service.stream_mock_interview_speech(
                 text=req.text,
                 voice=req.voice,
                 rate=req.rate,
                 provider=req.provider,
+                api_key=req.api_key,
             ),
             media_type="audio/mpeg",
             headers={"Cache-Control": "no-store"},

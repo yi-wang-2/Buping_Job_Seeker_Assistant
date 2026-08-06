@@ -303,6 +303,8 @@ education_details:
   - education_level: "Bachelor's Degree"
     institution: "Stanford University"
     field_of_study: "Computer Science"
+    research_direction: ""  # 可选：必须按事实填写，留空时不会显示
+    research_topics: []      # 可选：仅填写真实研究课题
     year_of_completion: "2023"
 experience_details:
   - position: "Senior Engineer"

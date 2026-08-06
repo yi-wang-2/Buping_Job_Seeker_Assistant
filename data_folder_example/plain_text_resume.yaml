@@ -17,6 +17,8 @@ education_details:
   - education_level: "Master's Degree"
     institution: "Bob academy"
     field_of_study: "Bobs Engineering"
+    research_direction: ""
+    research_topics: []
     final_evaluation_grade: "4.0"
     year_of_completion: "2023"
     start_date: "2022"

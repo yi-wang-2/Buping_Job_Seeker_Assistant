@@ -3,6 +3,7 @@ import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Ed
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
 import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
+import { installPrintLayoutEmulation, paginateResumeDom } from "../components/editor/domPagination";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
 import { EditableResumePreview } from "../components/editor";
@@ -924,7 +925,10 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditMode(true)}
+                  onClick={() => {
+                    setEditedHtml(previewHtml);
+                    setEditMode(true);
+                  }}
                   disabled={!previewHtml}
                   className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     editMode
@@ -995,24 +999,32 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                   </div>
                 ) : previewHtml && editMode ? (
                   <EditableResumePreview
-                    // Stable initialHtml — typing only flows through
-                    // onChange (no iframe reload, preserves cursor).
-                    // AI rewrite mutates the iframe body directly via
-                    // editorIframe ref + onIframeReady callback.
-                    key={`editor-${previewKey}`}
-                    initialHtml={previewHtml}
-                    onSave={handleEditSave}
-                    onChange={(html) => setEditedHtml(html)}
-                    onSelectionChange={(text) => setLastSelection(text)}
-                    onIframeReady={setEditorIframe}
-                    saving={saving}
-                    placeholder={rt.previewEmpty}
+                      // Stable initialHtml — typing only flows through
+                      // onChange (no iframe reload, preserves cursor).
+                      // AI rewrite mutates the iframe body directly via
+                      // editorIframe ref + onIframeReady callback.
+                      key={`editor-${previewKey}`}
+                      initialHtml={previewHtml}
+                      onSave={handleEditSave}
+                      onChange={(html) => setEditedHtml(html)}
+                      onSelectionChange={(text) => setLastSelection(text)}
+                      onIframeReady={setEditorIframe}
+                      saving={saving}
+                      placeholder={rt.previewEmpty}
                   />
                 ) : previewHtml ? (
                   <iframe
                     key={previewKey}
                     ref={previewRef}
                     srcDoc={previewHtml}
+                    onLoad={(event) => {
+                      const doc = event.currentTarget.contentDocument;
+                      if (doc) {
+                        installPrintLayoutEmulation(doc);
+                        window.requestAnimationFrame(() => paginateResumeDom(doc));
+                        void doc.fonts?.ready.then(() => paginateResumeDom(doc));
+                      }
+                    }}
                     title="Resume Preview"
                     className="h-[700px] w-full bg-white"
                     sandbox="allow-same-origin"

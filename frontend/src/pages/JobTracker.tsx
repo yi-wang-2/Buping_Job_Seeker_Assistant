@@ -30,6 +30,7 @@ import {
 /* ─── Constants ─────────────────────────────────────────── */
 
 const STORAGE_KEY = "myJobTrackerV4";
+const trackerStorage = import.meta.env.VITE_DEPLOYMENT_MODE === "public" ? window.sessionStorage : window.localStorage;
 
 const STATUSES = [
   "简历筛选",
@@ -180,10 +181,10 @@ export default function JobTracker({ t }: Props) {
         if (data.records && data.records.length > 0) {
           setEntries(migrateIconPaths(data.records));
           // Also write to localStorage for offline fallback
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(migrateIconPaths(data.records)));
+          trackerStorage.setItem(STORAGE_KEY, JSON.stringify(migrateIconPaths(data.records)));
         } else {
           // Try localStorage
-          const saved = localStorage.getItem(STORAGE_KEY);
+          const saved = trackerStorage.getItem(STORAGE_KEY);
           if (saved) {
             setEntries(migrateIconPaths(JSON.parse(saved)));
           } else {
@@ -194,7 +195,7 @@ export default function JobTracker({ t }: Props) {
       } catch {
         // API unavailable — fall back to localStorage
         try {
-          const saved = localStorage.getItem(STORAGE_KEY);
+          const saved = trackerStorage.getItem(STORAGE_KEY);
           if (saved) {
             setEntries(migrateIconPaths(JSON.parse(saved)));
           } else {
@@ -215,7 +216,7 @@ export default function JobTracker({ t }: Props) {
     if (!loadedRef.current) return; // skip initial mount
 
     // Always write to localStorage immediately
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    trackerStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 
     // Debounce API save (1s after last change)
     if (apiSaveTimerRef.current) clearTimeout(apiSaveTimerRef.current);

@@ -219,6 +219,8 @@ class LLMLogger:
 
     @staticmethod
     def log_request(prompts, parsed_reply: Dict[str, Dict]):
+        if os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}:
+            return
         logger.debug("Starting log_request method")
         logger.debug(f"Prompts received: {prompts}")
         logger.debug(f"Parsed reply received: {parsed_reply}")

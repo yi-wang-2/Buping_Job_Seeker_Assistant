@@ -165,6 +165,8 @@ def HTML_to_PDF(html_content, driver):
   .skills-container,
   #technical-stack,
   #languages-other,
+  #skills-languages,
+  .two-column,
   .compact-list,
   .stack-list,
   .inline-list {

@@ -4,6 +4,7 @@ This module contains utility functions for the Resume and Cover Letter Builder s
 
 # app/libs/resume_and_cover_builder/utils.py
 import json
+import os
 import openai
 import time
 from datetime import datetime
@@ -23,6 +24,8 @@ class LLMLogger:
 
     @staticmethod
     def log_request(prompts, parsed_reply: Dict[str, Dict]):
+        if os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}:
+            return
         calls_log = global_config.LOG_OUTPUT_FILE_PATH / "open_ai_calls.json"
         if isinstance(prompts, StringPromptValue):
             prompts = prompts.text

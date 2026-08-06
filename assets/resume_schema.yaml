@@ -27,6 +27,10 @@ education_details:
       gpa: {type: string}
       graduation_year: {type: string}
       field_of_study: {type: string}
+      research_direction: {type: string}
+      research_topics:
+        type: array
+        items: {type: string}
       exam:
         type: object
         additionalProperties: {type: string}

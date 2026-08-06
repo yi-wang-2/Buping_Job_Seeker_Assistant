@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from backend.services.config_service import load_secrets
+from backend.services.config_service import PUBLIC_DEMO_MODE, load_secrets
 from backend.services.config_service import resolve_llm_model
 
 import config as cfg
@@ -49,6 +49,9 @@ def _normalize_interview_model_type(model_type: str, base_url: str = "") -> str:
 
 
 def _get_effective_config(api_key: str = "", model_type: str = "", base_url: str = "", model_name: str = "") -> dict[str, str]:
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and not api_key:
+        raise ValueError("Public demo requires your own API key for each AI request.")
     """Resolve effective LLM config from args > secrets > config.py."""
     secrets = load_secrets()
     raw_model_type = model_type or secrets.get("llm_model_type", "anthropic")
@@ -420,6 +423,7 @@ async def synthesize_mock_interview_speech(
     voice: str = "",
     rate: str = "+0%",
     provider: str = "minimax",
+    api_key: str = "",
 ) -> tuple[bytes, str]:
     """Synthesize interviewer speech and return (audio bytes, media type)."""
     clean_text = " ".join((text or "").split())
@@ -431,14 +435,16 @@ async def synthesize_mock_interview_speech(
     provider_name = (provider or os.getenv("MOCK_INTERVIEW_TTS_PROVIDER", "minimax")).lower()
     max_token_setting = os.getenv("CHAT_TTS_MAX_NEW_TOKEN", "1280")
     cache_key = hashlib.sha256(f"{provider_name}|{voice}|{rate}|{max_token_setting}|{clean_text}".encode("utf-8")).hexdigest()
-    if cache_key in _tts_cache:
+    use_cache = not PUBLIC_DEMO_MODE
+    if use_cache and cache_key in _tts_cache:
         return _tts_cache[cache_key]
 
     primary_error: Exception | None = None
     if provider_name == "minimax":
         try:
-            result = (await _synthesize_minimax_speech(clean_text, voice=voice, rate=rate), "audio/mpeg")
-            _cache_tts_result(cache_key, result)
+            result = (await _synthesize_minimax_speech(clean_text, voice=voice, rate=rate, api_key=api_key), "audio/mpeg")
+            if use_cache:
+                _cache_tts_result(cache_key, result)
             return result
         except Exception as exc:
             primary_error = exc
@@ -446,7 +452,8 @@ async def synthesize_mock_interview_speech(
     if provider_name == "kokoro":
         try:
             result = (_synthesize_kokoro_speech(clean_text, voice=voice, rate=rate), "audio/wav")
-            _cache_tts_result(cache_key, result)
+            if use_cache:
+                _cache_tts_result(cache_key, result)
             return result
         except Exception as exc:
             primary_error = exc
@@ -454,7 +461,8 @@ async def synthesize_mock_interview_speech(
     if provider_name == "chattts":
         try:
             result = (_synthesize_chattts_speech(clean_text), "audio/wav")
-            _cache_tts_result(cache_key, result)
+            if use_cache:
+                _cache_tts_result(cache_key, result)
             return result
         except Exception as exc:
             # ChatTTS is preferred for quality, but edge-tts is a lighter network fallback.
@@ -470,6 +478,7 @@ async def stream_mock_interview_speech(
     voice: str = "",
     rate: str = "+0%",
     provider: str = "minimax",
+    api_key: str = "",
 ):
     """Stream interviewer speech chunks as audio bytes."""
     clean_text = " ".join((text or "").split())
@@ -480,11 +489,13 @@ async def stream_mock_interview_speech(
 
     provider_name = (provider or "minimax").lower()
     if provider_name != "minimax":
-        audio, _ = await synthesize_mock_interview_speech(clean_text, voice=voice, rate=rate, provider=provider_name)
+        audio, _ = await synthesize_mock_interview_speech(
+            clean_text, voice=voice, rate=rate, provider=provider_name, api_key=api_key
+        )
         yield audio
         return
 
-    async for chunk in _stream_minimax_speech(clean_text, voice=voice, rate=rate):
+    async for chunk in _stream_minimax_speech(clean_text, voice=voice, rate=rate, api_key=api_key):
         yield chunk
 
 
@@ -502,10 +513,11 @@ def _rate_to_kokoro_speed(rate: str) -> float:
     return max(0.5, min(speed, 2.0))
 
 
-def _get_minimax_tts_api_key() -> str:
+def _get_minimax_tts_api_key(request_api_key: str = "") -> str:
     secrets = load_secrets()
     return (
-        os.getenv("MINIMAX_TTS_API_KEY", "").strip()
+        request_api_key.strip()
+        or os.getenv("MINIMAX_TTS_API_KEY", "").strip()
         or str(secrets.get("minimax_tts_api_key", "")).strip()
         or str(secrets.get("minimax_api_key", "")).strip()
         or str(secrets.get("llm_api_key", "")).strip()
@@ -554,8 +566,10 @@ def _build_minimax_tts_payload(text: str, voice: str = "", rate: str = "+0%", st
     return payload
 
 
-def validate_minimax_tts_config() -> None:
-    if not _get_minimax_tts_api_key():
+def validate_minimax_tts_config(api_key: str = "") -> None:
+    if PUBLIC_DEMO_MODE and not api_key.strip():
+        raise RuntimeError("Public demo requires your own MiniMax API key for each TTS request.")
+    if not _get_minimax_tts_api_key(api_key):
         raise RuntimeError("MiniMax TTS API key is missing. Set MINIMAX_TTS_API_KEY or minimax_tts_api_key in secrets.yaml.")
 
 
@@ -577,12 +591,14 @@ def _minimax_error_from_payload(payload: dict[str, Any]) -> str:
     return ""
 
 
-async def _synthesize_minimax_speech(text: str, voice: str = "", rate: str = "+0%") -> bytes:
-    validate_minimax_tts_config()
+async def _synthesize_minimax_speech(
+    text: str, voice: str = "", rate: str = "+0%", api_key: str = ""
+) -> bytes:
+    validate_minimax_tts_config(api_key)
     import httpx
 
     headers = {
-        "Authorization": f"Bearer {_get_minimax_tts_api_key()}",
+        "Authorization": f"Bearer {_get_minimax_tts_api_key(api_key)}",
         "Content-Type": "application/json",
     }
     payload = _build_minimax_tts_payload(text, voice=voice, rate=rate, stream=False)
@@ -598,12 +614,14 @@ async def _synthesize_minimax_speech(text: str, voice: str = "", rate: str = "+0
     return audio
 
 
-async def _stream_minimax_speech(text: str, voice: str = "", rate: str = "+0%"):
-    validate_minimax_tts_config()
+async def _stream_minimax_speech(
+    text: str, voice: str = "", rate: str = "+0%", api_key: str = ""
+):
+    validate_minimax_tts_config(api_key)
     import httpx
 
     headers = {
-        "Authorization": f"Bearer {_get_minimax_tts_api_key()}",
+        "Authorization": f"Bearer {_get_minimax_tts_api_key(api_key)}",
         "Content-Type": "application/json",
         "Accept": "text/event-stream",
     }

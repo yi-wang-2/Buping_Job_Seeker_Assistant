@@ -7,6 +7,12 @@ const api = axios.create({
 
 const API_KEY_SESSION_KEY = "buping_llm_api_key";
 const IS_CLOUD = import.meta.env.VITE_DEPLOYMENT_MODE === "cloud";
+const IS_PUBLIC = import.meta.env.VITE_DEPLOYMENT_MODE === "public";
+const PUBLIC_SETTINGS_SESSION_KEY = "buping_public_settings";
+const PUBLIC_METRICS_SESSION_KEY = "buping_public_ai_metrics";
+const PUBLIC_JOB_SESSION_KEY = "buping_public_job_tracker";
+const PUBLIC_HISTORY_SESSION_KEY = "buping_public_resume_history";
+const publicResumeKey = (language: string) => `buping_public_resume_${language === "en" ? "en" : "zh"}`;
 
 export interface AIMetrics {
   period_days: number;
@@ -24,7 +30,59 @@ export interface AIMetrics {
   recent: Array<Record<string, any>>;
 }
 
+type PublicMetric = { timestamp: string; skill: string; status: "success" | "error"; latency_ms: number };
+
+function publicMetrics(): PublicMetric[] {
+  try { return JSON.parse(window.sessionStorage.getItem(PUBLIC_METRICS_SESSION_KEY) || "[]"); }
+  catch { return []; }
+}
+
+function recordPublicMetric(config: any, status: "success" | "error") {
+  if (!IS_PUBLIC || String(config?.method || "get").toLowerCase() === "get") return;
+  const url = String(config?.url || "");
+  if (!/^\/(resume|interview|ai|settings\/models|settings\/upload-resume)/.test(url)) return;
+  const started = Number(config?.__bupingStartedAt || Date.now());
+  const records = publicMetrics();
+  records.push({
+    timestamp: new Date().toISOString(),
+    skill: url.split("?")[0].replace(/^\//, ""),
+    status,
+    latency_ms: Math.max(0, Date.now() - started),
+  });
+  window.sessionStorage.setItem(PUBLIC_METRICS_SESSION_KEY, JSON.stringify(records.slice(-100)));
+}
+
 export async function getAIMetrics(days = 30): Promise<AIMetrics> {
+  if (IS_PUBLIC) {
+    const cutoff = Date.now() - days * 86400000;
+    const rows = publicMetrics().filter((row) => Date.parse(row.timestamp) >= cutoff);
+    const successful = rows.filter((row) => row.status === "success").length;
+    const latencies = rows.map((row) => row.latency_ms).sort((a, b) => a - b);
+    const average = rows.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / rows.length) : 0;
+    const grouped = new Map<string, PublicMetric[]>();
+    rows.forEach((row) => grouped.set(row.skill, [...(grouped.get(row.skill) || []), row]));
+    return {
+      period_days: days,
+      summary: {
+        calls: rows.length, successful_calls: successful, errors: rows.length - successful,
+        success_rate: rows.length ? Math.round(successful / rows.length * 100) : 0,
+        input_tokens: 0, output_tokens: 0, total_tokens: 0, retries: 0,
+        avg_latency_ms: average,
+        p95_latency_ms: latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * .95))] : 0,
+        cache_hits: 0, cache_entries: 0, cache_hit_rate: 0, memory_items: 0,
+        context_original_tokens: 0, context_final_tokens: 0, context_saved_tokens: 0,
+        context_compression_rate: 0, compressed_items: 0, dropped_items: 0,
+      },
+      by_skill: Array.from(grouped, ([skill, items]) => ({
+        skill, calls: items.length, tokens: 0,
+        errors: items.filter((item) => item.status === "error").length,
+        avg_latency_ms: Math.round(items.reduce((sum, item) => sum + item.latency_ms, 0) / items.length),
+      })),
+      by_model: [], timeline: [], recent: rows.slice().reverse().map((row, index) => ({
+        ...row, trace_id: `browser-${index}`, model: "browser session", usage: { total_tokens: 0 },
+      })),
+    };
+  }
   const { data } = await api.get("/ai-metrics", { params: { days } });
   return data;
 }
@@ -65,6 +123,15 @@ api.interceptors.response.use(
   },
 );
 
+api.interceptors.request.use((config: any) => {
+  if (IS_PUBLIC) config.__bupingStartedAt = Date.now();
+  return config;
+});
+api.interceptors.response.use(
+  (response) => { recordPublicMetric(response.config, "success"); return response; },
+  (error) => { recordPublicMetric(error?.config, "error"); return Promise.reject(error); },
+);
+
 // ---- Resume ----
 export async function getStyles(): Promise<Record<string, { file: string; author: string }>> {
   const { data } = await api.get("/resume/styles");
@@ -81,16 +148,31 @@ export async function generateResume(params: {
   job_description?: string;
   resume_language?: string;
   system_language?: string;
+  resume_content?: string;
 }): Promise<{ path: string; filename: string; html_filename?: string; html_path?: string; status: string }> {
-  const { data } = await api.post("/resume/generate", params);
+  const payload = IS_PUBLIC ? {
+    ...params,
+    resume_content: params.resume_content || window.sessionStorage.getItem(publicResumeKey(params.resume_language || "zh")) || "",
+  } : params;
+  const { data } = await api.post("/resume/generate", payload);
+  if (IS_PUBLIC) {
+    const files = JSON.parse(window.sessionStorage.getItem(PUBLIC_HISTORY_SESSION_KEY) || "[]");
+    files.unshift({ name: data.filename, html_filename: data.html_filename || "", path: data.path, size: 0, modified: new Date().toLocaleString() });
+    window.sessionStorage.setItem(PUBLIC_HISTORY_SESSION_KEY, JSON.stringify(files.slice(0, 30)));
+  }
   return data;
 }
 
 export async function previewResume(params: {
   style_name?: string;
   resume_language?: string;
+  resume_content?: string;
 }): Promise<{ html: string; style: string; language: string }> {
-  const { data } = await api.post("/resume/preview", params);
+  const payload = IS_PUBLIC ? {
+    ...params,
+    resume_content: params.resume_content || window.sessionStorage.getItem(publicResumeKey(params.resume_language || "zh")) || "",
+  } : params;
+  const { data } = await api.post("/resume/preview", payload);
   return data;
 }
 
@@ -128,6 +210,11 @@ export async function saveEditedResume(
   }, {
     timeout: 120000, // 2 min for Chrome PDF rendering
   });
+  if (IS_PUBLIC) {
+    const files = JSON.parse(window.sessionStorage.getItem(PUBLIC_HISTORY_SESSION_KEY) || "[]");
+    files.unshift({ name: data.pdf_filename, html_filename: data.html_filename, path: "browser session", size: data.pdf_size, modified: new Date().toLocaleString() });
+    window.sessionStorage.setItem(PUBLIC_HISTORY_SESSION_KEY, JSON.stringify(files.slice(0, 30)));
+  }
   return data;
 }
 
@@ -208,7 +295,7 @@ export async function startMockInterview(params: {
   interview_style?: string;
 }): Promise<{ history: Array<{ role: string; content: string }>; session_id: string | null; status: string }> {
   let payload = params;
-  if (IS_CLOUD && !params.api_key) {
+  if ((IS_CLOUD || IS_PUBLIC) && !params.api_key) {
     const settings = await getSettings();
     payload = {
       ...params,
@@ -266,8 +353,13 @@ export async function synthesizeMockInterviewSpeech(params: {
   provider?: string;
   voice?: string;
   rate?: string;
+  api_key?: string;
 }, signal?: AbortSignal): Promise<Blob> {
-  const { data } = await api.post("/interview/mock/tts", params, {
+  const request = {
+    ...params,
+    api_key: params.api_key || window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "",
+  };
+  const { data } = await api.post("/interview/mock/tts", request, {
     responseType: "blob",
     timeout: 120000,
     signal,
@@ -280,11 +372,16 @@ export async function streamMockInterviewSpeech(params: {
   provider?: string;
   voice?: string;
   rate?: string;
+  api_key?: string;
 }, signal?: AbortSignal): Promise<Response> {
+  const request = {
+    ...params,
+    api_key: params.api_key || window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "",
+  };
   const response = await fetch("/api/interview/mock/tts/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    body: JSON.stringify(request),
     signal,
   });
   if (!response.ok) {
@@ -316,7 +413,12 @@ export async function getSettings(): Promise<{
   system_language: string;
 }> {
   const { data } = await api.get("/settings");
-  if (IS_CLOUD) data.llm_api_key = window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "";
+  if (IS_CLOUD || IS_PUBLIC) data.llm_api_key = window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "";
+  if (IS_PUBLIC) {
+    const saved = window.sessionStorage.getItem(PUBLIC_SETTINGS_SESSION_KEY);
+    if (saved) Object.assign(data, JSON.parse(saved));
+    data.llm_api_key = window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "";
+  }
   return data;
 }
 
@@ -375,13 +477,17 @@ export async function saveSettings(params: {
   resume_language?: string;
   system_language?: string;
 }): Promise<{ status: string; message: string }> {
-  if (!IS_CLOUD) {
+  if (!IS_CLOUD && !IS_PUBLIC) {
     const { data } = await api.put("/settings", params);
     return data;
   }
   if (params.llm_api_key) window.sessionStorage.setItem(API_KEY_SESSION_KEY, params.llm_api_key);
   else window.sessionStorage.removeItem(API_KEY_SESSION_KEY);
   const { llm_api_key: _apiKey, ...cloudSettings } = params;
+  if (IS_PUBLIC) {
+    window.sessionStorage.setItem(PUBLIC_SETTINGS_SESSION_KEY, JSON.stringify(cloudSettings));
+    return { status: "success", message: "Settings saved in this browser session only" };
+  }
   const { data } = await api.put("/settings", cloudSettings);
   return data;
 }
@@ -407,6 +513,13 @@ export async function discoverModels(params: {
 }
 
 export async function getResumeContent(language: string = "zh"): Promise<{ content: string; language: string }> {
+  if (IS_PUBLIC) {
+    const saved = window.sessionStorage.getItem(publicResumeKey(language));
+    if (saved !== null) return { content: saved, language };
+    const { data } = await api.get("/settings/resume-content", { params: { language } });
+    window.sessionStorage.setItem(publicResumeKey(language), data.content || "");
+    return data;
+  }
   const { data } = await api.get("/settings/resume-content", { params: { language } });
   return data;
 }
@@ -415,6 +528,10 @@ export async function saveResumeContent(params: {
   content: string;
   language: string;
 }): Promise<{ status: string; message: string; validation?: ResumeValidation }> {
+  if (IS_PUBLIC) {
+    window.sessionStorage.setItem(publicResumeKey(params.language), params.content);
+    return { status: "success", message: "Resume saved in this browser session only" };
+  }
   const { data } = await api.put("/settings/resume-content", params);
   return data;
 }
@@ -424,11 +541,20 @@ export async function getHistory(): Promise<{
   files: Array<{ name: string; path: string; size: number; modified: string }>;
   count: number;
 }> {
+  if (IS_PUBLIC) {
+    const files = JSON.parse(window.sessionStorage.getItem(PUBLIC_HISTORY_SESSION_KEY) || "[]");
+    return { files, count: files.length };
+  }
   const { data } = await api.get("/history");
   return data;
 }
 
 export async function clearHistory(): Promise<{ status: string; message: string; cleared: number }> {
+  if (IS_PUBLIC) {
+    const files = JSON.parse(window.sessionStorage.getItem(PUBLIC_HISTORY_SESSION_KEY) || "[]");
+    window.sessionStorage.removeItem(PUBLIC_HISTORY_SESSION_KEY);
+    return { status: "success", message: "Browser session history cleared", cleared: files.length };
+  }
   const { data } = await api.delete("/history");
   return data;
 }
@@ -448,6 +574,10 @@ export interface JobEntry {
 }
 
 export async function getJobTrackerRecords(): Promise<{ records: JobEntry[]; count: number }> {
+  if (IS_PUBLIC) {
+    const records = JSON.parse(window.sessionStorage.getItem(PUBLIC_JOB_SESSION_KEY) || "[]") as JobEntry[];
+    return { records, count: records.length };
+  }
   const { data } = await api.get("/job-tracker");
   return data;
 }
@@ -455,6 +585,10 @@ export async function getJobTrackerRecords(): Promise<{ records: JobEntry[]; cou
 export async function saveJobTrackerRecords(
   records: JobEntry[],
 ): Promise<{ status: string; saved: number; path: string }> {
+  if (IS_PUBLIC) {
+    window.sessionStorage.setItem(PUBLIC_JOB_SESSION_KEY, JSON.stringify(records));
+    return { status: "ok", saved: records.length, path: "browser session" };
+  }
   const { data } = await api.put("/job-tracker", { records });
   return data;
 }
@@ -466,6 +600,19 @@ export async function getJobTrackerStats(): Promise<{
   rejected: number;
   company_counts: Record<string, number>;
 }> {
+  if (IS_PUBLIC) {
+    const { records } = await getJobTrackerRecords();
+    return {
+      total: records.length,
+      interviewing: records.filter((r) => r.status.includes("面") && !r.status.includes("拒")).length,
+      offers: records.filter((r) => r.status.toLowerCase() === "offer").length,
+      rejected: records.filter((r) => r.status.includes("拒")).length,
+      company_counts: records.reduce<Record<string, number>>((out, row) => {
+        if (row.company) out[row.company] = (out[row.company] || 0) + 1;
+        return out;
+      }, {}),
+    };
+  }
   const { data } = await api.get("/job-tracker/stats");
   return data;
 }

@@ -22,6 +22,18 @@ class PersonalInformation(BaseModel):
     wechat: Optional[str] = None  # 微信 - 中国求职市场必备
 
 
+class EducationAdditionalInfo(BaseModel):
+    is_211: Optional[bool] = None
+    is_double_first_class: Optional[bool] = None
+    college: Optional[str] = None
+    study_mode: Optional[str] = None
+    honors: Optional[Union[str, List[str]]] = None
+    relevant_courses: Optional[Union[str, List[str]]] = None
+    research_direction: Optional[str] = None
+    research_topics: Optional[Union[str, List[str]]] = None
+    exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
+
+
 class EducationDetails(BaseModel):
     education_level: Optional[str]
     institution: Optional[str]
@@ -30,6 +42,9 @@ class EducationDetails(BaseModel):
     start_date: Optional[str]
     year_of_completion: Optional[int]
     exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
+    research_direction: Optional[str] = None
+    research_topics: Optional[Union[str, List[str]]] = None
+    additional_info: Optional[EducationAdditionalInfo] = None
 
     @field_validator("year_of_completion", mode="before")
     @classmethod
@@ -160,7 +175,10 @@ class Resume(BaseModel):
                     final_evaluation_grade=edu.get('final_evaluation_grade'),
                     start_date=edu.get('start_date'),
                     year_of_completion=edu.get('year_of_completion'),
-                    exam=exams
+                    exam=exams,
+                    research_direction=edu.get('research_direction'),
+                    research_topics=edu.get('research_topics'),
+                    additional_info=edu.get('additional_info'),
                 )
                 education_list.append(education)
             except KeyError as e:

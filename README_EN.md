@@ -229,6 +229,8 @@ education_details:
   - education_level: "Bachelor's Degree"
     institution: "Stanford University"
     field_of_study: "Computer Science"
+    research_direction: ""  # Optional; omit or leave empty when not applicable
+    research_topics: []      # Optional; include only factual research topics
     year_of_completion: "2023"
 experience_details:
   - position: "Senior Engineer"

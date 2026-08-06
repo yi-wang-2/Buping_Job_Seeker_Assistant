@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
+import os
 
 import yaml
 
 DATA_FOLDER = Path("data_folder")
+PUBLIC_DEMO_MODE = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
 
 DEFAULT_LLM_MODELS = {
     "anthropic": "claude-sonnet-4-20250514",
@@ -45,12 +47,21 @@ def load_secrets() -> dict[str, Any]:
     secrets_path = DATA_FOLDER / "secrets.yaml"
     if secrets_path.exists():
         with open(secrets_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+            data = yaml.safe_load(f) or {}
+            if PUBLIC_DEMO_MODE:
+                data["llm_api_key"] = ""
+                data["minimax_api_key"] = ""
+                data["minimax_tts_api_key"] = ""
+            return data
     return {}
 
 
 def save_secrets(data: dict[str, Any]) -> None:
     """Merge and save data into secrets.yaml."""
+    if PUBLIC_DEMO_MODE:
+        # Public visitors keep credentials and preferences in browser sessionStorage.
+        # Never persist request credentials into the shared server filesystem.
+        return
     secrets_path = DATA_FOLDER / "secrets.yaml"
     existing: dict[str, Any] = {}
     if secrets_path.exists():
