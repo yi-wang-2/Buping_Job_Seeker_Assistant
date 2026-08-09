@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.services import config_service
@@ -118,6 +119,40 @@ SUPPORTED_EXTENSIONS = {
     ".yaml", ".yml", ".json", ".txt", ".md",
     ".pdf", ".docx", ".html", ".htm", ".tex",
 }
+
+
+@router.get("/resume-photo/status")
+def get_resume_photo_status() -> dict:
+    path = config_service.get_resume_photo_path()
+    return {"uploaded": path is not None, "filename": path.name if path else ""}
+
+
+@router.get("/resume-photo")
+def get_resume_photo():
+    path = config_service.get_resume_photo_path()
+    if not path:
+        raise HTTPException(status_code=404, detail="No resume photo uploaded")
+    return FileResponse(path)
+
+
+@router.post("/resume-photo")
+async def upload_resume_photo(file: UploadFile = File(...)) -> dict:
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in config_service.SUPPORTED_PHOTO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only PNG, JPG and WebP photos are supported")
+    content = await file.read(5 * 1024 * 1024 + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="Photo file is empty")
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Photo is too large. Maximum size is 5 MB")
+    path = config_service.save_resume_photo(content, extension)
+    return {"status": "success", "filename": path.name}
+
+
+@router.delete("/resume-photo")
+def delete_resume_photo() -> dict:
+    deleted = config_service.delete_resume_photo()
+    return {"status": "success", "deleted": deleted}
 
 
 @router.post("/upload-resume")

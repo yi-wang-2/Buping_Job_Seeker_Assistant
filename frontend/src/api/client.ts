@@ -468,6 +468,30 @@ export async function uploadResume(
   return data;
 }
 
+export async function getResumePhotoStatus(): Promise<{ uploaded: boolean; filename: string }> {
+  const { data } = await api.get("/settings/resume-photo/status");
+  return data;
+}
+
+export async function uploadResumePhoto(file: File): Promise<{ status: string; filename: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post("/settings/resume-photo", formData, {
+    headers: {"Content-Type": "multipart/form-data"},
+    timeout: 30000,
+  });
+  return data;
+}
+
+export async function deleteResumePhoto(): Promise<{ status: string; deleted: boolean }> {
+  const { data } = await api.delete("/settings/resume-photo");
+  return data;
+}
+
+export function getResumePhotoUrl(cacheKey = ""): string {
+  return `/api/settings/resume-photo${cacheKey ? `?v=${encodeURIComponent(cacheKey)}` : ""}`;
+}
+
 export async function saveSettings(params: {
   llm_api_key?: string;
   llm_model_type?: string;

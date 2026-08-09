@@ -11,6 +11,37 @@ import yaml
 
 DATA_FOLDER = Path("data_folder")
 PUBLIC_DEMO_MODE = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
+RESUME_PHOTO_BASENAME = "resume_photo"
+SUPPORTED_PHOTO_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def get_resume_photo_path() -> Path | None:
+    for extension in SUPPORTED_PHOTO_EXTENSIONS:
+        candidate = DATA_FOLDER / f"{RESUME_PHOTO_BASENAME}{extension}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def save_resume_photo(content: bytes, extension: str) -> Path:
+    extension = extension.lower()
+    if extension not in SUPPORTED_PHOTO_EXTENSIONS:
+        raise ValueError("Only PNG, JPG, JPEG and WebP photos are supported")
+    DATA_FOLDER.mkdir(parents=True, exist_ok=True)
+    delete_resume_photo()
+    target = DATA_FOLDER / f"{RESUME_PHOTO_BASENAME}{extension}"
+    target.write_bytes(content)
+    return target
+
+
+def delete_resume_photo() -> bool:
+    deleted = False
+    for extension in SUPPORTED_PHOTO_EXTENSIONS:
+        candidate = DATA_FOLDER / f"{RESUME_PHOTO_BASENAME}{extension}"
+        if candidate.exists():
+            candidate.unlink()
+            deleted = True
+    return deleted
 
 DEFAULT_LLM_MODELS = {
     "anthropic": "claude-sonnet-4-20250514",

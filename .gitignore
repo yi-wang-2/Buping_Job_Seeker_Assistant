@@ -198,6 +198,11 @@ TODO.md
 # Copy the templates and fill in your own data; the populated copies stay local.
 data_folder/secrets.yaml
 data_folder/plain_text_resume_zh.yaml
+# Optional user-uploaded resume photo (private local data)
+data_folder/resume_photo.png
+data_folder/resume_photo.jpg
+data_folder/resume_photo.jpeg
+data_folder/resume_photo.webp
 # Job tracker user records (icon assets are tracked)
 data_folder/job_tracker/records.json
 # ChatTTS local weights are multi-gigabyte runtime assets. Kokoro is kept in
