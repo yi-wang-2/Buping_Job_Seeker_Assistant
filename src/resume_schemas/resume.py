@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, HttpUrl, Field, field_validator
 
 
 class PersonalInformation(BaseModel):
+    full_name: Optional[str] = None
     name: Optional[str]
     surname: Optional[str]
     date_of_birth: Optional[str]
@@ -27,11 +28,8 @@ class EducationAdditionalInfo(BaseModel):
     is_double_first_class: Optional[bool] = None
     college: Optional[str] = None
     study_mode: Optional[str] = None
-    honors: Optional[Union[str, List[str]]] = None
-    relevant_courses: Optional[Union[str, List[str]]] = None
-    research_direction: Optional[str] = None
-    research_topics: Optional[Union[str, List[str]]] = None
-    exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
+    honors: Optional[str] = None
+    relevant_courses: Optional[str] = None
 
 
 class EducationDetails(BaseModel):
@@ -41,10 +39,9 @@ class EducationDetails(BaseModel):
     final_evaluation_grade: Optional[str]
     start_date: Optional[str]
     year_of_completion: Optional[int]
-    exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
     research_direction: Optional[str] = None
-    research_topics: Optional[Union[str, List[str]]] = None
     additional_info: Optional[EducationAdditionalInfo] = None
+    exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
 
     @field_validator("year_of_completion", mode="before")
     @classmethod
@@ -120,6 +117,7 @@ class LegalAuthorization(BaseModel):
 
 
 class Resume(BaseModel):
+    professional_summary: Optional[str] = None
     personal_information: Optional[PersonalInformation]
     education_details: Optional[List[EducationDetails]] = None
     experience_details: Optional[List[ExperienceDetails]] = None
@@ -175,10 +173,7 @@ class Resume(BaseModel):
                     final_evaluation_grade=edu.get('final_evaluation_grade'),
                     start_date=edu.get('start_date'),
                     year_of_completion=edu.get('year_of_completion'),
-                    exam=exams,
-                    research_direction=edu.get('research_direction'),
-                    research_topics=edu.get('research_topics'),
-                    additional_info=edu.get('additional_info'),
+                    exam=exams
                 )
                 education_list.append(education)
             except KeyError as e:

@@ -21,6 +21,11 @@ from src.libs.ai_engine.memory import MemoryItem, SQLiteMemoryRepository
 from src.libs.ai_engine.models import LLMRequest, LLMResponse, Message, TokenUsage
 from src.libs.ai_engine.optimization import PromptCache, changed_sections, section_fingerprints
 from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+from src.libs.ai_engine.harness import (
+    evaluate_resume_candidate,
+    generate_candidates,
+    protect_hard_facts_in_place,
+)
 from src.libs.ai_engine.skills.builtin import (
     CareerAdvisorSkill, InterviewCoachSkill, JDAnalyzerSkill, MockInterviewerSkill,
     ResumeWriterSkill, SkillMatcherSkill, TextRewriterSkill,
@@ -204,6 +209,58 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
     }
 
 
+def benchmark_resume_quality() -> dict[str, float]:
+    resume = {
+        "personal_information": {"name": "易", "surname": "旺", "email": "truth@example.com"},
+        "education_details": [],
+        "experience_details": [{
+            "company": "事实公司", "position": "算法工程师", "location": "上海",
+            "employment_period": "2023-2025",
+            "key_responsibilities": [{"responsibility": "负责模型训练与部署"}],
+            "skills_acquired": ["Python"],
+        }],
+        "projects": [{"name": "事实项目", "description": "完成检索服务建设", "link": ""}],
+        "achievements": [], "certifications": [], "languages": [], "interests": [],
+    }
+    shared = {
+        "header": "<header><h1>易旺</h1></header>",
+        "education": "",
+        "achievements": "", "certifications": "", "additional_skills": "",
+    }
+    golden = {
+        **shared,
+        "work_experience": '<section id="work-experience"><div class="entry"><span class="entry-name">事实公司</span><span class="entry-title">算法工程师</span><span class="entry-year">2023-2025</span><ul><li><strong>核心职责：</strong>负责模型训练与部署</li></ul></div></section>',
+        "projects": '<section id="side-projects"><div class="entry"><span class="entry-name">事实项目</span><ul><li><strong>项目背景：</strong>面向业务检索场景建设服务</li><li><strong>项目成果：</strong>完成检索服务建设</li></ul></div></section>',
+    }
+    generic = {
+        **shared,
+        "work_experience": '<section id="work-experience"><div class="entry"><span class="entry-name">事实公司</span><span class="entry-title">算法工程师</span><span class="entry-year">2023-2025</span><ul><li>深度赋能业务并打造现象级能力</li></ul></div></section>',
+        "projects": '<section id="side-projects"><div class="entry"><span class="entry-name">事实项目</span><ul><li>全方位赋能项目并获得市场高度认可</li></ul></div></section>',
+    }
+    durations, golden_evaluation = timed(lambda: evaluate_resume_candidate(golden, resume), 100)
+    generic_evaluation = evaluate_resume_candidate(generic, resume)
+
+    unsafe = dict(golden)
+    unsafe["header"] = '<header class="kept"><h1>错误姓名</h1></header>'
+    unsafe["work_experience"] = unsafe["work_experience"].replace("事实公司", "错误公司").replace(
+        "</ul>", '<li class="fake">效率提升 99%</li></ul>'
+    )
+    protected = protect_hard_facts_in_place(unsafe, resume)
+    protected_html = "\n".join(protected.sections.values())
+    checks = ["易旺" in protected_html, "事实公司" in protected_html, "错误姓名" not in protected_html,
+              "错误公司" not in protected_html, "99%" not in protected_html]
+    generated = generate_candidates(lambda: "candidate", count=3)
+    return {
+        "golden_score": golden_evaluation.score,
+        "generic_score": generic_evaluation.score,
+        "golden_score_margin": round(golden_evaluation.score - generic_evaluation.score, 3),
+        "hard_fact_correction_percent": round(sum(checks) / len(checks) * 100, 2),
+        "rich_markup_retention_percent": 100.0 if 'class="kept"' in protected_html else 0.0,
+        "successful_candidate_count": float(len(generated)),
+        "p95_scorer_latency_ms": round(percentile(durations, .95), 3),
+    }
+
+
 def run_benchmarks() -> dict[str, Any]:
     started = time.perf_counter()
     with TemporaryDirectory() as temp_dir:
@@ -214,6 +271,7 @@ def run_benchmarks() -> dict[str, Any]:
             "memory": benchmark_memory(root / "memory.sqlite3"),
             "gateway": benchmark_gateway(),
             "skills": benchmark_skills_and_prompts(),
+            "resume_quality": benchmark_resume_quality(),
         }
     result["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return result

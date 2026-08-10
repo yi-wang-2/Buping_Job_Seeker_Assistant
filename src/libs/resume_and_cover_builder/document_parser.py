@@ -205,6 +205,7 @@ _PROMPT_TEMPLATE_ZH = """你是一个专业的简历解析助手。请从以下�
 
 ```yaml
 personal_information:
+  full_name: "简历原文中的完整姓名，保持原顺序和原文字"
   name: "名字"
   surname: "姓氏"
   date_of_birth: "DD/MM/YYYY 或空字符串"
@@ -263,6 +264,7 @@ interests:
 3. 不要遗漏任何信息；未明确说明的信息必须留空，严禁臆造
 4. 研究方向必须逐字忠实于原文，不得根据专业、课程、项目或目标岗位推断
 5. 列表项目（experience、education 等）至少保留一个条目占位
+6. full_name 必须逐字复制原文姓名；无法确认时留空，不得调整顺序或纠正用字
 
 以下是简历文本：
 ---
@@ -275,6 +277,7 @@ _PROMPT_TEMPLATE_EN = """You are a professional resume parsing assistant. Extrac
 
 ```yaml
 personal_information:
+  full_name: "Full name copied verbatim from the source"
   name: "First name"
   surname: "Last name"
   date_of_birth: "DD/MM/YYYY or empty string"
@@ -333,6 +336,7 @@ Notes:
 3. Do not omit information found in the text; facts absent from the source must remain empty
 4. Preserve research focus verbatim and never infer it from the major, courses, projects, or target job
 5. Keep at least one entry placeholder for list fields
+6. Copy full_name verbatim; leave it empty when uncertain and never reorder or correct it
 
 Resume text:
 ---

@@ -1,4 +1,5 @@
 personal_information:
+  full_name: "solid snake"
   name: "solid"
   surname: "snake"
   date_of_birth: "12/01/1861"

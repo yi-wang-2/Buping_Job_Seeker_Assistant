@@ -64,7 +64,7 @@ def _escape(value: Any) -> str:
     return html_lib.escape(str(value))
 
 
-def _render_resume_preview_body(data: dict[str, Any]) -> str:
+def _render_resume_preview_body(data: dict[str, Any], language: str = "zh") -> str:
     """Render the resume YAML data into a simple HTML body for preview.
 
     This deliberately avoids invoking the LLM so the preview can be
@@ -76,9 +76,14 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
 
     personal = data.get("personal_information") or {}
     if personal:
-        name = _escape(personal.get("name") or "")
-        surname = _escape(personal.get("surname") or "")
-        full_name = f"{name} {surname}".strip()
+        confirmed_name = personal.get("full_name")
+        if confirmed_name:
+            full_name = _escape(confirmed_name)
+        else:
+            name = _escape(personal.get("name") or "")
+            surname = _escape(personal.get("surname") or "")
+            separator = " " if language == "en" and name and surname else ""
+            full_name = f"{name}{separator}{surname}"
         contact_items: list[str] = []
         if personal.get("phone"):
             contact_items.append(
@@ -114,7 +119,7 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
         )
 
     # Summary / objective (custom field supported by many users)
-    summary = data.get("summary") or data.get("objective")
+    summary = data.get("professional_summary") or data.get("summary") or data.get("objective")
     if summary:
         parts.append(
             f'<section><h2>Summary</h2><p class="preview-summary">{_escape(summary)}</p></section>'
@@ -159,6 +164,16 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
     if education:
         items = []
         for edu in education:
+            additional = edu.get("additional_info") or {}
+            education_facts: list[str] = []
+            for label, value in (
+                ("研究方向" if language != "en" else "Research focus", edu.get("research_direction") or additional.get("research_direction")),
+                ("研究内容" if language != "en" else "Research topics", edu.get("research_topics") or additional.get("research_topics")),
+            ):
+                if value:
+                    rendered = "、".join(_escape(item) for item in value) if isinstance(value, list) else _escape(value)
+                    education_facts.append(f'<li><strong>{label}：</strong>{rendered}</li>')
+            facts_html = f'<ul class="compact-list">{"".join(education_facts)}</ul>' if education_facts else ""
             items.append(
                 f'<div class="preview-item">'
                 f'<div class="preview-item-head">'
@@ -168,6 +183,7 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
                 f'</span></div>'
                 f'<div class="preview-item-sub">{_escape(edu.get("education_level") or "")} '
                 f'&middot; {_escape(edu.get("field_of_study") or "")}</div>'
+                f'{facts_html}'
                 f'</div>'
             )
         parts.append(f'<section><h2>Education</h2>{"".join(items)}</section>')
@@ -274,7 +290,7 @@ def generate_preview_html(
     with open(style_path, "r", encoding="utf-8") as f:
         style_css = f.read()
 
-    body_html = _render_resume_preview_body(data)
+    body_html = _render_resume_preview_body(data, resume_language)
     lang_attr = "en" if resume_language == "en" else "zh"
     full_html = Template(PREVIEW_HTML_TEMPLATE).substitute(
         body=body_html,
@@ -313,8 +329,21 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     print_emulation = soup.find(id="buping-print-layout-emulation")
     if print_emulation:
         print_emulation.decompose()
-    for element in soup.select("[data-buping-block], [contenteditable]"):
+    viewport_fit = soup.find(id="buping-viewport-fit")
+    if viewport_fit:
+        viewport_fit.decompose()
+    for empty_section in soup.select('[data-buping-all-entries-removed="true"]'):
+        empty_section.attrs.pop("data-buping-all-entries-removed", None)
+        empty_section.attrs["data-buping-library-empty-section"] = "true"
+        empty_section.attrs["hidden"] = ""
+    for editor_only in soup.select("[data-buping-entry-action], [data-buping-empty-placeholder]"):
+        editor_only.decompose()
+    for element in soup.select(
+        "[data-buping-block], [data-buping-removable-entry], [contenteditable]"
+    ):
         element.attrs.pop("data-buping-block", None)
+        element.attrs.pop("data-buping-removable-entry", None)
+        element.attrs.pop("data-buping-all-entries-removed", None)
         element.attrs.pop("contenteditable", None)
     for page_break in soup.select("[data-buping-page-break]"):
         page_break.decompose()
@@ -403,9 +432,9 @@ _REWRITE_SYSTEM_PROMPTS = {
         "more_quantified": (
             "你是一个专业的简历润色专家，擅长把模糊的描述改写为有数据支撑的表达。\n"
             "请将用户提供的文本改写为：\n"
-            "1. 增加具体的数字、百分比、时间、规模等量化指标\n"
+            "1. 只能保留原文已经出现的数字、百分比、时间和规模，严禁补造任何数值\n"
             "2. 使用动词开头的 STAR 风格描述（情境、任务、行动、结果）\n"
-            "3. 强调可衡量的成果（如性能提升 X%、节省 X 小时、用户量 X 万等）\n"
+            "3. 原文没有量化数据时，只优化表达，不得用示例数字或占位数字代替\n"
             "4. 保持原意不变，只是更量化\n"
             "5. 如果原文中确实无法量化（如性格描述），保持原文\n\n"
             "只输出改写后的文本，不要任何解释、前缀或 markdown 代码块标记。"
@@ -444,10 +473,9 @@ _REWRITE_SYSTEM_PROMPTS = {
             "You are a professional resume editor specializing in transforming "
             "vague descriptions into quantified achievements.\n"
             "Rewrite the user's text to:\n"
-            "1. Add concrete numbers, percentages, timeframes, and scale metrics\n"
+            "1. Preserve only numbers, percentages, timeframes, and scale already present in the source; never invent metrics\n"
             "2. Use action-verb-led STAR phrasing (Situation, Task, Action, Result)\n"
-            "3. Emphasize measurable outcomes (e.g. \"improved X by Y%\", "
-            "\"served X users\", \"reduced X by Y hours\")\n"
+            "3. If the source has no metrics, improve wording without adding example or placeholder numbers\n"
             "4. Preserve original meaning — only make it more measurable\n"
             "5. If something cannot be quantified (e.g. soft skills), keep the original\n\n"
             "Output ONLY the rewritten text. No explanations, no prefixes, no markdown fences."
@@ -584,6 +612,12 @@ def rewrite_text(
 
     if not rewritten:
         # Defensive: if LLM returned empty, return the original
+        return text
+
+    from src.libs.ai_engine.harness import validate_grounded_text
+    violations = validate_grounded_text(text, rewritten)
+    if violations:
+        logger.warning("Resume rewrite fact harness rejected output: %s", violations)
         return text
 
     return rewritten

@@ -6,6 +6,7 @@ This module contains utility functions for the Resume and Cover Letter Builder s
 import json
 import os
 import openai
+import threading
 import time
 from datetime import datetime
 from typing import Dict, List
@@ -18,6 +19,8 @@ from requests.exceptions import HTTPError as HTTPStatusError
 
 
 class LLMLogger:
+
+    _write_lock = threading.Lock()
 
     def __init__(self, llm: ChatOpenAI):
         self.llm = llm
@@ -72,9 +75,10 @@ class LLMLogger:
         }
 
         # Write the log entry to the log file in JSON format
-        with open(calls_log, "a", encoding="utf-8") as f:
-            json_string = json.dumps(log_entry, ensure_ascii=False, indent=4)
-            f.write(json_string + "\n")
+        with LLMLogger._write_lock:
+            with open(calls_log, "a", encoding="utf-8") as f:
+                json_string = json.dumps(log_entry, ensure_ascii=False, indent=4)
+                f.write(json_string + "\n")
 
 
 class LoggerChatModel:

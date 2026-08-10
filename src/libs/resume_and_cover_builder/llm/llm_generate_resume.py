@@ -9,6 +9,13 @@ from src.libs.resume_and_cover_builder.utils import LoggerChatModel
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 import config as cfg
+from src.libs.ai_engine.harness import (
+    GOLDEN_RESUME_WRITING_GUIDE,
+    evaluate_resume_candidate,
+    generate_candidates,
+    protect_hard_facts_in_place,
+    select_best_candidate,
+)
 
 
 class ContentBlockParser(BaseOutputParser):
@@ -242,6 +249,38 @@ class LLMResumer:
             resume (Resume): The resume object to be used.
         """
         self.resume = resume
+
+    def _generate_best_sections(self, prompt, input_data: dict, *, operation: str) -> dict[str, str]:
+        """Generate multiple candidates, score them locally, then protect hard facts."""
+
+        chain = prompt | self.llm_cheap | ContentBlockParser()
+        outputs = generate_candidates(lambda: chain.invoke(input_data))
+        candidates = [self._parse_unified_output(output) for output in outputs]
+        candidates = [candidate for candidate in candidates if candidate]
+        if not candidates:
+            raise RuntimeError("The model returned no parseable resume candidate")
+
+        evaluations = [evaluate_resume_candidate(candidate, self.resume) for candidate in candidates]
+        selected = select_best_candidate(candidates, self.resume)
+        logger.info(
+            "Resume candidate selection operation={} scores={} selected_score={} breakdown={}",
+            operation,
+            [evaluation.score for evaluation in evaluations],
+            selected.score,
+            selected.breakdown,
+        )
+        protected = protect_hard_facts_in_place(
+            selected.sections,
+            self.resume,
+            language="en" if getattr(cfg, "RESUME_LANGUAGE", "zh") == "en" else "zh",
+        )
+        if protected.violations:
+            logger.warning(
+                "Resume hard-fact guard corrected {} claims: {}",
+                len(protected.violations),
+                protected.violations,
+            )
+        return protected.sections
 
     def generate_header(self, data = None) -> str:
         """
@@ -621,6 +660,10 @@ class LLMResumer:
 
 仅返回标记的模块内容，每个模块都要正确闭合。"""
 
+        combined_prompt = combined_prompt.replace(
+            "模块模板：", f"{GOLDEN_RESUME_WRITING_GUIDE}\n\n模块模板：", 1
+        )
+
         # Prepare input data
         skills = set()
         if self.resume.experience_details:
@@ -646,14 +689,8 @@ class LLMResumer:
         }
 
         prompt = ChatPromptTemplate.from_template(combined_prompt)
-        chain = prompt | self.llm_cheap | ContentBlockParser()
-        
-        logger.debug("Invoking unified LLM chain for all sections")
-        output = chain.invoke(input_data)
-        logger.debug(f"Unified output length: {len(output)}")
-
-        # Parse the output into individual sections
-        sections = self._parse_unified_output(output)
+        logger.debug("Invoking unified LLM chain for resume candidates")
+        sections = self._generate_best_sections(prompt, input_data, operation="base_resume")
         logger.debug(f"Parsed sections: {list(sections.keys())}")
 
         return sections
@@ -674,6 +711,7 @@ class LLMResumer:
         # Define section markers with start and end patterns
         section_markers = [
             (r'\[HEADER\]', r'\[/HEADER\]', 'header'),
+            (r'\[SUMMARY\]', r'\[/SUMMARY\]', 'summary'),
             (r'\[EDUCATION\]', r'\[/EDUCATION\]', 'education'),
             (r'\[WORK_EXPERIENCE\]', r'\[/WORK_EXPERIENCE\]', 'work_experience'),
             (r'\[PROJECTS\]', r'\[/PROJECTS\]', 'projects'),
@@ -709,6 +747,7 @@ class LLMResumer:
         full_resume = "<body>\n"
         full_resume += f"  {results.get('header', '')}\n"
         full_resume += "  <main>\n"
+        full_resume += f"    {results.get('summary', '')}\n"
         full_resume += f"    {results.get('education', '')}\n"
         full_resume += f"    {results.get('work_experience', '')}\n"
         full_resume += f"    {results.get('projects', '')}\n"

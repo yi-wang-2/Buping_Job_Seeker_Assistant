@@ -3,7 +3,11 @@ Create a class that generates a job description based on a resume and a job desc
 """
 # app/libs/resume_and_cover_builder/llm_generate_resume_from_job.py
 import os
-from src.libs.resume_and_cover_builder.llm.llm_generate_resume import LLMResumer, ContentBlockParser
+from src.libs.resume_and_cover_builder.llm.llm_generate_resume import (
+    GOLDEN_RESUME_WRITING_GUIDE,
+    ContentBlockParser,
+    LLMResumer,
+)
 from src.libs.resume_and_cover_builder.utils import LoggerChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,8 +15,6 @@ from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 from loguru import logger
 from pathlib import Path
-from src.libs.ai_engine.harness import protect_education_section
-from src.libs.resume_and_cover_builder.config import global_config
 
 # Load environment variables from .env file
 load_dotenv()
@@ -51,10 +53,11 @@ class LLMResumeJobDescription(LLMResumer):
 
         # Build a combined prompt that generates all sections at once, with job_description
         combined_prompt = """你是一位专业的HR专家和简历撰写顾问，专精于ATS友好型简历。
-你的任务是在单次回复中生成除教育背景外的专业简历模块，并根据职位描述进行定制优化。教育背景由事实保护系统单独生成。
+你的任务是在单次回复中生成一份完整、专业的简历，包含所有模块，并根据职位描述进行定制优化。
 
 请使用以下标记符返回各模块：
 [HEADER]...[/HEADER]
+[EDUCATION]...[/EDUCATION]
 [WORK_EXPERIENCE]...[/WORK_EXPERIENCE]
 [PROJECTS]...[/PROJECTS]
 [ACHIEVEMENTS]...[/ACHIEVEMENTS]
@@ -69,8 +72,6 @@ class LLMResumeJobDescription(LLMResumer):
 5. 语言专业流畅，展现应聘者的核心价值
 6. 所有模块标题使用中文
 7. 根据【职位描述】调整内容：强调相关技能、经验和技术栈
-8. 不要生成 EDUCATION 模块；学校、学历、专业、时间、成绩和研究方向由事实保护系统从原始数据生成
-9. 不得把职位描述中的技能、领域或关键词写成候选人的事实
 
 模块模板：
 
@@ -96,6 +97,28 @@ class LLMResumeJobDescription(LLMResumer):
   </div>
 </header>
 [/HEADER]
+
+[EDUCATION]
+<section id="education">
+    <h2>教育背景</h2>
+    <div class="entry">
+      <div class="entry-header">
+          <span class="entry-name">[大学名称]</span>
+          <span class="entry-location">[位置]</span>
+      </div>
+      <div class="entry-details">
+          <span class="entry-title">[学位] · [专业]</span>
+          <span class="entry-year">[入学年] – [毕业年]</span>
+      </div>
+      <div class="grade">GPA: [你的GPA] | [其他重要成绩]</div>
+      <ul class="compact-list">
+          <li>核心课程：[课程名称]（成绩：[成绩]）</li>
+          <li>核心课程：[课程名称]（成绩：[成绩]）</li>
+          <li>核心课程：[课程名称]（成绩：[成绩]）</li>
+      </ul>
+    </div>
+</section>
+[/EDUCATION]
 
 [WORK_EXPERIENCE]
 <section id="work-experience">
@@ -182,6 +205,9 @@ class LLMResumeJobDescription(LLMResumer):
 【个人信息】
 {personal_information}
 
+【教育背景】
+{education_details}
+
 【工作经验】
 {experience_details}
 
@@ -208,6 +234,10 @@ class LLMResumeJobDescription(LLMResumer):
 
 仅返回标记的模块内容，每个模块都要正确闭合。"""
 
+        combined_prompt = combined_prompt.replace(
+            "模块模板：", f"{GOLDEN_RESUME_WRITING_GUIDE}\n\n模块模板：", 1
+        )
+
         # Prepare input data
         skills = set()
         if self.resume.experience_details:
@@ -222,6 +252,7 @@ class LLMResumeJobDescription(LLMResumer):
 
         input_data = {
             "personal_information": self.resume.personal_information,
+            "education_details": self.resume.education_details or "N/A",
             "experience_details": self.resume.experience_details or "N/A",
             "projects": self.resume.projects or "N/A",
             "achievements": self.resume.achievements or "N/A",
@@ -233,24 +264,8 @@ class LLMResumeJobDescription(LLMResumer):
         }
 
         prompt = ChatPromptTemplate.from_template(combined_prompt)
-        chain = prompt | self.llm_cheap | ContentBlockParser()
-        
-        logger.debug("Invoking unified LLM chain for all sections with job description")
-        output = chain.invoke(input_data)
-        logger.debug(f"Unified output length: {len(output)}")
-
-        # Parse the output into individual sections
-        sections = self._parse_unified_output(output)
-        education_guard = protect_education_section(
-            self.resume.education_details,
-            sections.get("education", ""),
-            language="en" if global_config.RESUME_LANGUAGE == "en" else "zh",
-        )
-        sections["education"] = education_guard.html
-        if education_guard.discarded_model_output:
-            logger.info(
-                "Resume fact harness replaced model-generated education with canonical source facts"
-            )
+        logger.debug("Invoking unified LLM chain for tailored resume candidates")
+        sections = self._generate_best_sections(prompt, input_data, operation="tailored_resume")
         logger.debug(f"Parsed sections: {list(sections.keys())}")
 
         return sections

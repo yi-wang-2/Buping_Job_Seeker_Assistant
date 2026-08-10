@@ -40,6 +40,7 @@ answers.json
 *.manifest
 *.spec
 .venv
+.drivers/
 .pytest_cache
 virtual
 
@@ -214,6 +215,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/tsconfig.tsbuildinfo
+
+# Project-local browser driver cache
+.drivers/
 
 # uv lock file (optional)
 # .python-version

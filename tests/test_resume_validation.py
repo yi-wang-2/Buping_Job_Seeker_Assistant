@@ -21,6 +21,17 @@ def test_new_graduate_resume_with_education_is_valid():
     assert result["errors"] == []
 
 
+def test_confirmed_full_name_is_accepted_without_name_parts():
+    result = validate_resume_data({
+        "personal_information": {"full_name": "张三", "email": "zhangsan@example.com"},
+        "education_details": [{"institution": "某大学", "field_of_study": "计算机"}],
+    })
+    assert result["valid"] is True
+    assert "personal_information.full_name" not in {
+        item["path"] for item in result["warnings"]
+    }
+
+
 def test_incomplete_existing_experience_only_warns():
     result = validate_resume_data({
         "personal_information": {"name": "张三", "phone": "13800000000"},

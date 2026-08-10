@@ -4,6 +4,7 @@
 const PRINTABLE_PAGE_HEIGHT_PX = 11.69 * 96;
 const PAGE_GAP_PX = 28;
 const PRINTABLE_PAGE_WIDTH_PX = 8.27 * 96;
+const VIEWPORT_FIT_STYLE_ID = "buping-viewport-fit";
 const ATOMIC_SELECTOR = [
   "header",
   ".entry",
@@ -70,11 +71,46 @@ export function installPrintLayoutEmulation(doc: Document): void {
 }
 
 /**
+ * Keep PDF pagination measurements at the real A4 width, then scale that
+ * canvas only for screen display. This avoids horizontal scrolling without
+ * changing where Chrome will paginate the downloaded PDF.
+ */
+export function fitResumeToViewport(doc: Document): void {
+  doc.getElementById(VIEWPORT_FIT_STYLE_ID)?.remove();
+  const viewportWidth = doc.defaultView?.innerWidth || doc.documentElement.clientWidth;
+  if (!viewportWidth) return;
+  const scale = Math.min(1.12, Math.max(0.25, (viewportWidth - 4) / PRINTABLE_PAGE_WIDTH_PX));
+  const horizontalOffset = Math.max(0, (viewportWidth - PRINTABLE_PAGE_WIDTH_PX * scale) / 2);
+  const style = doc.createElement("style");
+  style.id = VIEWPORT_FIT_STYLE_ID;
+  style.textContent = `
+    html {
+      width: 100% !important;
+      min-width: 0 !important;
+      max-width: 100% !important;
+      overflow-x: hidden !important;
+    }
+    body {
+      width: ${PRINTABLE_PAGE_WIDTH_PX}px !important;
+      max-width: none !important;
+      margin-left: ${horizontalOffset}px !important;
+      margin-right: 0 !important;
+      transform: scale(${scale});
+      transform-origin: top left;
+      overflow-x: hidden !important;
+    }
+  `;
+  doc.head.appendChild(style);
+}
+
+/**
  * Paginate the editable DOM using the same atomic-block policy as print CSS.
  * A spacer represents the unused tail of the current PDF page plus a visible
  * gap, so following content begins at the top of the next on-screen page.
  */
 export function paginateResumeDom(doc: Document): void {
+  // Transforms affect getBoundingClientRect(). Measure at the true A4 size.
+  doc.getElementById(VIEWPORT_FIT_STYLE_ID)?.remove();
   doc.querySelectorAll("[data-buping-page-break]").forEach((node) => node.remove());
   const bodyTop = doc.body.getBoundingClientRect().top;
   let pageStart = 0;
@@ -135,4 +171,5 @@ export function paginateResumeDom(doc: Document): void {
     pageStart = top;
     pageNumber += 1;
   }
+  fitResumeToViewport(doc);
 }
