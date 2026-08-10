@@ -1,6 +1,8 @@
 import pytest
+import yaml
 
-from backend.services.config_service import discover_llm_models, resolve_llm_model
+from backend.services import config_service
+from backend.services.config_service import PUBLIC_DEMO_MODE, discover_llm_models, resolve_llm_model
 
 
 @pytest.fixture
@@ -28,3 +30,25 @@ def test_unknown_provider_requires_explicit_model():
 @pytest.mark.anyio
 async def test_model_discovery_skips_request_without_credentials():
     assert await discover_llm_models("", "https://api.deepseek.com/v1", "openai_chat") == []
+
+
+def test_public_demo_mode_constant_is_available():
+    assert isinstance(PUBLIC_DEMO_MODE, bool)
+
+
+def test_public_demo_mode_redacts_and_never_persists_secrets(tmp_path, monkeypatch):
+    secrets_path = tmp_path / "secrets.yaml"
+    secrets_path.write_text(
+        yaml.safe_dump({"llm_api_key": "secret", "minimax_tts_api_key": "tts-secret"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_service, "DATA_FOLDER", tmp_path)
+    monkeypatch.setattr(config_service, "PUBLIC_DEMO_MODE", True)
+
+    loaded = config_service.load_secrets()
+    assert loaded["llm_api_key"] == ""
+    assert loaded["minimax_tts_api_key"] == ""
+
+    config_service.save_secrets({"llm_api_key": "replacement"})
+    persisted = yaml.safe_load(secrets_path.read_text(encoding="utf-8"))
+    assert persisted["llm_api_key"] == "secret"

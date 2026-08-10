@@ -3,7 +3,11 @@ Create a class that generates a job description based on a resume and a job desc
 """
 # app/libs/resume_and_cover_builder/llm_generate_resume_from_job.py
 import os
-from src.libs.resume_and_cover_builder.llm.llm_generate_resume import LLMResumer, ContentBlockParser
+from src.libs.resume_and_cover_builder.llm.llm_generate_resume import (
+    GOLDEN_RESUME_WRITING_GUIDE,
+    ContentBlockParser,
+    LLMResumer,
+)
 from src.libs.resume_and_cover_builder.utils import LoggerChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -230,6 +234,10 @@ class LLMResumeJobDescription(LLMResumer):
 
 仅返回标记的模块内容，每个模块都要正确闭合。"""
 
+        combined_prompt = combined_prompt.replace(
+            "模块模板：", f"{GOLDEN_RESUME_WRITING_GUIDE}\n\n模块模板：", 1
+        )
+
         # Prepare input data
         skills = set()
         if self.resume.experience_details:
@@ -256,14 +264,8 @@ class LLMResumeJobDescription(LLMResumer):
         }
 
         prompt = ChatPromptTemplate.from_template(combined_prompt)
-        chain = prompt | self.llm_cheap | ContentBlockParser()
-        
-        logger.debug("Invoking unified LLM chain for all sections with job description")
-        output = chain.invoke(input_data)
-        logger.debug(f"Unified output length: {len(output)}")
-
-        # Parse the output into individual sections
-        sections = self._parse_unified_output(output)
+        logger.debug("Invoking unified LLM chain for tailored resume candidates")
+        sections = self._generate_best_sections(prompt, input_data, operation="tailored_resume")
         logger.debug(f"Parsed sections: {list(sections.keys())}")
 
         return sections

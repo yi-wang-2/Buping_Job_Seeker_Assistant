@@ -14,5 +14,10 @@
   "skills.valid_budget_percent": { "min": 100 },
   "skills.prompt_contract_coverage_percent": { "min": 100 },
   "skills.incremental_detection_percent": { "min": 100 },
-  "skills.execution_success_percent": { "min": 100 }
+  "skills.execution_success_percent": { "min": 100 },
+  "resume_quality.golden_score_margin": { "min": 10 },
+  "resume_quality.hard_fact_correction_percent": { "min": 100 },
+  "resume_quality.rich_markup_retention_percent": { "min": 100 },
+  "resume_quality.successful_candidate_count": { "min": 3 },
+  "resume_quality.p95_scorer_latency_ms": { "max": 25 }
 }

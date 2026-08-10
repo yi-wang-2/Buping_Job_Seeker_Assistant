@@ -35,8 +35,15 @@ def validate_resume_data(data: Any) -> dict[str, Any]:
     if not isinstance(personal, dict):
         personal = {}
         add(errors, "personal_information", "缺少个人信息")
-    if not (_present(personal.get("name")) or _present(personal.get("surname"))):
+    has_full_name = _present(personal.get("full_name"))
+    if not (has_full_name or _present(personal.get("name")) or _present(personal.get("surname"))):
         add(errors, "personal_information.name", "姓名不能为空")
+    if not has_full_name:
+        add(
+            warnings,
+            "personal_information.full_name",
+            "建议填写已确认的完整姓名，避免系统根据 name/surname 拼接",
+        )
     has_email = _present(personal.get("email"))
     has_phone = _present(personal.get("phone"))
     if not (has_email or has_phone):

@@ -168,6 +168,13 @@ class ResumeFacade:
         lang_code = global_config.RESUME_LANGUAGE if global_config.RESUME_LANGUAGE else "zh"
         lang_attr = "zh" if lang_code in ["zh", "zh-cn"] else ("en" if lang_code == "en" else "zh")
         full_html = template.substitute(body=html_resume, style_css=style_css, lang=lang_attr)
+        from src.libs.ai_engine.harness import enforce_resume_typography
+        typography_result = enforce_resume_typography(full_html)
+        if typography_result.adjusted_count:
+            logger.info(
+                f"Resume typography harness adjusted {typography_result.adjusted_count} font sizes"
+            )
+        full_html = typography_result.html
 
         result = HTML_to_PDF(full_html, self.driver)
         self.driver.quit()
@@ -199,6 +206,13 @@ class ResumeFacade:
         lang_code = global_config.RESUME_LANGUAGE if global_config.RESUME_LANGUAGE else "zh"
         lang_attr = "zh" if lang_code in ["zh", "zh-cn"] else ("en" if lang_code == "en" else "zh")
         full_html = template.substitute(body=html_resume, style_css=style_css, lang=lang_attr)
+        from src.libs.ai_engine.harness import enforce_resume_typography
+        typography_result = enforce_resume_typography(full_html)
+        if typography_result.adjusted_count:
+            logger.info(
+                f"Resume typography harness adjusted {typography_result.adjusted_count} font sizes"
+            )
+        full_html = typography_result.html
 
         result = HTML_to_PDF(full_html, self.driver)
         self.driver.quit()

@@ -7,6 +7,29 @@ from webdriver_manager.chrome import ChromeDriverManager  # Import webdriver_man
 import urllib
 from src.logging import logger
 
+
+def _find_chrome_binary():
+    """Return an explicitly configured or commonly installed Chrome binary."""
+    configured = os.environ.get("CHROME_BINARY")
+    if configured:
+        configured = os.path.expandvars(os.path.expanduser(configured.strip('"')))
+        if not os.path.isfile(configured):
+            raise RuntimeError(f"CHROME_BINARY does not point to a file: {configured}")
+        return configured
+
+    if os.name != "nt":
+        return None
+
+    candidates = [
+        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+                     "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+                     "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "Google", "Chrome", "Application", "chrome.exe"),
+    ]
+    return next((path for path in candidates if os.path.isfile(path)), None)
+
 def chrome_browser_options():
     logger.debug("Setting Chrome browser options")
     options = Options()
@@ -39,16 +62,19 @@ def chrome_browser_options():
 def init_browser() -> webdriver.Chrome:
     try:
         options = chrome_browser_options()
-        # Allow overriding Chrome binary location with environment variable CHROME_BINARY
-        chrome_binary = os.environ.get("CHROME_BINARY")
+        # Give Selenium Manager the exact executable. This is especially important
+        # on Windows versions where the legacy `wmic` command is no longer present.
+        chrome_binary = _find_chrome_binary()
         if chrome_binary:
-            logger.debug(f"Using CHROME_BINARY from env: {chrome_binary}")
+            logger.info(f"Using Chrome binary: {chrome_binary}")
             options.binary_location = chrome_binary
 
         # 1. Try finding a cached driver manually to avoid webdriver_manager hanging on network issues
         import glob
         # Match both: .../chromedriver.exe and .../chromedriver-win32/chromedriver.exe
         wdm_patterns = [
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                         ".drivers", "**", "chromedriver.exe"),
             os.path.expanduser("~/.wdm/drivers/chromedriver/win64/**/chromedriver.exe"),
             os.path.expanduser("~/.wdm/drivers/chromedriver/**/chromedriver.exe"),
             "C:/Users/*/.wdm/drivers/chromedriver/**/chromedriver.exe",
@@ -62,8 +88,17 @@ def init_browser() -> webdriver.Chrome:
 
         if matches:
             try:
-                # Prefer newest by mtime
-                latest_driver = sorted(matches, key=os.path.getmtime)[-1]
+                # Prefer a project-local driver, then the newest cached driver.
+                project_driver_dir = os.path.normcase(os.path.abspath(
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                                 ".drivers")))
+                latest_driver = sorted(
+                    matches,
+                    key=lambda path: (
+                        os.path.normcase(os.path.abspath(path)).startswith(project_driver_dir),
+                        os.path.getmtime(path),
+                    ),
+                )[-1]
                 logger.info(f"Using locally cached chromedriver: {latest_driver}")
                 driver = webdriver.Chrome(service=ChromeService(latest_driver), options=options)
             except Exception as e_local:
@@ -93,7 +128,11 @@ def init_browser() -> webdriver.Chrome:
     except Exception as e:
         logger.error(f"Failed to initialize browser: {str(e)}")
         # Provide a helpful hint about setting CHROME_BINARY on Windows
-        hint = "\nHint: ensure Google Chrome is installed and accessible. On Windows you can set the CHROME_BINARY env var to the chrome.exe path, e.g. C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        hint = ("\nHint: ensure Google Chrome is installed and accessible. On Windows "
+                "you can set CHROME_BINARY to the chrome.exe path, e.g. "
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe. "
+                "The first run also needs network access so Selenium Manager can "
+                "download a matching ChromeDriver.")
         raise RuntimeError(f"Failed to initialize browser: {str(e)}{hint}")
 
 

@@ -30,7 +30,7 @@ dependencies = [
     "torchaudio",
     # Resume / PDF
     "reportlab==4.2.2",
-    "selenium==4.9.1",
+    "selenium==4.46.0",
     "webdriver-manager==4.0.2",
     "undetected-chromedriver==3.5.5",
     "pdfminer.six==20221105",

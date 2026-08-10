@@ -205,6 +205,7 @@ _PROMPT_TEMPLATE_ZH = """你是一个专业的简历解析助手。请从以下�
 
 ```yaml
 personal_information:
+  full_name: "简历原文中的完整姓名，保持原顺序和原文字"
   name: "名字"
   surname: "姓氏"
   date_of_birth: "DD/MM/YYYY 或空字符串"
@@ -224,7 +225,12 @@ education_details:
     final_evaluation_grade: "GPA 或空字符串"
     year_of_completion: "毕业年份"
     start_date: "入学年份 或空字符串"
-    additional_info: {}
+    research_direction: "原文明确写出的研究方向；没有则为空字符串"
+    research_topics:
+      - "原文明确写出的研究课题；没有则为空列表"
+    additional_info:
+      relevant_courses: "原文明确写出的相关课程；没有则为空字符串"
+      honors: "原文明确写出的在校荣誉；没有则为空字符串"
 experience_details:
   - position: "职位名称"
     company: "公司名称"
@@ -255,8 +261,10 @@ interests:
 注意：
 1. 只输出 YAML，不要添加 markdown 代码块标记
 2. 所有字段都尽量填满，空字段用空字符串 "" 表示
-3. 不要遗漏任何信息，即使文本中未明确说明也不要臆造
-4. 列表项目（experience、education 等）至少保留一个条目占位
+3. 不要遗漏任何信息；未明确说明的信息必须留空，严禁臆造
+4. 研究方向必须逐字忠实于原文，不得根据专业、课程、项目或目标岗位推断
+5. 列表项目（experience、education 等）至少保留一个条目占位
+6. full_name 必须逐字复制原文姓名；无法确认时留空，不得调整顺序或纠正用字
 
 以下是简历文本：
 ---
@@ -269,6 +277,7 @@ _PROMPT_TEMPLATE_EN = """You are a professional resume parsing assistant. Extrac
 
 ```yaml
 personal_information:
+  full_name: "Full name copied verbatim from the source"
   name: "First name"
   surname: "Last name"
   date_of_birth: "DD/MM/YYYY or empty string"
@@ -288,7 +297,12 @@ education_details:
     final_evaluation_grade: "GPA or empty string"
     year_of_completion: "Graduation year"
     start_date: "Start year or empty string"
-    additional_info: {}
+    research_direction: "Research focus explicitly stated in the source, otherwise empty"
+    research_topics:
+      - "Research topic explicitly stated in the source; empty list if absent"
+    additional_info:
+      relevant_courses: "Coursework explicitly stated in the source, otherwise empty"
+      honors: "Honors explicitly stated in the source, otherwise empty"
 experience_details:
   - position: "Job title"
     company: "Company name"
@@ -319,8 +333,10 @@ interests:
 Notes:
 1. Output YAML only, no markdown code fences
 2. Fill all fields; use empty string "" for missing fields
-3. Do not omit any information found in the text
-4. Keep at least one entry placeholder for list fields
+3. Do not omit information found in the text; facts absent from the source must remain empty
+4. Preserve research focus verbatim and never infer it from the major, courses, projects, or target job
+5. Keep at least one entry placeholder for list fields
+6. Copy full_name verbatim; leave it empty when uncertain and never reorder or correct it
 
 Resume text:
 ---
@@ -399,11 +415,7 @@ def _call_llm(prompt: str, api_key: str, model_type: str = "anthropic",
             content = "".join(parts)
 
         content = (str(content) if content else "").strip()
-        logger.info(
-            "Document parse LLM raw output: chars={} preview={}",
-            len(content),
-            content[:400].replace("\n", "\\n"),
-        )
+        logger.info("Document parse LLM raw output received: chars={}", len(content))
         return content
     except Exception as e:
         raise RuntimeError(f"LLM extraction failed: {e}") from e
@@ -512,11 +524,7 @@ def _parse_llm_yaml_output(raw_output: str, diagnostics: dict[str, Any] | None =
     text = _extract_yaml_candidate(raw_output)
     if diagnostics is not None:
         diagnostics["llm_yaml_candidate_chars"] = len(text)
-    logger.info(
-        "Document parse YAML candidate: chars={} preview={}",
-        len(text),
-        text[:600].replace("\n", "\\n"),
-    )
+    logger.info("Document parse YAML candidate received: chars={}", len(text))
 
     if not text:
         if diagnostics is not None:
@@ -531,11 +539,7 @@ def _parse_llm_yaml_output(raw_output: str, diagnostics: dict[str, Any] | None =
             if diagnostics is not None:
                 diagnostics["llm_yaml_parse_success"] = False
                 diagnostics["llm_yaml_error"] = f"non_dict_yaml:{type(data).__name__}"
-            logger.warning(
-                "Document parse YAML returned non-dict: type={} preview={}",
-                type(data).__name__,
-                repr(data)[:300],
-            )
+            logger.warning("Document parse YAML returned non-dict: type={}", type(data).__name__)
             return _empty_resume()
         if diagnostics is not None:
             diagnostics["llm_yaml_parse_success"] = True
@@ -568,21 +572,13 @@ def _parse_llm_yaml_output(raw_output: str, diagnostics: dict[str, Any] | None =
                         list(data.keys())[:12],
                     )
                     return data
-                logger.warning(
-                    "Document parse brace recovery returned unusable value: type={} preview={}",
-                    type(data).__name__,
-                    repr(data)[:300],
-                )
+                logger.warning("Document parse brace recovery returned unusable value: type={}", type(data).__name__)
             except Exception as recovery_exc:
                 logger.warning("Document parse brace recovery failed: {}", recovery_exc)
         if diagnostics is not None:
             diagnostics["llm_yaml_parse_success"] = False
             diagnostics["llm_yaml_error"] = str(e)
-        logger.warning(
-            "Document parse YAML failed: error={} candidate_preview={}",
-            e,
-            text[:600].replace("\n", "\\n"),
-        )
+        logger.warning("Document parse YAML failed: error_type={}", type(e).__name__)
         return _empty_resume()
 
 

@@ -293,6 +293,7 @@ system_language: "zh"
 
 ```yaml
 personal_information:
+  full_name: "Your Name"  # 推荐：简历展示时逐字使用，不由 AI 重排
   name: "Your"
   surname: "Name"
   email: "you@example.com"

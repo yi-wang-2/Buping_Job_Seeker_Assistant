@@ -3,6 +3,7 @@ import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Ed
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
 import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
+import { installPrintLayoutEmulation, paginateResumeDom } from "../components/editor/domPagination";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
 import { EditableResumePreview } from "../components/editor";
@@ -222,6 +223,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   // The WYSIWYG iframe's element (set by EditableResumePreview via onIframeReady).
   // Used by handleApplyRewrite to mutate the document directly.
   const [editorIframe, setEditorIframe] = useState<HTMLIFrameElement | null>(null);
+  const [experienceLibraryTarget, setExperienceLibraryTarget] = useState<HTMLDivElement | null>(null);
 
   // Backend warmup — track whether styles/settings loaded successfully
   const [stylesError, setStylesError] = useState<string>("");
@@ -621,13 +623,13 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   };
 
   return (
-    <div className="page-enter max-w-7xl mx-auto">
+    <div className="page-enter mx-auto max-w-[1680px]">
       <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">{rt.title}</h2>
 
       {/* Three-column layout: Left config | Center preview | Right job desc */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_minmax(0,1fr)_300px]">
         {/* Left Panel: Config + Style */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="space-y-4">
           {/* Config Card */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
@@ -799,7 +801,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         </div>
 
         {/* Center Panel: Preview (centered & prominent) */}
-        <div className="lg:col-span-6 space-y-4">
+        <div className="min-w-0 space-y-4">
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800 flex flex-col">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
@@ -924,7 +926,10 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditMode(true)}
+                  onClick={() => {
+                    setEditedHtml(previewHtml);
+                    setEditMode(true);
+                  }}
                   disabled={!previewHtml}
                   className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     editMode
@@ -987,7 +992,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
 
             {/* Preview / Editor area */}
             <div className="flex-1 p-5">
-              <div className="mx-auto max-w-3xl overflow-hidden rounded-lg border border-gray-200 bg-gray-50 shadow-inner dark:border-gray-600 dark:bg-gray-900">
+              <div className="mx-auto w-full max-w-[920px] overflow-hidden rounded-lg border border-gray-200 bg-gray-50 shadow-inner dark:border-gray-600 dark:bg-gray-900">
                 {previewing && !previewHtml ? (
                   <div className="flex h-[700px] items-center justify-center">
                     <LoadingSpinner />
@@ -995,26 +1000,35 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                   </div>
                 ) : previewHtml && editMode ? (
                   <EditableResumePreview
-                    // Stable initialHtml — typing only flows through
-                    // onChange (no iframe reload, preserves cursor).
-                    // AI rewrite mutates the iframe body directly via
-                    // editorIframe ref + onIframeReady callback.
-                    key={`editor-${previewKey}`}
-                    initialHtml={previewHtml}
-                    onSave={handleEditSave}
-                    onChange={(html) => setEditedHtml(html)}
-                    onSelectionChange={(text) => setLastSelection(text)}
-                    onIframeReady={setEditorIframe}
-                    saving={saving}
-                    placeholder={rt.previewEmpty}
+                      // Stable initialHtml — typing only flows through
+                      // onChange (no iframe reload, preserves cursor).
+                      // AI rewrite mutates the iframe body directly via
+                      // editorIframe ref + onIframeReady callback.
+                      key={`editor-${previewKey}`}
+                      initialHtml={previewHtml}
+                      onSave={handleEditSave}
+                      onChange={(html) => setEditedHtml(html)}
+                      onSelectionChange={(text) => setLastSelection(text)}
+                      onIframeReady={setEditorIframe}
+                      libraryPortalTarget={experienceLibraryTarget}
+                      saving={saving}
+                      placeholder={rt.previewEmpty}
                   />
                 ) : previewHtml ? (
                   <iframe
                     key={previewKey}
                     ref={previewRef}
                     srcDoc={previewHtml}
+                    onLoad={(event) => {
+                      const doc = event.currentTarget.contentDocument;
+                      if (doc) {
+                        installPrintLayoutEmulation(doc);
+                        window.requestAnimationFrame(() => paginateResumeDom(doc));
+                        void doc.fonts?.ready.then(() => paginateResumeDom(doc));
+                      }
+                    }}
                     title="Resume Preview"
-                    className="h-[700px] w-full bg-white"
+                    className="h-[700px] w-full max-w-full overflow-x-hidden bg-white"
                     sandbox="allow-same-origin"
                   />
                 ) : (
@@ -1088,7 +1102,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         </div>
 
         {/* Right Panel: Job Description */}
-        <div className="lg:col-span-3 space-y-4">
+        <div className="min-w-0 space-y-4">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
               <FileText className="h-4 w-4 text-brand-500" />
@@ -1105,6 +1119,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
               {resumeLang === "zh" ? "可选 - 提供 JD 以生成定制简历" : "Optional - provide JD for tailored resume"}
             </p>
           </div>
+          <div ref={setExperienceLibraryTarget} />
         </div>
       </div>
 

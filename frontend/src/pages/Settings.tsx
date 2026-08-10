@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2 } from "lucide-react";
+import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2, Image as ImageIcon } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
   getSettings,
@@ -7,6 +7,10 @@ import {
   getResumeContent,
   saveResumeContent,
   uploadResume,
+  uploadResumePhoto,
+  deleteResumePhoto,
+  getResumePhotoStatus,
+  getResumePhotoUrl,
   clearAIMemory,
   getMemorySettings,
   saveMemorySettings,
@@ -124,6 +128,10 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const [resumeValidation, setResumeValidation] = useState<ResumeValidation | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [photoUploaded, setPhotoUploaded] = useState(false);
+  const [photoStatus, setPhotoStatus] = useState("");
+  const [photoCacheKey, setPhotoCacheKey] = useState("");
 
   useEffect(() => {
     getSettings().then((cfg) => {
@@ -138,6 +146,10 @@ export default function SettingsPage({ t }: { t: Strings }) {
     getMemorySettings().then((settings) => {
       setMemoryEnabled(settings.memory_enabled);
       setCacheEnabled(settings.cache_enabled);
+    }).catch(() => {});
+    getResumePhotoStatus().then((result) => {
+      setPhotoUploaded(result.uploaded);
+      if (result.uploaded) setPhotoCacheKey(String(Date.now()));
     }).catch(() => {});
   }, []);
 
@@ -252,6 +264,32 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileUpload(file);
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoStatus(st.photoUploading);
+    try {
+      await uploadResumePhoto(file);
+      setPhotoUploaded(true);
+      setPhotoCacheKey(String(Date.now()));
+      setPhotoStatus(st.photoUploaded);
+    } catch (err: any) {
+      setPhotoStatus(err?.response?.data?.detail || st.photoUploadError);
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const handlePhotoDelete = async () => {
+    try {
+      await deleteResumePhoto();
+      setPhotoUploaded(false);
+      setPhotoStatus(st.photoDeleted);
+    } catch (err: any) {
+      setPhotoStatus(err?.response?.data?.detail || st.photoUploadError);
+    }
   };
 
   return (
@@ -476,6 +514,37 @@ export default function SettingsPage({ t }: { t: Strings }) {
             {uploadMessage}
           </div>
         )}
+
+        <div className="mt-5 border-t border-gray-200 pt-5 dark:border-gray-700">
+          <div className="mb-3 flex items-center gap-2">
+            <ImageIcon className="h-5 w-5 text-brand-500" />
+            <div>
+              <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">{st.resumePhoto}</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">{st.resumePhotoHint}</div>
+            </div>
+          </div>
+          <input ref={photoInputRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={handlePhotoUpload} className="hidden" />
+          <div className="flex flex-wrap items-center gap-4">
+            {photoUploaded ? (
+              <img src={getResumePhotoUrl(photoCacheKey)} alt={st.resumePhoto} className="h-[92px] w-[69px] rounded border border-gray-300 bg-white object-cover object-top p-0.5 dark:border-gray-600" />
+            ) : (
+              <div className="flex h-[92px] w-[69px] items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-700/30">
+                <ImageIcon className="h-6 w-6 text-gray-400" />
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => photoInputRef.current?.click()} className="rounded-lg border border-brand-300 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                {photoUploaded ? st.replacePhoto : st.uploadPhoto}
+              </button>
+              {photoUploaded && (
+                <button type="button" onClick={handlePhotoDelete} className="rounded-lg border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20">
+                  {st.deletePhoto}
+                </button>
+              )}
+            </div>
+          </div>
+          {photoStatus && <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">{photoStatus}</div>}
+        </div>
       </div>
 
       {resumeValidation && (resumeValidation.errors.length > 0 || resumeValidation.warnings.length > 0) && (

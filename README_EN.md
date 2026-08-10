@@ -219,6 +219,7 @@ Edit `data_folder/plain_text_resume.yaml` directly:
 
 ```yaml
 personal_information:
+  full_name: "Your Name"  # Recommended: rendered verbatim without AI reordering
   name: "Your"
   surname: "Name"
   email: "you@example.com"

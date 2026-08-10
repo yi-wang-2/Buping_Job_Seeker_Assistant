@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import html as html_lib
 import logging
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from string import Template
@@ -21,6 +23,18 @@ OUTPUT_FOLDER = DATA_FOLDER / "output"
 STYLES_DIR = Path("src/libs/resume_and_cover_builder/resume_style")
 
 OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup_public_artifacts(max_age_seconds: int = 3600) -> None:
+    """Remove expired, unguessable public-demo PDF/HTML artifacts."""
+    cutoff = time.time() - max_age_seconds
+    for pattern in ("public_*.pdf", "public_*.html"):
+        for artifact in OUTPUT_FOLDER.glob(pattern):
+            try:
+                if artifact.stat().st_mtime < cutoff:
+                    artifact.unlink()
+            except OSError:
+                pass
 
 
 # Lightweight preview HTML template — used by preview_resume() to render
@@ -50,7 +64,7 @@ def _escape(value: Any) -> str:
     return html_lib.escape(str(value))
 
 
-def _render_resume_preview_body(data: dict[str, Any]) -> str:
+def _render_resume_preview_body(data: dict[str, Any], language: str = "zh") -> str:
     """Render the resume YAML data into a simple HTML body for preview.
 
     This deliberately avoids invoking the LLM so the preview can be
@@ -62,9 +76,14 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
 
     personal = data.get("personal_information") or {}
     if personal:
-        name = _escape(personal.get("name") or "")
-        surname = _escape(personal.get("surname") or "")
-        full_name = f"{name} {surname}".strip()
+        confirmed_name = personal.get("full_name")
+        if confirmed_name:
+            full_name = _escape(confirmed_name)
+        else:
+            name = _escape(personal.get("name") or "")
+            surname = _escape(personal.get("surname") or "")
+            separator = " " if language == "en" and name and surname else ""
+            full_name = f"{name}{separator}{surname}"
         contact_items: list[str] = []
         if personal.get("phone"):
             contact_items.append(
@@ -100,7 +119,7 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
         )
 
     # Summary / objective (custom field supported by many users)
-    summary = data.get("summary") or data.get("objective")
+    summary = data.get("professional_summary") or data.get("summary") or data.get("objective")
     if summary:
         parts.append(
             f'<section><h2>Summary</h2><p class="preview-summary">{_escape(summary)}</p></section>'
@@ -145,6 +164,16 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
     if education:
         items = []
         for edu in education:
+            additional = edu.get("additional_info") or {}
+            education_facts: list[str] = []
+            for label, value in (
+                ("研究方向" if language != "en" else "Research focus", edu.get("research_direction") or additional.get("research_direction")),
+                ("研究内容" if language != "en" else "Research topics", edu.get("research_topics") or additional.get("research_topics")),
+            ):
+                if value:
+                    rendered = "、".join(_escape(item) for item in value) if isinstance(value, list) else _escape(value)
+                    education_facts.append(f'<li><strong>{label}：</strong>{rendered}</li>')
+            facts_html = f'<ul class="compact-list">{"".join(education_facts)}</ul>' if education_facts else ""
             items.append(
                 f'<div class="preview-item">'
                 f'<div class="preview-item-head">'
@@ -154,6 +183,7 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
                 f'</span></div>'
                 f'<div class="preview-item-sub">{_escape(edu.get("education_level") or "")} '
                 f'&middot; {_escape(edu.get("field_of_study") or "")}</div>'
+                f'{facts_html}'
                 f'</div>'
             )
         parts.append(f'<section><h2>Education</h2>{"".join(items)}</section>')
@@ -220,6 +250,7 @@ def _render_resume_preview_body(data: dict[str, Any]) -> str:
 def generate_preview_html(
     style_name: str,
     resume_language: str = "zh",
+    resume_content: str = "",
 ) -> dict[str, Any]:
     """Generate a lightweight HTML preview from the local YAML resume.
 
@@ -237,8 +268,11 @@ def generate_preview_html(
     )
     if not resume_file.exists():
         raise FileNotFoundError(f"Resume file not found: {resume_file}")
-    with open(resume_file, "r", encoding="utf-8") as f:
-        yaml_text = f.read()
+    if resume_content.strip():
+        yaml_text = resume_content
+    else:
+        with open(resume_file, "r", encoding="utf-8") as f:
+            yaml_text = f.read()
     data = yaml.safe_load(yaml_text) or {}
 
     # Resolve style CSS.
@@ -256,7 +290,7 @@ def generate_preview_html(
     with open(style_path, "r", encoding="utf-8") as f:
         style_css = f.read()
 
-    body_html = _render_resume_preview_body(data)
+    body_html = _render_resume_preview_body(data, resume_language)
     lang_attr = "en" if resume_language == "en" else "zh"
     full_html = Template(PREVIEW_HTML_TEMPLATE).substitute(
         body=body_html,
@@ -286,10 +320,50 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     editor_style = soup.find(id="buping-editor-style")
     if editor_style:
         editor_style.decompose()
-    for element in soup.select("[data-buping-block], [contenteditable]"):
+    page_guide_style = soup.find(id="buping-page-guide-style")
+    if page_guide_style:
+        page_guide_style.decompose()
+    page_guides = soup.find(id="buping-page-guides")
+    if page_guides:
+        page_guides.decompose()
+    print_emulation = soup.find(id="buping-print-layout-emulation")
+    if print_emulation:
+        print_emulation.decompose()
+    viewport_fit = soup.find(id="buping-viewport-fit")
+    if viewport_fit:
+        viewport_fit.decompose()
+    for empty_section in soup.select('[data-buping-all-entries-removed="true"]'):
+        empty_section.attrs.pop("data-buping-all-entries-removed", None)
+        empty_section.attrs["data-buping-library-empty-section"] = "true"
+        empty_section.attrs["hidden"] = ""
+    for editor_only in soup.select("[data-buping-entry-action], [data-buping-empty-placeholder]"):
+        editor_only.decompose()
+    for element in soup.select(
+        "[data-buping-block], [data-buping-removable-entry], [contenteditable]"
+    ):
         element.attrs.pop("data-buping-block", None)
+        element.attrs.pop("data-buping-removable-entry", None)
+        element.attrs.pop("data-buping-all-entries-removed", None)
         element.attrs.pop("contenteditable", None)
+    for page_break in soup.select("[data-buping-page-break]"):
+        page_break.decompose()
     return str(soup)
+
+
+def render_html_to_pdf_bytes(html_content: str) -> bytes:
+    """Render HTML with the exact same Chrome print pipeline used for downloads."""
+    import base64 as _b64
+    from src.utils.chrome_utils import HTML_to_PDF, init_browser
+
+    sanitized_html = _sanitize_edited_resume_html(html_content)
+    driver = init_browser()
+    try:
+        return _b64.b64decode(HTML_to_PDF(sanitized_html, driver))
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
 
 def convert_html_to_pdf(
@@ -310,9 +384,6 @@ def convert_html_to_pdf(
     Returns:
         {"status", "pdf_filename", "html_filename", "pdf_size"}.
     """
-    import base64 as _b64
-    from src.utils.chrome_utils import HTML_to_PDF, init_browser
-
     if not html_content or not html_content.strip():
         raise ValueError("HTML content cannot be empty")
 
@@ -321,9 +392,16 @@ def convert_html_to_pdf(
     # unsanitized iframe HTML.
     html_content = _sanitize_edited_resume_html(html_content)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pdf_filename = f"{filename_base}_{timestamp}.pdf"
-    html_filename = f"{filename_base}_{timestamp}.html"
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE:
+        cleanup_public_artifacts()
+        token = uuid.uuid4().hex
+        pdf_filename = f"public_{token}.pdf"
+        html_filename = f"public_{token}.html"
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_filename = f"{filename_base}_{timestamp}.pdf"
+        html_filename = f"{filename_base}_{timestamp}.html"
 
     pdf_path = OUTPUT_FOLDER / pdf_filename
     html_path = OUTPUT_FOLDER / html_filename
@@ -331,17 +409,9 @@ def convert_html_to_pdf(
     # Write the HTML file (so user can re-preview later)
     html_path.write_text(html_content, encoding="utf-8")
 
-    # Render to PDF using Chrome headless
-    driver = init_browser()
-    try:
-        pdf_b64 = HTML_to_PDF(html_content, driver)
-        pdf_bytes = _b64.b64decode(pdf_b64)
-        pdf_path.write_bytes(pdf_bytes)
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+    # Render through the same function used by the WYSIWYG PDF preview.
+    pdf_bytes = render_html_to_pdf_bytes(html_content)
+    pdf_path.write_bytes(pdf_bytes)
 
     return {
         "status": "success",
@@ -362,9 +432,9 @@ _REWRITE_SYSTEM_PROMPTS = {
         "more_quantified": (
             "你是一个专业的简历润色专家，擅长把模糊的描述改写为有数据支撑的表达。\n"
             "请将用户提供的文本改写为：\n"
-            "1. 增加具体的数字、百分比、时间、规模等量化指标\n"
+            "1. 只能保留原文已经出现的数字、百分比、时间和规模，严禁补造任何数值\n"
             "2. 使用动词开头的 STAR 风格描述（情境、任务、行动、结果）\n"
-            "3. 强调可衡量的成果（如性能提升 X%、节省 X 小时、用户量 X 万等）\n"
+            "3. 原文没有量化数据时，只优化表达，不得用示例数字或占位数字代替\n"
             "4. 保持原意不变，只是更量化\n"
             "5. 如果原文中确实无法量化（如性格描述），保持原文\n\n"
             "只输出改写后的文本，不要任何解释、前缀或 markdown 代码块标记。"
@@ -403,10 +473,9 @@ _REWRITE_SYSTEM_PROMPTS = {
             "You are a professional resume editor specializing in transforming "
             "vague descriptions into quantified achievements.\n"
             "Rewrite the user's text to:\n"
-            "1. Add concrete numbers, percentages, timeframes, and scale metrics\n"
+            "1. Preserve only numbers, percentages, timeframes, and scale already present in the source; never invent metrics\n"
             "2. Use action-verb-led STAR phrasing (Situation, Task, Action, Result)\n"
-            "3. Emphasize measurable outcomes (e.g. \"improved X by Y%\", "
-            "\"served X users\", \"reduced X by Y hours\")\n"
+            "3. If the source has no metrics, improve wording without adding example or placeholder numbers\n"
             "4. Preserve original meaning — only make it more measurable\n"
             "5. If something cannot be quantified (e.g. soft skills), keep the original\n\n"
             "Output ONLY the rewritten text. No explanations, no prefixes, no markdown fences."
@@ -475,6 +544,9 @@ def rewrite_text(
         - Execute the versioned text_rewriter Skill through AIRuntime.
     """
     secrets = load_secrets()
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and (not api_key or api_key.startswith("sk-your-")):
+        raise ValueError("Public demo requires your own API key for each AI request.")
 
     # ---- 3-level API key fallback ----
     if not api_key or api_key.startswith("sk-your-"):
@@ -542,6 +614,12 @@ def rewrite_text(
         # Defensive: if LLM returned empty, return the original
         return text
 
+    from src.libs.ai_engine.harness import validate_grounded_text
+    violations = validate_grounded_text(text, rewritten)
+    if violations:
+        logger.warning("Resume rewrite fact harness rejected output: %s", violations)
+        return text
+
     return rewritten
 
 
@@ -555,6 +633,7 @@ def generate_resume(
     system_language: str = "zh",
     llm_protocol: str | None = None,
     model_name: str = "",
+    resume_content: str = "",
 ) -> dict[str, Any]:
     """Generate a resume PDF. Returns {path, filename, status}."""
     from src.libs.resume_and_cover_builder import ResumeFacade, ResumeGenerator, StyleManager
@@ -564,8 +643,12 @@ def generate_resume(
     import config as root_config
 
 
-    # Save config first (so subsequent runs have it)
-    if api_key:
+    from backend.services.config_service import PUBLIC_DEMO_MODE
+    if PUBLIC_DEMO_MODE and (not api_key or api_key.startswith("sk-your-")):
+        raise ValueError("Public demo requires your own API key for each AI request.")
+
+    # Local installs persist configuration; public demo credentials must never be saved.
+    if api_key and not PUBLIC_DEMO_MODE:
         save_secrets({
             "llm_api_key": api_key,
             "llm_model_type": model_type,
@@ -649,9 +732,14 @@ def generate_resume(
         )
 
     # Load resume content
-    resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
-    with open(resume_file, "r", encoding="utf-8") as f:
-        plain_text_resume = f.read()
+    if resume_content.strip():
+        plain_text_resume = resume_content
+    elif PUBLIC_DEMO_MODE:
+        raise ValueError("Public demo requires the current browser resume content.")
+    else:
+        resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
+        with open(resume_file, "r", encoding="utf-8") as f:
+            plain_text_resume = f.read()
     from backend.services.resume_validation import validate_resume_yaml
     validation = validate_resume_yaml(plain_text_resume)
     if not validation["valid"]:
@@ -703,13 +791,16 @@ def generate_resume(
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"resume_{timestamp}.pdf"
 
+        if PUBLIC_DEMO_MODE:
+            cleanup_public_artifacts()
+            filename = f"public_{uuid.uuid4().hex}.pdf"
         output_path = OUTPUT_FOLDER / filename
         with open(output_path, "wb") as f:
             f.write(pdf_data)
 
-        # Also save as resume_base.pdf
-        with open(OUTPUT_FOLDER / "resume_base.pdf", "wb") as f:
-            f.write(pdf_data)
+        if not PUBLIC_DEMO_MODE:
+            with open(OUTPUT_FOLDER / "resume_base.pdf", "wb") as f:
+                f.write(pdf_data)
 
         # Save HTML alongside the PDF for later preview
         html_filename = filename.replace(".pdf", ".html")
