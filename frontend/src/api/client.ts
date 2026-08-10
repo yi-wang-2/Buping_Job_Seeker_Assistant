@@ -149,7 +149,25 @@ export async function generateResume(params: {
   resume_language?: string;
   system_language?: string;
   resume_content?: string;
-}): Promise<{ path: string; filename: string; html_filename?: string; html_path?: string; status: string }> {
+  generation_mode?: "new" | "partial";
+  base_html?: string;
+  regenerate_targets?: string[];
+  target_pages?: 1 | 2;
+  request_id?: string;
+}): Promise<{
+  path: string;
+  filename: string;
+  html_filename?: string;
+  html_path?: string;
+  status: string;
+  generation_mode?: "new" | "partial";
+  regenerated_targets?: string[];
+  target_pages?: 1 | 2;
+  actual_pages?: number;
+  layout_warnings?: string[];
+  layout_scale?: number;
+  request_id?: string;
+}> {
   const payload = IS_PUBLIC ? {
     ...params,
     resume_content: params.resume_content || window.sessionStorage.getItem(publicResumeKey(params.resume_language || "zh")) || "",
@@ -160,6 +178,19 @@ export async function generateResume(params: {
     files.unshift({ name: data.filename, html_filename: data.html_filename || "", path: data.path, size: 0, modified: new Date().toLocaleString() });
     window.sessionStorage.setItem(PUBLIC_HISTORY_SESSION_KEY, JSON.stringify(files.slice(0, 30)));
   }
+  return data;
+}
+
+export interface ResumeGenerationProgress {
+  progress: number;
+  stage: string;
+  detail: string;
+  status: "running" | "completed" | "failed";
+  events: Array<{ progress: number; stage: string; detail: string }>;
+}
+
+export async function getResumeGenerationProgress(requestId: string): Promise<ResumeGenerationProgress> {
+  const { data } = await api.get(`/resume/generate/progress/${encodeURIComponent(requestId)}`);
   return data;
 }
 

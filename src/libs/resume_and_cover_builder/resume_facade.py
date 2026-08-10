@@ -54,12 +54,20 @@ class ResumeFacade:
         self.selected_style = None  # Property to store the selected style
         self.resume_language = resume_language
         self.system_language = system_language
+        self.progress_callback = None
         global_config.RESUME_LANGUAGE = resume_language
         global_config.SYSTEM_LANGUAGE = system_language
         logger.info(f"ResumeFacade initialized with resume_language={resume_language}, system_language={system_language}")
     
     def set_driver(self, driver):
          self.driver = driver
+
+    def set_progress_callback(self, callback):
+         self.progress_callback = callback
+
+    def _report_progress(self, progress, stage, detail=""):
+         if self.progress_callback:
+             self.progress_callback(progress, stage, detail)
 
     def prompt_user(self, choices: list[str], message: str) -> str:
         """
@@ -158,16 +166,11 @@ class ResumeFacade:
         suggested_name = hashlib.md5(hash_source.encode()).hexdigest()[:10]
 
         html_resume = self.resume_generator.create_resume_job_description_text(style_path, jd_text)
+        self._report_progress(67, "html_sections", "Generated all resume sections")
 
-        # Load CSS to assemble full HTML
-        from string import Template
-        from src.libs.resume_and_cover_builder.config import global_config
-        template = Template(global_config.html_template)
-        with open(style_path, "r", encoding="utf-8") as f:
-            style_css = f.read()
-        lang_code = global_config.RESUME_LANGUAGE if global_config.RESUME_LANGUAGE else "zh"
-        lang_attr = "zh" if lang_code in ["zh", "zh-cn"] else ("en" if lang_code == "en" else "zh")
-        full_html = template.substitute(body=html_resume, style_css=style_css, lang=lang_attr)
+        # ResumeGenerator already returns the complete styled document.
+        full_html = html_resume
+        self._report_progress(69, "html_assembly", "Assembled resume HTML and selected style")
         from src.libs.ai_engine.harness import enforce_resume_typography
         typography_result = enforce_resume_typography(full_html)
         if typography_result.adjusted_count:
@@ -175,8 +178,11 @@ class ResumeFacade:
                 f"Resume typography harness adjusted {typography_result.adjusted_count} font sizes"
             )
         full_html = typography_result.html
+        self._report_progress(71, "typography_guard", "Validated resume typography")
 
+        self._report_progress(73, "baseline_pdf", "Rendering baseline PDF in Chrome")
         result = HTML_to_PDF(full_html, self.driver)
+        self._report_progress(76, "baseline_pdf", "Baseline PDF render completed")
         self.driver.quit()
         import base64
         return result, suggested_name, base64.b64encode(full_html.encode("utf-8")).decode("ascii")
@@ -197,15 +203,10 @@ class ResumeFacade:
             raise ValueError("You must choose a style before generating the PDF.")
 
         html_resume = self.resume_generator.create_resume(style_path)
-        # Load CSS to assemble full HTML
-        from string import Template
-        from src.libs.resume_and_cover_builder.config import global_config
-        template = Template(global_config.html_template)
-        with open(style_path, "r", encoding="utf-8") as f:
-            style_css = f.read()
-        lang_code = global_config.RESUME_LANGUAGE if global_config.RESUME_LANGUAGE else "zh"
-        lang_attr = "zh" if lang_code in ["zh", "zh-cn"] else ("en" if lang_code == "en" else "zh")
-        full_html = template.substitute(body=html_resume, style_css=style_css, lang=lang_attr)
+        self._report_progress(67, "html_sections", "Generated all resume sections")
+        # ResumeGenerator already returns the complete styled document.
+        full_html = html_resume
+        self._report_progress(69, "html_assembly", "Assembled resume HTML and selected style")
         from src.libs.ai_engine.harness import enforce_resume_typography
         typography_result = enforce_resume_typography(full_html)
         if typography_result.adjusted_count:
@@ -213,8 +214,11 @@ class ResumeFacade:
                 f"Resume typography harness adjusted {typography_result.adjusted_count} font sizes"
             )
         full_html = typography_result.html
+        self._report_progress(71, "typography_guard", "Validated resume typography")
 
+        self._report_progress(73, "baseline_pdf", "Rendering baseline PDF in Chrome")
         result = HTML_to_PDF(full_html, self.driver)
+        self._report_progress(76, "baseline_pdf", "Baseline PDF render completed")
         self.driver.quit()
         # Return HTML as base64 so it can be safely transported
         import base64

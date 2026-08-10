@@ -14,7 +14,7 @@ python scripts/benchmark_ai_engine.py --check --output artifacts/ai-engine-bench
 - LLM Gateway usage 标准化正确率和调用额外开销。
 - 七个 Skill 的注册完整性、预算有效性和增量更新检测。
 - Prompt 的事实约束、结构化输出和证据要求覆盖率。
-- 简历黄金样例评分区分度、三候选生成契约、硬事实纠正率、富文本保留率和评分器 P95 延迟。
+- 简历黄金样例评分区分度、逐项目五项必填结构覆盖、三候选生成契约、硬事实纠正率、富文本保留率和评分器 P95 延迟。
 
 阈值位于 `tests/fixtures/ai_engine/performance_budgets.json`。修改 Prompt、Context、缓存、记忆、Skill 或相关业务调用代码时，`.github/workflows/ai-engine-evaluation.yml` 会自动运行评估；违反阈值时 CI 失败，并上传 JSON 报告。
 

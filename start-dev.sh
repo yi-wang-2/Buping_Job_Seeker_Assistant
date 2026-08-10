@@ -23,7 +23,7 @@ echo ""
 
 echo "[1/3] Syncing backend dependencies with uv ..."
 cd "$ROOT"
-uv sync
+uv sync --extra dev
 
 if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
   echo "[2/3] Installing frontend dependencies ..."

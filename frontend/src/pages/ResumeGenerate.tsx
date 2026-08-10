@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Edit3, Save, RotateCcw, Check, History as HistoryIcon, Sparkle } from "lucide-react";
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
-import { getStyles, generateResume, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
+import { getStyles, generateResume, getResumeGenerationProgress, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
 import { installPrintLayoutEmulation, paginateResumeDom } from "../components/editor/domPagination";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
@@ -49,11 +49,87 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   "minimax-chat": "MiniMax-M3", "openai-resp": "gpt-4o-mini", "minimax-resp": "MiniMax-M3",
 };
 
+const GENERATION_STAGE_LABELS: Record<string, { zh: string; en: string }> = {
+  queued: { zh: "请求已进入队列", en: "Request queued" },
+  request_validation: { zh: "校验生成参数", en: "Validating request" },
+  generation_mode: { zh: "准备生成模式和目标页数", en: "Preparing generation mode" },
+  llm_configuration: { zh: "加载模型配置", en: "Loading model configuration" },
+  resume_loading: { zh: "读取简历资料", en: "Loading resume data" },
+  resume_validation: { zh: "核验简历事实和结构", en: "Validating resume facts" },
+  style_selection: { zh: "加载简历模板", en: "Loading resume style" },
+  job_tailoring: { zh: "准备职位定制", en: "Preparing job tailoring" },
+  jd_summary: { zh: "提炼职位描述", en: "Summarizing job description" },
+  base_generation: { zh: "准备内容生成", en: "Preparing content generation" },
+  llm_candidates: { zh: "并行生成候选简历", en: "Generating candidates" },
+  candidate_parsing: { zh: "解析候选简历", en: "Parsing candidates" },
+  candidate_scoring: { zh: "评分并选择最佳候选", en: "Scoring candidates" },
+  hard_fact_guard: { zh: "核验硬事实", en: "Checking hard facts" },
+  html_sections: { zh: "整理简历模块", en: "Preparing resume sections" },
+  html_assembly: { zh: "组装模板和样式", en: "Assembling HTML and style" },
+  typography_guard: { zh: "检查字号和可读性", en: "Checking typography" },
+  baseline_pdf: { zh: "生成基准 PDF", en: "Rendering baseline PDF" },
+  baseline_pdf_ready: { zh: "基准 PDF 已完成", en: "Baseline PDF ready" },
+  partial_merge: { zh: "合并保留内容与新内容", en: "Merging retained content" },
+  pdf_page_analysis: { zh: "读取真实 PDF 页数", en: "Reading actual PDF pages" },
+  content_compaction: { zh: "压缩冗余描述", en: "Condensing verbose descriptions" },
+  pdf_layout_fit: { zh: "校准目标页数和版面", en: "Fitting target page layout" },
+  pdf_layout_stretch: { zh: "均衡两页内容分布", en: "Balancing page distribution" },
+  file_save: { zh: "保存 PDF", en: "Saving PDF" },
+  html_save: { zh: "保存可编辑版本", en: "Saving editable version" },
+  completed: { zh: "生成完成", en: "Generation completed" },
+  failed: { zh: "生成失败", en: "Generation failed" },
+};
+
+function generationStageLabel(stage: string, language: string): string {
+  const labels = GENERATION_STAGE_LABELS[stage];
+  return labels ? (language === "zh" ? labels.zh : labels.en) : stage;
+}
+
 interface HistoryFile {
   name: string;
   path: string;
   size: number;
   modified: string;
+}
+
+interface RegenerationTargetOption {
+  id: string;
+  label: string;
+}
+
+interface RegenerationModuleOption extends RegenerationTargetOption {
+  children: RegenerationTargetOption[];
+}
+
+const REGENERATION_SECTIONS = [
+  { id: "header", zh: "个人信息", en: "Header", selector: "header", entries: false },
+  { id: "education", zh: "教育经历", en: "Education", selector: "#education", entries: true },
+  { id: "work-experience", zh: "工作经历", en: "Work Experience", selector: "#work-experience", entries: true },
+  { id: "side-projects", zh: "项目经历", en: "Projects", selector: "#side-projects", entries: true },
+  { id: "achievements", zh: "成就荣誉", en: "Achievements", selector: "#achievements", entries: false },
+  { id: "certifications", zh: "证书", en: "Certifications", selector: "#certifications", entries: false },
+  { id: "technical-stack", zh: "技能", en: "Skills", selector: "#technical-stack", entries: false },
+  { id: "languages-other", zh: "语言及其他", en: "Languages & Other", selector: "#languages-other", entries: false },
+  { id: "skills-languages", zh: "技能与语言", en: "Skills & Languages", selector: "#skills-languages", entries: false },
+] as const;
+
+function extractRegenerationModules(html: string, language: string): RegenerationModuleOption[] {
+  if (!html.trim()) return [];
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return REGENERATION_SECTIONS.flatMap((definition) => {
+    const node = doc.querySelector<HTMLElement>(definition.selector);
+    if (!node) return [];
+    const moduleLabel = language === "en" ? definition.en : definition.zh;
+    const children = definition.entries
+      ? Array.from(node.querySelectorAll<HTMLElement>(".entry")).map((entry, index) => {
+          const name = entry.querySelector<HTMLElement>(".entry-name")?.textContent?.trim()
+            || entry.querySelector<HTMLElement>("h3, h4")?.textContent?.trim()
+            || `${moduleLabel} ${index + 1}`;
+          return { id: `entry:${definition.id}:${index}`, label: name };
+        })
+      : [];
+    return [{ id: `section:${definition.id}`, label: moduleLabel, children }];
+  });
 }
 
 /**
@@ -183,6 +259,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [llmProtocol, setLlmProtocol] = useState<LlmProtocol>("anthropic");
   const availableModels = useAvailableModels(apiKey, baseUrl, llmProtocol);
   const [styleName, setStyleName] = useSessionState("buping_resume_style", "");
+  const [targetPages, setTargetPages] = useSessionState<1 | 2>("buping_resume_target_pages", 1);
   const [jobDesc, setJobDesc] = useSessionState("buping_resume_job_desc", "");
   const [resumeLang, setResumeLang] = useState("zh");
   const [systemLanguage, setSystemLanguage] = useState("zh");
@@ -194,6 +271,8 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   // Generation progress state (0-100, -1 = idle, stage label)
   const [genProgress, setGenProgress] = useState<number>(-1);
   const [genStage, setGenStage] = useState<string>("");
+  const [genEvents, setGenEvents] = useState<Array<{ progress: number; stage: string; detail: string }>>([]);
+  const [layoutWarnings, setLayoutWarnings] = useState<string[]>([]);
 
   // Preview state
   const [previewing, setPreviewing] = useState(false);
@@ -224,6 +303,40 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   // Used by handleApplyRewrite to mutate the document directly.
   const [editorIframe, setEditorIframe] = useState<HTMLIFrameElement | null>(null);
   const [experienceLibraryTarget, setExperienceLibraryTarget] = useState<HTMLDivElement | null>(null);
+  const [generationMode, setGenerationMode] = useSessionState<"new" | "partial">(
+    "buping_resume_generation_mode",
+    "new",
+  );
+  const [regenerateTargets, setRegenerateTargets] = useState<string[]>([]);
+  const baseVersionHtml = editMode && editedHtml ? editedHtml : previewHtml;
+  const regenerationModules = useMemo(
+    () => extractRegenerationModules(baseVersionHtml, resumeLang),
+    [baseVersionHtml, resumeLang],
+  );
+
+  useEffect(() => {
+    const validTargets = new Set(
+      regenerationModules.flatMap((module) => [module.id, ...module.children.map((child) => child.id)]),
+    );
+    setRegenerateTargets((current) => current.filter((target) => validTargets.has(target)));
+  }, [regenerationModules]);
+
+  const toggleRegenerationTarget = (targetId: string, checked: boolean) => {
+    setRegenerateTargets((current) => {
+      const next = new Set(current);
+      const module = regenerationModules.find(
+        (item) => item.id === targetId || item.children.some((child) => child.id === targetId),
+      );
+      if (targetId.startsWith("section:")) {
+        module?.children.forEach((child) => next.delete(child.id));
+      } else if (module) {
+        next.delete(module.id);
+      }
+      if (checked) next.add(targetId);
+      else next.delete(targetId);
+      return Array.from(next);
+    });
+  };
 
   // Backend warmup — track whether styles/settings loaded successfully
   const [stylesError, setStylesError] = useState<string>("");
@@ -339,52 +452,45 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
 
   const handleGenerate = async () => {
     if (loading) return; // Prevent double click
+    if (generationMode === "partial" && !baseVersionHtml.trim()) {
+      setStatus(
+        resumeLang === "zh"
+          ? "请先生成或从历史记录加载一份简历"
+          : "Generate or load a resume version first",
+      );
+      return;
+    }
+    if (generationMode === "partial" && regenerateTargets.length === 0) {
+      setStatus(
+        resumeLang === "zh"
+          ? "请至少选择一个需要重新生成的模块"
+          : "Select at least one module to regenerate",
+      );
+      return;
+    }
     setLoading(true);
     setDownloadFile("");
+    setLayoutWarnings([]);
     setGenProgress(0);
     setGenStage(resumeLang === "zh" ? "初始化..." : "Initializing...");
     setStatus(rt.generating);
 
-    // Simulate progress stages while waiting for backend
-    // (Backend is synchronous; this just gives the user feedback)
-    const stageTimers: number[] = [];
-    const stageMessages = resumeLang === "zh"
-      ? [
-          { at: 5, msg: "📝 解析简历内容..." },
-          { at: 20, msg: "🤖 LLM 生成内容..." },
-          { at: 50, msg: "🎨 应用 CSS 样式..." },
-          { at: 80, msg: "🌐 Chrome 转换 PDF..." },
-          { at: 95, msg: "💾 保存文件..." },
-        ]
-      : [
-          { at: 5, msg: "📝 Parsing resume..." },
-          { at: 20, msg: "🤖 LLM generating content..." },
-          { at: 50, msg: "🎨 Applying CSS styles..." },
-          { at: 80, msg: "🌐 Chrome rendering PDF..." },
-          { at: 95, msg: "💾 Saving file..." },
-        ];
-
-    stageTimers.push(
-      window.setTimeout(() => {
-        setGenProgress(5);
-        setGenStage(stageMessages[0].msg);
-      }, 500),
-    );
-
-    // Gradually progress through stages while waiting
-    for (let i = 1; i < stageMessages.length; i++) {
-      const stage = stageMessages[i];
-      const prevAt = i > 0 ? stageMessages[i - 1].at : 0;
-      const delay = ((stage.at - prevAt) / 95) * 1000; // Approximate
-      stageTimers.push(
-        window.setTimeout(() => {
-          if (loading) {
-            setGenProgress(stage.at);
-            setGenStage(stage.msg);
-          }
-        }, 1000 + delay * 5),
-      );
-    }
+    setGenEvents([]);
+    const requestId = globalThis.crypto?.randomUUID?.()
+      || `resume-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let pollActive = true;
+    const pollProgress = async () => {
+      try {
+        const progress = await getResumeGenerationProgress(requestId);
+        if (!pollActive) return;
+        setGenProgress(progress.progress);
+        setGenStage(generationStageLabel(progress.stage, resumeLang));
+        setGenEvents(progress.events || []);
+      } catch {
+        // The first poll can arrive before the POST handler registers the request.
+      }
+    };
+    const progressTimer = window.setInterval(pollProgress, 350);
 
     try {
       const result = await generateResume({
@@ -396,7 +502,13 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         style_name: styleName,
         job_description: jobDesc || undefined,
         resume_language: resumeLang,
+        generation_mode: generationMode,
+        base_html: generationMode === "partial" ? baseVersionHtml : undefined,
+        regenerate_targets: generationMode === "partial" ? regenerateTargets : undefined,
+        target_pages: targetPages,
+        request_id: requestId,
       });
+      setLayoutWarnings(result.layout_warnings || []);
       setGenProgress(100);
       setGenStage(resumeLang === "zh" ? "✅ 完成！" : "✅ Done!");
       setStatus(`${rt.success} ${result.filename}`);
@@ -408,6 +520,8 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         try {
           const preview = await previewSavedResume(result.html_filename);
           setPreviewHtml(preview.html);
+          setEditedHtml(preview.html);
+          setEditMode(false);
           setPreviewKey((k) => k + 1);
           setStatus(`${rt.success} ${result.filename} (预览已更新)`);
         } catch (e) {
@@ -423,7 +537,9 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
       setGenStage("");
       setStatus(`${rt.error}: ${err.response?.data?.detail || err.message}`);
     } finally {
-      stageTimers.forEach((t) => window.clearTimeout(t));
+      await pollProgress();
+      pollActive = false;
+      window.clearInterval(progressTimer);
       // Keep progress visible for a moment to show completion
       window.setTimeout(() => {
         setLoading(false);
@@ -755,7 +871,9 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
               {Object.entries(styles).map(([name, info]) => (
                 <label
                   key={name}
-                  className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors ${
+                  className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${
+                    loading ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                  } ${
                     styleName === name
                       ? "border-brand-500 bg-brand-50 dark:bg-brand-900/20"
                       : "border-gray-200 hover:border-gray-300 dark:border-gray-600"
@@ -767,6 +885,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                     value={name}
                     checked={styleName === name}
                     onChange={() => setStyleName(name)}
+                    disabled={loading}
                     className="text-brand-600 focus:ring-brand-500"
                   />
                   <div>
@@ -1045,11 +1164,15 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <button
                 onClick={handleGenerate}
-                disabled={loading}
+                disabled={loading || (generationMode === "partial" && (!baseVersionHtml || regenerateTargets.length === 0))}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:from-brand-700 hover:to-brand-800 hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
-                {loading ? rt.generating : rt.generate}
+                {loading
+                  ? rt.generating
+                  : generationMode === "partial"
+                    ? (resumeLang === "zh" ? `重新生成所选内容（${regenerateTargets.length}）` : `Regenerate Selected (${regenerateTargets.length})`)
+                    : rt.generate}
               </button>
 
               {downloadFile && (
@@ -1077,11 +1200,64 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                     style={{ width: `${genProgress}%` }}
                   />
                 </div>
+                {genEvents.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-2.5 dark:border-gray-700 dark:bg-gray-900/30">
+                    <div className="mb-2 text-[11px] text-gray-500 dark:text-gray-400">
+                      {genEvents[genEvents.length - 1]?.detail}
+                    </div>
+                    <div className="space-y-1.5">
+                      {genEvents.slice(-6).map((event, index, visibleEvents) => {
+                        const current = index === visibleEvents.length - 1;
+                        return (
+                          <div key={`${event.progress}-${event.stage}-${index}`} className="flex items-center gap-2 text-[11px]">
+                            <span className={`h-1.5 w-1.5 rounded-full ${current ? "animate-pulse bg-brand-500" : "bg-green-500"}`} />
+                            <span className={current ? "font-medium text-gray-800 dark:text-gray-200" : "text-gray-500 dark:text-gray-400"}>
+                              {generationStageLabel(event.stage, resumeLang)}
+                            </span>
+                            <span className="ml-auto font-mono text-gray-400">{event.progress}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <p className="mt-1.5 text-[11px] text-gray-400 dark:text-gray-500">
                   {resumeLang === "zh"
                     ? "💡 生成通常需要 30-60 秒，请耐心等待"
                     : "💡 Generation typically takes 30-60s, please be patient"}
                 </p>
+              </div>
+            )}
+
+            {layoutWarnings.length > 0 && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                {layoutWarnings.map((warning) => (
+                  <p key={warning}>
+                    {warning === "target_one_page_content_dense"
+                      ? (resumeLang === "zh"
+                          ? "内容较多，已按一页输出，但版面会比较紧凑。建议改选两页，或撤下次要经历后重新生成。"
+                          : "Content is dense for one page. Consider two pages or removing less relevant experiences.")
+                      : warning === "target_two_pages_content_short"
+                        ? (resumeLang === "zh"
+                            ? "内容不足以自然撑满两页，已按两页输出。建议改选一页，或补充有效内容后重新生成。"
+                            : "Content is too short to fill two pages naturally. Consider one page or adding relevant content.")
+                        : warning === "content_completeness_impacted"
+                          ? (resumeLang === "zh"
+                              ? "为匹配目标页数，系统已压缩描述，但检测到信息完整性可能受到影响。请检查生成结果，或改选更多页数。"
+                              : "Descriptions were condensed to meet the page target, but information completeness may be affected. Review the result or choose more pages.")
+                          : warning === "content_compaction_failed"
+                            ? (resumeLang === "zh"
+                                ? "自动内容压缩未完成，系统已保留完整内容。当前结果可能超过目标页数，请重试或选择更多页数。"
+                                : "Automatic content compaction did not complete, so the full content was preserved. The result may exceed the page target.")
+                            : warning === "content_compaction_insufficient"
+                              ? (resumeLang === "zh"
+                                  ? "模型未能进一步有效缩减内容，系统已停止重复压缩。请改选更多页数或撤下次要经历。"
+                                  : "The model could not reduce the content further, so repeated compaction was stopped. Choose more pages or remove less relevant experiences.")
+                        : (resumeLang === "zh"
+                            ? "当前内容无法在可用排版范围内完全匹配目标页数，请调整页数或内容后重新生成。"
+                            : "The selected page target could not be matched within the available layout range.")}
+                  </p>
+                ))}
               </div>
             )}
 
@@ -1118,6 +1294,141 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
               {resumeLang === "zh" ? "可选 - 提供 JD 以生成定制简历" : "Optional - provide JD for tailored resume"}
             </p>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+              <Sparkles className="h-4 w-4 text-brand-500" />
+              {resumeLang === "zh" ? "生成方式" : "Generation Mode"}
+            </h3>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setGenerationMode("new")}
+                disabled={loading}
+                className={`rounded-lg border px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${
+                  generationMode === "new"
+                    ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+                    : "border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                }`}
+              >
+                {resumeLang === "zh" ? "全新生成" : "Generate New"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setGenerationMode("partial")}
+                disabled={loading || !baseVersionHtml}
+                className={`rounded-lg border px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+                  generationMode === "partial"
+                    ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+                    : "border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-300"
+                }`}
+              >
+                {resumeLang === "zh" ? "在此版本上修改" : "Revise This Version"}
+              </button>
+            </div>
+
+            <div className="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
+              <div className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-400">
+                {resumeLang === "zh" ? "目标页数" : "Target pages"}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {([1, 2] as const).map((pages) => (
+                  <button
+                    key={pages}
+                    type="button"
+                    onClick={() => setTargetPages(pages)}
+                    disabled={loading}
+                    className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      targetPages === pages
+                        ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300 dark:border-gray-600 dark:text-gray-300"
+                    }`}
+                  >
+                    {resumeLang === "zh" ? `${pages} 页` : `${pages} page${pages > 1 ? "s" : ""}`}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+                {resumeLang === "zh"
+                  ? "保持字号可读，先调整间距；仍超页时再压缩描述，并保留全部已选经历。"
+                  : "Keeps typography readable, adjusts spacing first, then condenses copy if needed while preserving selected experiences."}
+              </p>
+            </div>
+
+            {generationMode === "partial" && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                    {resumeLang === "zh" ? "选择重新生成的内容" : "Select content to regenerate"}
+                  </span>
+                  <div className="flex gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setRegenerateTargets(regenerationModules.map((module) => module.id))}
+                      className="text-brand-600 hover:text-brand-700"
+                    >
+                      {resumeLang === "zh" ? "全选" : "All"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegenerateTargets([])}
+                      className="text-gray-500 hover:text-gray-700"
+                    >
+                      {resumeLang === "zh" ? "清空" : "Clear"}
+                    </button>
+                  </div>
+                </div>
+
+                {regenerationModules.length === 0 ? (
+                  <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                    {resumeLang === "zh"
+                      ? "当前预览没有可识别模块，请先生成或加载一份历史简历。"
+                      : "No structured modules found. Generate or load a resume first."}
+                  </p>
+                ) : (
+                  <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {regenerationModules.map((module) => {
+                      const moduleSelected = regenerateTargets.includes(module.id);
+                      return (
+                        <div key={module.id} className="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+                          <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-800 dark:text-gray-200">
+                            <input
+                              type="checkbox"
+                              checked={moduleSelected}
+                              onChange={(event) => toggleRegenerationTarget(module.id, event.target.checked)}
+                              className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                            />
+                            {module.label}
+                          </label>
+                          {module.children.length > 0 && (
+                            <div className="ml-5 mt-2 space-y-1.5 border-l border-gray-200 pl-2 dark:border-gray-700">
+                              {module.children.map((child) => (
+                                <label key={child.id} className="flex cursor-pointer items-center gap-2 text-[11px] text-gray-600 dark:text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={moduleSelected || regenerateTargets.includes(child.id)}
+                                    disabled={moduleSelected}
+                                    onChange={(event) => toggleRegenerationTarget(child.id, event.target.checked)}
+                                    className="rounded border-gray-300 text-brand-600 focus:ring-brand-500 disabled:opacity-50"
+                                  />
+                                  <span className="truncate" title={child.label}>{child.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+                  {resumeLang === "zh"
+                    ? `已选 ${regenerateTargets.length} 项。未选内容和当前版式将原样保留。`
+                    : `${regenerateTargets.length} selected. Unselected content and layout remain unchanged.`}
+                </p>
+              </div>
+            )}
           </div>
           <div ref={setExperienceLibraryTarget} />
         </div>

@@ -8,6 +8,8 @@ from src.libs.ai_engine.harness import (
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 from src.libs.resume_and_cover_builder.llm.llm_generate_resume import LLMResumer
+from types import SimpleNamespace
+from bs4 import BeautifulSoup
 
 
 def _resume():
@@ -55,7 +57,35 @@ def test_golden_guide_contains_required_narrative_contract():
     assert "核心职责" in GOLDEN_RESUME_WRITING_GUIDE
     assert "项目管理" in GOLDEN_RESUME_WRITING_GUIDE
     assert "项目背景" in GOLDEN_RESUME_WRITING_GUIDE
+    assert "个人职责" in GOLDEN_RESUME_WRITING_GUIDE
+    assert "技术实现" in GOLDEN_RESUME_WRITING_GUIDE
+    assert "关键难点/验证约束" in GOLDEN_RESUME_WRITING_GUIDE
+    assert "项目成果" in GOLDEN_RESUME_WRITING_GUIDE
     assert "严禁编造" in GOLDEN_RESUME_WRITING_GUIDE
+
+
+def test_project_required_fields_are_checked_per_project():
+    complete = _candidate(
+        '<li><strong>核心职责：</strong>负责系统相机效果优化与交付</li>',
+        '<li><strong>项目背景：</strong>面向图像处理交付场景建设核心模块</li>'
+        '<li><strong>核心职责：</strong>负责图像处理模块的设计与交付</li>'
+        '<li><strong>技术实现：</strong>使用输入中已有的图像处理方案完成模块开发</li>'
+        '<li><strong>验证交付：</strong>按照既定验收要求完成联调验证</li>'
+        '<li><strong>项目成果：</strong>完成图像处理模块并通过验收</li>',
+    )
+    incomplete = _candidate(
+        '<li><strong>核心职责：</strong>负责系统相机效果优化与交付</li>',
+        '<li><strong>项目背景：</strong>面向图像处理交付场景建设核心模块</li>',
+    )
+
+    complete_evaluation = evaluate_resume_candidate(complete, _resume())
+    incomplete_evaluation = evaluate_resume_candidate(incomplete, _resume())
+
+    assert complete_evaluation.breakdown["project_required_fields"] == 12.0
+    assert complete_evaluation.project_structure_issues == ()
+    assert incomplete_evaluation.breakdown["project_required_fields"] < 12.0
+    assert len(incomplete_evaluation.project_structure_issues) == 4
+    assert select_best_candidate([incomplete, complete], _resume()).sections == complete
 
 
 def test_scorer_prefers_golden_structure_over_generic_hype():
@@ -78,15 +108,80 @@ def test_scorer_prefers_golden_structure_over_generic_hype():
 
 def test_candidate_generator_runs_three_independent_attempts():
     calls = []
+    completed = []
 
     def invoke():
         calls.append(len(calls))
         return f"candidate-{len(calls)}"
 
-    outputs = generate_candidates(invoke, count=3)
+    outputs = generate_candidates(
+        invoke,
+        count=3,
+        on_complete=lambda done, total, success: completed.append((done, total, success)),
+    )
 
     assert len(calls) == 3
     assert len(outputs) == 3
+    assert completed == [(1, 3, True), (2, 3, True), (3, 3, True)]
+
+
+def test_project_guard_keeps_reordered_project_names_bound_to_their_own_content():
+    resume = _resume()
+    resume["projects"] = [
+        {"name": "xueying (oppo find n3)", "description": "ISP-CONTEXT", "link": ""},
+        {"name": "Buping Job Assistant", "description": "FASTAPI-CONTEXT", "link": ""},
+    ]
+    candidate = _candidate(
+        "<li>work</li>",
+        "<li>placeholder</li>",
+    )
+    candidate["projects"] = '''<section id="side-projects">
+      <div class="entry"><span class="entry-name">Buping Job Assistant</span><ul><li>FASTAPI-CONTEXT</li></ul></div>
+      <div class="entry"><span class="entry-name">xueying (OPPO Find N3)</span><ul><li>ISP-CONTEXT</li></ul></div>
+    </section>'''
+
+    evaluation = evaluate_resume_candidate(candidate, resume)
+    result = protect_hard_facts_in_place(candidate, resume)
+    soup = BeautifulSoup(result.sections["projects"], "html.parser")
+    xueying = soup.select_one('[data-source-id="project-0"]')
+    buping = soup.select_one('[data-source-id="project-1"]')
+
+    assert evaluation.breakdown["project_binding_coverage"] == 1.0
+    assert xueying is not None and "ISP-CONTEXT" in xueying.get_text(" ", strip=True)
+    assert "FASTAPI-CONTEXT" not in xueying.get_text(" ", strip=True)
+    assert buping is not None and "FASTAPI-CONTEXT" in buping.get_text(" ", strip=True)
+    assert "ISP-CONTEXT" not in buping.get_text(" ", strip=True)
+
+
+def test_partial_regeneration_context_and_targets_reach_llm_prompt():
+    captured = []
+
+    def fake_model(messages):
+        captured.append(str(messages))
+        return "[HEADER]<header><h1>测试</h1></header>[/HEADER]"
+
+    resumer = LLMResumer.__new__(LLMResumer)
+    resumer.resume = SimpleNamespace(
+        personal_information={"name": "测试"},
+        education_details=[], experience_details=[], projects=[], achievements=[],
+        certifications=[], languages=[], interests=[],
+    )
+    resumer.llm_cheap = RunnableLambda(fake_model)
+    resumer.regenerate_targets = ["entry:work-experience:1"]
+    resumer.target_pages = 2
+    resumer.regeneration_context_html = (
+        '<PRESERVED_RESUME_CONTEXT><LOCKED_CONTENT><div class="entry">保留公司</div>'
+        '</LOCKED_CONTENT></PRESERVED_RESUME_CONTEXT>'
+    )
+
+    resumer.generate_all_sections()
+
+    prompt_text = "\n".join(captured)
+    assert len(captured) == 3
+    assert "Target PDF pages: 2" in prompt_text
+    assert "entry:work-experience:1" in prompt_text
+    assert "保留公司" in prompt_text
+    assert "禁止改写" in prompt_text
 
 
 def test_hard_fact_guard_patches_in_place_and_preserves_rich_html():

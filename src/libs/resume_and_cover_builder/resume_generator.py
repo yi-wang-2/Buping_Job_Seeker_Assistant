@@ -13,7 +13,20 @@ from .resume_html import add_default_profile_photo
 
 class ResumeGenerator:
     def __init__(self):
-        pass
+        self.regeneration_context_html = ""
+        self.regenerate_targets: list[str] = []
+        self.target_pages = 1
+        self.progress_callback = None
+
+    def set_regeneration_context(self, context_html: str, targets: list[str] | None = None):
+        self.regeneration_context_html = context_html or ""
+        self.regenerate_targets = list(targets or [])
+
+    def set_target_pages(self, target_pages: int):
+        self.target_pages = target_pages if target_pages in {1, 2} else 1
+
+    def set_progress_callback(self, callback):
+        self.progress_callback = callback
 
     def set_resume_object(self, resume_object):
          self.resume_object = resume_object
@@ -22,6 +35,12 @@ class ResumeGenerator:
     def _create_resume(self, gpt_answerer: Any, style_path):
         # Imposta il resume nell'oggetto gpt_answerer
         gpt_answerer.set_resume(self.resume_object)
+        gpt_answerer.set_regeneration_context(
+            self.regeneration_context_html,
+            self.regenerate_targets,
+        )
+        gpt_answerer.set_target_pages(self.target_pages)
+        gpt_answerer.set_progress_callback(self.progress_callback)
         
         # Leggi il template HTML
         template = Template(global_config.html_template)
@@ -53,6 +72,7 @@ class ResumeGenerator:
     def create_resume_job_description_text(self, style_path: str, job_description_text: str):
         strings = load_module(global_config.STRINGS_MODULE_RESUME_JOB_DESCRIPTION_PATH, global_config.STRINGS_MODULE_NAME)
         gpt_answerer = LLMResumeJobDescription(global_config.API_KEY, strings)
+        gpt_answerer.set_progress_callback(self.progress_callback)
         gpt_answerer.set_job_description_from_text(job_description_text)
         return self._create_resume(gpt_answerer, style_path)
 

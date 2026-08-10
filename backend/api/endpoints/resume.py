@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Optional
+import uuid
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.services import resume_service
 
@@ -26,6 +27,11 @@ class GenerateResumeRequest(BaseModel):
     resume_language: str = "zh"
     system_language: str = "zh"
     resume_content: str = ""
+    generation_mode: Literal["new", "partial"] = "new"
+    base_html: str = ""
+    regenerate_targets: list[str] = Field(default_factory=list)
+    target_pages: Literal[1, 2] = 1
+    request_id: str = Field(default="", max_length=80)
 
 
 class GenerateResumeResponse(BaseModel):
@@ -34,6 +40,13 @@ class GenerateResumeResponse(BaseModel):
     html_filename: str = ""
     html_path: str = ""
     status: str
+    generation_mode: str = "new"
+    regenerated_targets: list[str] = Field(default_factory=list)
+    target_pages: int = 1
+    actual_pages: int = 1
+    layout_warnings: list[str] = Field(default_factory=list)
+    layout_scale: float = 1.0
+    request_id: str = ""
 
 
 class PreviewResumeRequest(BaseModel):
@@ -177,6 +190,10 @@ async def generate_resume(req: GenerateResumeRequest) -> GenerateResumeResponse:
     Async endpoint to avoid blocking the FastAPI event loop during
     long-running LLM and Chrome operations.
     """
+    request_id = req.request_id or uuid.uuid4().hex
+    resume_service.update_generation_progress(
+        request_id, 0, "queued", "Generation request accepted", status="running"
+    )
     try:
         result = await asyncio.to_thread(
             resume_service.generate_resume,
@@ -190,10 +207,26 @@ async def generate_resume(req: GenerateResumeRequest) -> GenerateResumeResponse:
             resume_language=req.resume_language,
             system_language=req.system_language,
             resume_content=req.resume_content,
+            generation_mode=req.generation_mode,
+            base_html=req.base_html,
+            regenerate_targets=req.regenerate_targets,
+            target_pages=req.target_pages,
+            request_id=request_id,
         )
         return GenerateResumeResponse(**result)
     except Exception as e:
+        resume_service.update_generation_progress(
+            request_id, 100, "failed", str(e), status="failed"
+        )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/generate/progress/{request_id}")
+def generation_progress(request_id: str) -> dict:
+    progress = resume_service.get_generation_progress(request_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="Generation request not found")
+    return progress
 
 
 @router.post("/preview", response_model=PreviewResumeResponse)

@@ -230,7 +230,7 @@ def benchmark_resume_quality() -> dict[str, float]:
     golden = {
         **shared,
         "work_experience": '<section id="work-experience"><div class="entry"><span class="entry-name">事实公司</span><span class="entry-title">算法工程师</span><span class="entry-year">2023-2025</span><ul><li><strong>核心职责：</strong>负责模型训练与部署</li></ul></div></section>',
-        "projects": '<section id="side-projects"><div class="entry"><span class="entry-name">事实项目</span><ul><li><strong>项目背景：</strong>面向业务检索场景建设服务</li><li><strong>项目成果：</strong>完成检索服务建设</li></ul></div></section>',
+        "projects": '<section id="side-projects"><div class="entry"><span class="entry-name">事实项目</span><ul><li><strong>项目背景：</strong>面向业务检索场景建设服务</li><li><strong>核心职责：</strong>负责检索服务的设计与交付</li><li><strong>技术实现：</strong>使用 Python 完成检索服务建设</li><li><strong>验证交付：</strong>按照既定要求完成服务验证</li><li><strong>项目成果：</strong>完成检索服务建设</li></ul></div></section>',
     }
     generic = {
         **shared,
@@ -254,6 +254,10 @@ def benchmark_resume_quality() -> dict[str, float]:
         "golden_score": golden_evaluation.score,
         "generic_score": generic_evaluation.score,
         "golden_score_margin": round(golden_evaluation.score - generic_evaluation.score, 3),
+        "project_required_fields_percent": round(
+            golden_evaluation.breakdown["project_required_fields"] / 12.0 * 100,
+            2,
+        ),
         "hard_fact_correction_percent": round(sum(checks) / len(checks) * 100, 2),
         "rich_markup_retention_percent": 100.0 if 'class="kept"' in protected_html else 0.0,
         "successful_candidate_count": float(len(generated)),

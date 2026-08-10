@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import html as html_lib
 import logging
+import re
+import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -23,6 +25,47 @@ OUTPUT_FOLDER = DATA_FOLDER / "output"
 STYLES_DIR = Path("src/libs/resume_and_cover_builder/resume_style")
 
 OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
+_GENERATION_PROGRESS: dict[str, dict[str, Any]] = {}
+_GENERATION_PROGRESS_LOCK = threading.Lock()
+
+
+def update_generation_progress(
+    request_id: str,
+    progress: int,
+    stage: str,
+    detail: str = "",
+    *,
+    status: str = "running",
+) -> None:
+    """Record a real generation milestone for frontend polling."""
+
+    if not request_id:
+        return
+    now = time.time()
+    with _GENERATION_PROGRESS_LOCK:
+        stale = [key for key, value in _GENERATION_PROGRESS.items() if now - value.get("updated_at", now) > 3600]
+        for key in stale:
+            _GENERATION_PROGRESS.pop(key, None)
+        current = _GENERATION_PROGRESS.get(request_id, {})
+        events = list(current.get("events", []))
+        event = {"progress": max(0, min(100, int(progress))), "stage": stage, "detail": detail}
+        if not events or events[-1] != event:
+            events.append(event)
+        _GENERATION_PROGRESS[request_id] = {
+            **event,
+            "status": status,
+            "updated_at": now,
+            "events": events[-40:],
+        }
+
+
+def get_generation_progress(request_id: str) -> dict[str, Any] | None:
+    with _GENERATION_PROGRESS_LOCK:
+        value = _GENERATION_PROGRESS.get(request_id)
+        if value is None:
+            return None
+        return {**value, "events": [dict(event) for event in value.get("events", [])]}
 
 
 def cleanup_public_artifacts(max_age_seconds: int = 3600) -> None:
@@ -317,6 +360,19 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html_content, "html.parser")
+    nested_documents = list(soup.body.find_all("html")) if soup.body is not None else []
+    if nested_documents:
+        soup = BeautifulSoup(str(nested_documents[-1]), "html.parser")
+    # Older generators could also place a <body> fragment inside the template body.
+    while soup.body is not None:
+        nested_body = soup.body.find("body")
+        if nested_body is None:
+            break
+        outer_body = soup.body
+        children = list(nested_body.contents)
+        outer_body.clear()
+        for child in children:
+            outer_body.append(child.extract())
     editor_style = soup.find(id="buping-editor-style")
     if editor_style:
         editor_style.decompose()
@@ -332,6 +388,9 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     viewport_fit = soup.find(id="buping-viewport-fit")
     if viewport_fit:
         viewport_fit.decompose()
+    target_page_layout = soup.find(id="buping-target-page-layout")
+    if target_page_layout:
+        target_page_layout.decompose()
     for empty_section in soup.select('[data-buping-all-entries-removed="true"]'):
         empty_section.attrs.pop("data-buping-all-entries-removed", None)
         empty_section.attrs["data-buping-library-empty-section"] = "true"
@@ -364,6 +423,501 @@ def render_html_to_pdf_bytes(html_content: str) -> bytes:
             driver.quit()
         except Exception:
             pass
+
+
+def count_pdf_pages(pdf_data: bytes) -> int:
+    """Count actual PDF pages using the project's existing pdfminer dependency."""
+
+    from io import BytesIO
+    from pdfminer.pdfpage import PDFPage
+
+    return sum(1 for _ in PDFPage.get_pages(BytesIO(pdf_data)))
+
+
+def apply_target_page_layout(
+    html_content: str, spacing_factor: float, *, stretch_pages: int = 0
+) -> str:
+    """Fit density using the editor's line-height and module-spacing controls."""
+
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(_sanitize_edited_resume_html(html_content), "html.parser")
+    existing = soup.find("style", id="buping-target-page-layout")
+    if existing is not None:
+        existing.decompose()
+    saved_controls = soup.find("style", id="buping-layout-controls")
+    style_text = "\n".join(style.get_text() for style in soup.find_all("style"))
+    saved_line_height = float(saved_controls.get("data-line-height", 0) or 0) if saved_controls else 0
+    saved_module_spacing = float(saved_controls.get("data-module-spacing", 0) or 0) if saved_controls else 0
+    if saved_line_height <= 0:
+        match = re.search(r"body\s*\{[^}]*line-height:\s*([0-9.]+)", style_text, re.DOTALL)
+        saved_line_height = float(match.group(1)) if match else 1.32
+    if saved_module_spacing <= 0:
+        match = re.search(r"\.entry\s*\{[^}]*margin-bottom:\s*([0-9.]+)px", style_text, re.DOTALL)
+        saved_module_spacing = float(match.group(1)) if match else 8.0
+    base_line_height = max(1.1, min(1.7, saved_line_height))
+    base_module_spacing = max(2.0, min(20.0, saved_module_spacing))
+    if saved_controls is not None:
+        saved_controls.decompose()
+    if soup.head is None:
+        html_tag = soup.html or soup.new_tag("html")
+        if soup.html is None:
+            html_tag.extend(list(soup.contents))
+            soup.append(html_tag)
+        head = soup.new_tag("head")
+        html_tag.insert(0, head)
+    spacing_factor = max(0.0, min(1.35, spacing_factor))
+    if spacing_factor <= 1.0:
+        line_height = 1.1 + (base_line_height - 1.1) * spacing_factor
+        module_spacing = 2.0 + (base_module_spacing - 2.0) * spacing_factor
+    else:
+        expansion = (spacing_factor - 1.0) / 0.35
+        line_height = base_line_height + (1.7 - base_line_height) * expansion
+        module_spacing = base_module_spacing + (20.0 - base_module_spacing) * expansion
+    line_height = max(1.1, min(1.7, line_height))
+    module_spacing = max(2.0, min(20.0, module_spacing))
+    list_spacing = max(1, round(module_spacing / 4))
+    title_top = max(4, module_spacing + 2)
+    title_bottom = max(2, round(module_spacing / 2))
+    entry_padding_y = max(4, round(module_spacing * 0.75))
+    header_spacing = max(6, module_spacing + 2)
+
+    controls = soup.new_tag("style", id="buping-layout-controls")
+    controls["data-line-height"] = f"{line_height:.4f}"
+    controls["data-module-spacing"] = f"{module_spacing:.4f}"
+    controls.string = f"""
+body {{ line-height: {line_height:.4f} !important; }}
+header {{ margin-bottom: {header_spacing:.2f}px !important; }}
+h2 {{ margin-top: {title_top:.2f}px !important; margin-bottom: {title_bottom:.2f}px !important; }}
+.entry, .resume-card {{
+  margin-bottom: {module_spacing:.2f}px !important;
+  padding-top: {entry_padding_y:.2f}px !important;
+  padding-bottom: {entry_padding_y:.2f}px !important;
+}}
+.compact-list, .stack-list, .inline-list {{
+  margin-top: {list_spacing}px !important;
+  margin-bottom: {list_spacing}px !important;
+}}
+.compact-list li, .stack-list li, .inline-list li {{ margin-bottom: {list_spacing}px !important; }}
+"""
+    soup.head.append(controls)
+
+    style = soup.new_tag("style", id="buping-target-page-layout")
+    stretch_css = ""
+    if stretch_pages:
+        logical_height = stretch_pages * 1123.0
+        stretch_css = f"""
+:root > body {{ min-height: {logical_height:.2f}px !important; display: flex !important;
+  flex-direction: column !important; justify-content: space-between !important; }}
+"""
+    style.string = f"""
+:root > body {{
+  --buping-spacing-factor: {spacing_factor:.5f};
+  --buping-line-height: {line_height:.4f};
+  --buping-module-spacing: {module_spacing:.4f}px;
+  width: auto !important;
+  max-width: 700px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  box-sizing: border-box !important;
+}}
+{stretch_css}
+"""
+    soup.head.append(style)
+    return str(soup)
+
+
+def _strip_html_code_fence(value: str) -> str:
+    value = value.strip()
+    match = re.fullmatch(r"```(?:html)?\s*(.*?)\s*```", value, flags=re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else value
+
+
+def _resume_structure_counts(html_content: str) -> dict[str, int]:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    counts = {
+        "header": len(soup.select("header")),
+        "entries": len(soup.select(".entry")),
+        "bullets": len(soup.select("li")),
+    }
+    for section_id in _REGENERATABLE_SECTION_IDS - {"header"}:
+        counts[section_id] = len(soup.select(f"#{section_id}"))
+    return counts
+
+
+def _resume_visible_text_length(html_content: str) -> int:
+    from bs4 import BeautifulSoup
+
+    return len(BeautifulSoup(html_content, "html.parser").get_text(" ", strip=True))
+
+
+def condense_resume_html_with_llm(
+    html_content: str,
+    resume: Any,
+    api_key: str,
+    *,
+    language: str = "zh",
+    target_pages: int = 1,
+    editable_targets: list[str] | None = None,
+    target_text_ratio: float = 0.7,
+) -> tuple[str, bool]:
+    """Shorten descriptive copy while preserving DOM structure and hard facts."""
+
+    from bs4 import BeautifulSoup
+    from src.libs.ai_engine.harness import protect_hard_facts_in_place
+    from src.libs.resume_and_cover_builder.llm.llm_generate_resume import _create_gateway_chat_model
+
+    original = BeautifulSoup(_sanitize_edited_resume_html(html_content), "html.parser")
+    original_body = original.body
+    original_main = original.find("main")
+    if original_body is None or original_main is None:
+        return html_content, True
+    prompt_language = "Chinese" if language.startswith("zh") else "English"
+    target_text_ratio = max(0.25, min(0.82, target_text_ratio))
+    target_density = f"{round(target_text_ratio * 100)}%-{round(min(0.9, target_text_ratio + 0.08) * 100)}%"
+    current_visible_chars = len(original_main.get_text(" ", strip=True))
+    maximum_visible_chars = max(600, round(current_visible_chars * target_text_ratio))
+    target_rule = (
+        f"Only edit these selected targets: {', '.join(editable_targets)}."
+        if editable_targets
+        else "All descriptive modules may be shortened."
+    )
+    prompt = f"""You are compressing a resume that still exceeds its requested {target_pages}-page PDF target after spacing was minimized.
+Return only the inner HTML of <main>, in {prompt_language}. Do not return Markdown fences.
+
+Rules:
+1. Keep every section, experience, project, education entry, list item, project name, employer, school, title, date, location, contact detail and number.
+2. Keep the existing HTML structure, ids, classes, order and formatting exactly; edit text inside descriptive paragraphs/list items only.
+3. Shorten repetition and low-value modifiers. Preserve action, method, result and meaningful evidence.
+4. Never merge, delete, rename or exchange entries. Never invent information.
+5. Aim for roughly {target_density} of the current descriptive text length. Prefer concise clauses over removing any fact or bullet.
+6. {target_rule}
+7. Hard limit: the returned visible text inside <main> must not exceed {maximum_visible_chars} characters (currently {current_visible_chars}).
+
+CURRENT MAIN HTML:
+{original_main.decode_contents()}
+"""
+    client = _create_gateway_chat_model(api_key, skill="resume_layout_compactor", max_output_tokens=8000)
+    response = client.invoke([{"role": "user", "content": prompt}])
+    candidate_text = _strip_html_code_fence(str(getattr(response, "content", response)))
+    candidate_fragment = BeautifulSoup(candidate_text, "html.parser")
+    candidate_main = candidate_fragment.find("main") or candidate_fragment
+
+    replacement_doc = BeautifulSoup(str(original), "html.parser")
+    replacement_main = replacement_doc.find("main")
+    if replacement_main is None:
+        return html_content, True
+    replacement_main.clear()
+    for child in list(candidate_main.contents):
+        replacement_main.append(child.extract())
+    if editable_targets:
+        # Partial regeneration locks every unselected node. Reuse the same
+        # deterministic DOM merge so layout compaction cannot bypass that lock.
+        replacement_doc = BeautifulSoup(
+            merge_regenerated_resume_html(str(original), str(replacement_doc), editable_targets),
+            "html.parser",
+        )
+
+    section_map = {
+        "header": replacement_doc.find("header"),
+        "education": replacement_doc.find(id="education"),
+        "work_experience": replacement_doc.find(id="work-experience"),
+        "projects": replacement_doc.find(id="side-projects"),
+        "achievements": replacement_doc.find(id="achievements"),
+        "certifications": replacement_doc.find(id="certifications"),
+    }
+    protected = protect_hard_facts_in_place(
+        {key: str(node) if node is not None else "" for key, node in section_map.items()},
+        resume,
+        language=language,
+    )
+    for key, old_node in section_map.items():
+        corrected = protected.sections.get(key, "")
+        corrected_node = BeautifulSoup(corrected, "html.parser").find() if corrected else None
+        if old_node is not None and corrected_node is not None:
+            old_node.replace_with(corrected_node)
+
+    condensed = str(replacement_doc)
+    before_counts = _resume_structure_counts(str(original))
+    after_counts = _resume_structure_counts(condensed)
+    structure_lost = any(after_counts.get(key, 0) < value for key, value in before_counts.items())
+    before_text = len(original.get_text(" ", strip=True))
+    after_text = len(replacement_doc.get_text(" ", strip=True))
+    completeness_impacted = structure_lost or (before_text > 0 and after_text / before_text < 0.68)
+    if structure_lost:
+        # Missing entries or bullets are never accepted merely to hit a page target.
+        return str(original), True
+    return condensed, completeness_impacted
+
+
+def fit_resume_to_target_pages(
+    html_content: str,
+    baseline_pdf: bytes,
+    target_pages: int,
+    *,
+    renderer: Any | None = None,
+    content_compactor: Callable[[str, float], tuple[str, bool]] | None = None,
+    progress_callback: Callable[[int, str, str], None] | None = None,
+) -> tuple[str, bytes, int, float, list[str]]:
+    """Fit generated content to exactly one or two PDF pages without deleting text."""
+
+    if target_pages not in {1, 2}:
+        raise ValueError("target_pages must be 1 or 2")
+    baseline_pages = count_pdf_pages(baseline_pdf)
+    if progress_callback:
+        progress_callback(79, "pdf_page_analysis", f"Baseline PDF has {baseline_pages} page(s)")
+    warnings: list[str] = []
+    if target_pages == 1 and baseline_pages > 1:
+        warnings.append("target_one_page_content_dense")
+    elif target_pages == 2 and baseline_pages < 2:
+        warnings.append("target_two_pages_content_short")
+
+    owned_driver = None
+    if renderer is None:
+        from src.utils.chrome_utils import HTML_to_PDF
+        from src.utils.chrome_utils import init_browser
+
+        owned_driver = init_browser()
+
+        def renderer(candidate_html: str) -> bytes:
+            return base64.b64decode(HTML_to_PDF(candidate_html, owned_driver))
+
+    try:
+        best_html = apply_target_page_layout(html_content, 1.0)
+        best_pdf = baseline_pdf
+        best_pages = baseline_pages
+        best_scale = 1.0
+
+        source_html = html_content
+        low, high = (0.0, 1.0) if baseline_pages > target_pages else (1.0, 1.35)
+        low_html = apply_target_page_layout(source_html, low)
+        low_pdf = renderer(low_html)
+        low_pages = count_pdf_pages(low_pdf)
+        if low_pages <= target_pages:
+            best_html, best_pdf, best_pages, best_scale = low_html, low_pdf, low_pages, low
+        if progress_callback:
+            progress_callback(81, "pdf_layout_fit", f"Minimum spacing rendered: {low_pages} page(s)")
+
+        # Spacing has a deliberately narrow range. If it cannot fit dense
+        # content, shorten descriptions with the LLM instead of shrinking text.
+        if low_pages > target_pages and content_compactor is not None:
+            original_text_length = _resume_visible_text_length(source_html)
+            compact_pages = low_pages
+            for compaction_round in range(1, 4):
+                before_text_length = _resume_visible_text_length(source_html)
+                if progress_callback:
+                    progress_callback(
+                        82,
+                        "content_compaction",
+                        f"Content round {compaction_round}/3: {compact_pages} page(s) → {target_pages}",
+                    )
+                try:
+                    requested_ratio = max(
+                        0.25,
+                        min(0.80, (target_pages / compact_pages) * 0.82),
+                    )
+                    candidate_html, completeness_impacted = content_compactor(
+                        source_html, requested_ratio
+                    )
+                    after_text_length = _resume_visible_text_length(candidate_html)
+                    if completeness_impacted:
+                        warnings.append("content_completeness_impacted")
+                    source_html = candidate_html
+                except Exception:
+                    logger.exception("Resume content compaction failed; keeping the complete generated copy")
+                    warnings.append("content_compaction_failed")
+                    break
+
+                compact_html = apply_target_page_layout(source_html, low)
+                compact_pdf = renderer(compact_html)
+                compact_pages = count_pdf_pages(compact_pdf)
+                best_html, best_pdf, best_pages, best_scale = compact_html, compact_pdf, compact_pages, low
+                logger.info(
+                    "Resume compaction round %s: visible chars %s -> %s, pages=%s, target=%s",
+                    compaction_round,
+                    before_text_length,
+                    after_text_length,
+                    compact_pages,
+                    target_pages,
+                )
+                if compact_pages <= target_pages:
+                    break
+                if after_text_length >= before_text_length * 0.97:
+                    warnings.append("content_compaction_insufficient")
+                    break
+
+            final_text_length = _resume_visible_text_length(source_html)
+            if original_text_length and final_text_length / original_text_length < 0.68:
+                warnings.append("content_completeness_impacted")
+            high = 1.0
+
+        for pass_index in range(6):
+            spacing = (low + high) / 2
+            candidate_html = apply_target_page_layout(source_html, spacing)
+            candidate_pdf = renderer(candidate_html)
+            candidate_pages = count_pdf_pages(candidate_pdf)
+            if progress_callback:
+                progress_callback(
+                    83 + pass_index * 2,
+                    "pdf_layout_fit",
+                    f"Spacing pass {pass_index + 1}/6: {candidate_pages} page(s), factor {spacing:.3f}",
+                )
+            if candidate_pages <= target_pages:
+                best_html, best_pdf = candidate_html, candidate_pdf
+                best_pages, best_scale = candidate_pages, spacing
+                low = spacing
+            else:
+                high = spacing
+
+        if best_pages < target_pages:
+            best_html = apply_target_page_layout(source_html, best_scale, stretch_pages=target_pages)
+            best_pdf = renderer(best_html)
+            best_pages = count_pdf_pages(best_pdf)
+            if progress_callback:
+                progress_callback(95, "pdf_layout_stretch", f"Expanded sparse content to {target_pages} pages")
+        if best_pages != target_pages:
+            warnings.append("target_page_fit_limit")
+        return best_html, best_pdf, best_pages, round(best_scale, 4), list(dict.fromkeys(warnings))
+    finally:
+        if owned_driver is not None:
+            try:
+                owned_driver.quit()
+            except Exception:
+                pass
+
+
+_REGENERATABLE_SECTION_IDS = {
+    "header", "education", "work-experience", "side-projects", "achievements",
+    "certifications", "technical-stack", "languages-other", "skills-languages",
+}
+_REGENERATABLE_ENTRY_SECTION_IDS = {"education", "work-experience", "side-projects"}
+_REGENERATION_TARGET = re.compile(r"^(section|entry):([a-z][a-z0-9-]*)(?::(\d+))?$")
+
+
+def validate_regenerate_targets(targets: list[str]) -> list[str]:
+    """Normalize and validate client-selected resume modules."""
+
+    normalized = list(dict.fromkeys(target.strip() for target in targets if target.strip()))
+    if not normalized:
+        raise ValueError("Partial regeneration requires at least one selected module.")
+    for target in normalized:
+        match = _REGENERATION_TARGET.fullmatch(target)
+        if not match:
+            raise ValueError(f"Invalid regeneration target: {target}")
+        kind, section_id, index = match.groups()
+        if section_id not in _REGENERATABLE_SECTION_IDS:
+            raise ValueError(f"Unsupported resume section: {section_id}")
+        if kind == "section" and index is not None:
+            raise ValueError(f"Section target cannot include an entry index: {target}")
+        if kind == "entry":
+            if section_id not in _REGENERATABLE_ENTRY_SECTION_IDS or index is None:
+                raise ValueError(f"Unsupported resume entry target: {target}")
+    return normalized
+
+
+def merge_regenerated_resume_html(base_html: str, generated_html: str, targets: list[str]) -> str:
+    """Replace only selected modules while preserving every unselected base node."""
+
+    from bs4 import BeautifulSoup
+
+    if not base_html.strip():
+        raise ValueError("Partial regeneration requires a base resume version.")
+    normalized_targets = validate_regenerate_targets(targets)
+    base_soup = BeautifulSoup(_sanitize_edited_resume_html(base_html), "html.parser")
+    generated_soup = BeautifulSoup(generated_html, "html.parser")
+
+    section_targets = {
+        target.split(":", 1)[1]
+        for target in normalized_targets
+        if target.startswith("section:")
+    }
+    for section_id in section_targets:
+        old_node = base_soup.find("header") if section_id == "header" else base_soup.find(id=section_id)
+        new_node = generated_soup.find("header") if section_id == "header" else generated_soup.find(id=section_id)
+        if new_node is None:
+            raise ValueError(f"Generated resume is missing selected section: {section_id}")
+        replacement = new_node.extract()
+        if old_node is not None:
+            old_node.replace_with(replacement)
+        elif base_soup.body is not None:
+            base_soup.body.append(replacement)
+        else:
+            raise ValueError("Base resume HTML has no body for inserting selected section.")
+
+    for target in normalized_targets:
+        if not target.startswith("entry:"):
+            continue
+        _, section_id, raw_index = target.split(":", 2)
+        if section_id in section_targets:
+            continue
+        index = int(raw_index)
+        old_section = base_soup.find(id=section_id)
+        new_section = generated_soup.find(id=section_id)
+        if old_section is None or new_section is None:
+            raise ValueError(f"Resume is missing selected entry section: {section_id}")
+        old_entries = list(old_section.select(".entry"))
+        new_entries = list(new_section.select(".entry"))
+        if index >= len(old_entries) or index >= len(new_entries):
+            raise ValueError(f"Selected resume entry no longer exists: {target}")
+        old_entries[index].replace_with(new_entries[index].extract())
+
+    return str(base_soup)
+
+
+def build_preserved_resume_context(base_html: str, targets: list[str], max_chars: int = 40_000) -> str:
+    """Build LLM context from locked content plus the current HTML format."""
+
+    from bs4 import BeautifulSoup
+
+    normalized_targets = validate_regenerate_targets(targets)
+    soup = BeautifulSoup(_sanitize_edited_resume_html(base_html), "html.parser")
+    for unsafe in soup.select("script, iframe, object, embed"):
+        unsafe.decompose()
+
+    style_reference = "\n".join(str(style) for style in soup.select("head style"))
+    section_targets = {
+        target.split(":", 1)[1]
+        for target in normalized_targets
+        if target.startswith("section:")
+    }
+    for section_id in section_targets:
+        node = soup.find("header") if section_id == "header" else soup.find(id=section_id)
+        if node is not None:
+            node.decompose()
+    for target in normalized_targets:
+        if not target.startswith("entry:"):
+            continue
+        _, section_id, raw_index = target.split(":", 2)
+        if section_id in section_targets:
+            continue
+        section = soup.find(id=section_id)
+        entries = list(section.select(".entry")) if section is not None else []
+        index = int(raw_index)
+        if index < len(entries):
+            entries[index].decompose()
+
+    body_reference = str(soup.body) if soup.body is not None else str(soup)
+    # Keep both parts represented even when a template carries a very large stylesheet.
+    # Formatting is useful context, but locked facts must never be crowded out by CSS.
+    wrapper_allowance = 180
+    available_chars = max(0, max_chars - wrapper_allowance)
+    style_budget = min(12_000, available_chars // 3)
+    style_reference = style_reference[:style_budget]
+    body_budget = max(0, available_chars - len(style_reference))
+    body_reference = body_reference[:body_budget]
+    context = (
+        "<PRESERVED_RESUME_CONTEXT>\n"
+        "<FORMAT_REFERENCE>\n"
+        f"{style_reference}\n"
+        "</FORMAT_REFERENCE>\n"
+        "<LOCKED_CONTENT>\n"
+        f"{body_reference}\n"
+        "</LOCKED_CONTENT>\n"
+        "</PRESERVED_RESUME_CONTEXT>"
+    )
+    return context[:max_chars]
 
 
 def convert_html_to_pdf(
@@ -634,8 +1188,17 @@ def generate_resume(
     llm_protocol: str | None = None,
     model_name: str = "",
     resume_content: str = "",
+    generation_mode: str = "new",
+    base_html: str = "",
+    regenerate_targets: list[str] | None = None,
+    target_pages: int = 1,
+    request_id: str = "",
 ) -> dict[str, Any]:
     """Generate a resume PDF. Returns {path, filename, status}."""
+    report = lambda progress, stage, detail="": update_generation_progress(
+        request_id, progress, stage, detail
+    )
+    report(2, "request_validation", "Validating generation options")
     from src.libs.resume_and_cover_builder import ResumeFacade, ResumeGenerator, StyleManager
     from src.resume_schemas.resume import Resume
     from src.utils.chrome_utils import init_browser
@@ -644,6 +1207,23 @@ def generate_resume(
 
 
     from backend.services.config_service import PUBLIC_DEMO_MODE
+    if target_pages not in {1, 2}:
+        raise ValueError("target_pages must be 1 or 2")
+    if generation_mode not in {"new", "partial"}:
+        raise ValueError(f"Unsupported generation mode: {generation_mode}")
+    selected_targets = (
+        validate_regenerate_targets(regenerate_targets or [])
+        if generation_mode == "partial"
+        else []
+    )
+    if generation_mode == "partial" and not base_html.strip():
+        raise ValueError("Partial regeneration requires the current resume version.")
+    preserved_context = (
+        build_preserved_resume_context(base_html, selected_targets)
+        if generation_mode == "partial"
+        else ""
+    )
+    report(6, "generation_mode", f"Mode={generation_mode}, target={target_pages} page(s)")
     if PUBLIC_DEMO_MODE and (not api_key or api_key.startswith("sk-your-")):
         raise ValueError("Public demo requires your own API key for each AI request.")
 
@@ -725,6 +1305,7 @@ def generate_resume(
     except AttributeError:
         pass
     root_config.LLM_PROTOCOL = llm_protocol
+    report(10, "llm_configuration", "Resolved model provider and credentials")
 
     if not api_key or api_key.startswith("sk-your-"):
         raise ValueError(
@@ -740,6 +1321,7 @@ def generate_resume(
         resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
         with open(resume_file, "r", encoding="utf-8") as f:
             plain_text_resume = f.read()
+    report(15, "resume_loading", "Loaded source resume content")
     from backend.services.resume_validation import validate_resume_yaml
     validation = validate_resume_yaml(plain_text_resume)
     if not validation["valid"]:
@@ -748,6 +1330,8 @@ def generate_resume(
         )
         raise ValueError(f"简历关键字段未填写完整，无法生成：{missing}")
 
+    report(20, "resume_validation", "Resume schema and required facts validated")
+
     # Setup style
     style_manager = StyleManager()
     available_styles = style_manager.get_styles()
@@ -755,9 +1339,13 @@ def generate_resume(
         style_manager.set_selected_style(style_name)
     elif available_styles:
         style_manager.set_selected_style(list(available_styles.keys())[0])
+    report(24, "style_selection", f"Selected resume style: {style_name or 'default'}")
 
     # Generate
     resume_generator = ResumeGenerator()
+    resume_generator.set_regeneration_context(preserved_context, selected_targets)
+    resume_generator.set_target_pages(target_pages)
+    resume_generator.set_progress_callback(report)
     resume_object = Resume(plain_text_resume)
     driver = init_browser()
     resume_generator.set_resume_object(resume_object)
@@ -772,10 +1360,12 @@ def generate_resume(
         system_language=system_language,
     )
     resume_facade.set_driver(driver)
+    resume_facade.set_progress_callback(report)
 
     try:
         is_tailored = job_description and job_description.strip()
         if is_tailored:
+            report(27, "job_tailoring", "Preparing job-tailored generation")
             style_path = style_manager.get_style_path()
             # Pass JD text directly — avoids the need to pre-populate self.job
             # via link_to_job() which would require URL scraping.
@@ -786,10 +1376,40 @@ def generate_resume(
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"resume_tailored_{timestamp}_{suggested_name}.pdf"
         else:
+            report(27, "base_generation", "Preparing resume generation")
             result, html_b64 = resume_facade.create_resume_pdf()
             pdf_data = base64.b64decode(result)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"resume_{timestamp}.pdf"
+
+        generated_html = base64.b64decode(html_b64).decode("utf-8")
+        report(77, "baseline_pdf_ready", "Generated baseline HTML and PDF")
+        if generation_mode == "partial":
+            final_html = merge_regenerated_resume_html(base_html, generated_html, selected_targets)
+            pdf_data = render_html_to_pdf_bytes(final_html)
+            filename = filename.replace("resume_", "resume_partial_", 1)
+            report(78, "partial_merge", "Merged regenerated modules with retained content")
+        else:
+            final_html = generated_html
+
+        def compact_for_layout(candidate_html: str, target_text_ratio: float) -> tuple[str, bool]:
+            return condense_resume_html_with_llm(
+                candidate_html,
+                resume_object,
+                api_key,
+                language=resume_language,
+                target_pages=target_pages,
+                editable_targets=selected_targets if generation_mode == "partial" else None,
+                target_text_ratio=target_text_ratio,
+            )
+
+        final_html, pdf_data, actual_pages, layout_scale, layout_warnings = fit_resume_to_target_pages(
+            final_html,
+            pdf_data,
+            target_pages,
+            content_compactor=compact_for_layout,
+            progress_callback=report,
+        )
 
         if PUBLIC_DEMO_MODE:
             cleanup_public_artifacts()
@@ -797,6 +1417,7 @@ def generate_resume(
         output_path = OUTPUT_FOLDER / filename
         with open(output_path, "wb") as f:
             f.write(pdf_data)
+        report(97, "file_save", "Saved final PDF")
 
         if not PUBLIC_DEMO_MODE:
             with open(OUTPUT_FOLDER / "resume_base.pdf", "wb") as f:
@@ -806,15 +1427,25 @@ def generate_resume(
         html_filename = filename.replace(".pdf", ".html")
         html_path = OUTPUT_FOLDER / html_filename
         with open(html_path, "w", encoding="utf-8") as f:
-            f.write(base64.b64decode(html_b64).decode("utf-8"))
+            f.write(final_html)
+        report(99, "html_save", "Saved editable HTML version")
 
-        return {
+        response = {
             "path": str(output_path),
             "filename": filename,
             "html_filename": html_filename,
             "html_path": str(html_path),
             "status": "success",
+            "generation_mode": generation_mode,
+            "regenerated_targets": selected_targets,
+            "target_pages": target_pages,
+            "actual_pages": actual_pages,
+            "layout_warnings": layout_warnings,
+            "layout_scale": layout_scale,
+            "request_id": request_id,
         }
+        update_generation_progress(request_id, 100, "completed", "Resume generation completed", status="completed")
+        return response
     finally:
         try:
             driver.quit()

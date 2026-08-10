@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -31,9 +32,14 @@ GOLDEN_RESUME_WRITING_GUIDE = r"""
 - 示例结构：<li><strong>技术积累：</strong>[沉淀的文档、工具、方法或可复用资产]</li>
 
 3. 项目经历叙事结构
-- 每个项目输出 2-4 条；每条以 <strong>主题标签：</strong> 开头。
-- 根据事实从这些标签中选择：项目背景、项目概述、核心职责、技术实现、技术流程、协作优化、问题解决、项目成果。
-- 第一条交代项目背景或目标，中间条目说明本人贡献和技术路径，最后一条在事实允许时说明成果。
+- 每个项目建议输出 4-5 条；每条以 <strong>主题标签：</strong> 开头，下列五个必填维度必须全部覆盖。需要合并相关维度时，仍须分别保留对应的 <strong>标签：</strong>，以便检查结构完整性：
+  1) 项目背景/目标：项目面向什么场景、服务什么对象、解决什么问题；
+  2) 个人职责：本人承担的角色、模块边界和交付范围，禁止把团队工作全部写成个人成果；
+  3) 技术实现：采用的方案、技术路径、关键流程，以及事实能够支持的选型依据；
+  4) 关键难点/验证约束：真实遇到的问题、约束及解决办法；输入未提供明确故障时，用真实验证标准或交付约束替代，不得编造难点；
+  5) 项目成果：已完成的交付、上线、验收或事实支持的效果；没有量化数据时写具体交付物和验证结果，严禁补造指标。
+- 根据事实从这些标签中选择：项目背景、项目概述、项目目标、核心职责、个人职责、方案设计、技术实现、技术流程、关键难点、问题解决、性能优化、协作优化、验证交付、项目成果、交付成果。
+- 推荐顺序是“为什么做 → 我负责什么 → 我怎么做 → 解决/验证了什么 → 最终得到什么”，描述主体必须是个人贡献，而不是大段产品介绍。
 - entry-tech 只列输入能够支持的核心技术，不为了匹配职位描述虚构技术栈。
 
 4. 信息密度
@@ -47,8 +53,16 @@ WORK_LABELS = (
     "核心职责", "项目管理", "技术积累", "性能优化", "问题解决", "协作交付", "项目成果",
 )
 PROJECT_LABELS = (
-    "项目背景", "项目概述", "核心职责", "技术实现", "技术流程", "协作优化", "问题解决", "项目成果",
+    "项目背景", "项目概述", "项目目标", "核心职责", "个人职责", "方案设计", "技术实现", "技术流程",
+    "关键难点", "问题解决", "性能优化", "协作优化", "验证交付", "项目成果", "交付成果",
 )
+PROJECT_REQUIRED_DIMENSIONS = {
+    "项目背景/目标": ("项目背景", "项目概述", "项目目标"),
+    "个人职责": ("核心职责", "个人职责"),
+    "技术实现": ("方案设计", "技术实现", "技术流程"),
+    "难点/验证": ("关键难点", "问题解决", "性能优化", "协作优化", "验证交付"),
+    "项目成果": ("项目成果", "交付成果"),
+}
 GENERIC_HYPE = (
     "深度赋能", "现象级", "极致", "颠覆", "遥遥领先", "显著提升简历通过率", "市场高度认可",
     "全方位赋能", "行业领先", "绝对领先",
@@ -62,6 +76,7 @@ class CandidateEvaluation:
     sections: dict[str, str]
     score: float
     breakdown: dict[str, float] = field(default_factory=dict)
+    project_structure_issues: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,6 +174,62 @@ def _new_numeric_or_contact_claims(candidate: str, source: str) -> list[str]:
     return claims
 
 
+def _item_label(item: Any) -> str:
+    strong_labels = item.find_all("strong")
+    if strong_labels:
+        return " ".join(node.get_text(" ", strip=True) for node in strong_labels)
+    return item.get_text(" ", strip=True).split("：", 1)[0]
+
+
+def _normalized_anchor(value: Any) -> str:
+    """Normalize harmless presentation differences without weakening identity matching."""
+
+    text = unicodedata.normalize("NFKC", _raw(value)).casefold()
+    return "".join(character for character in text if character.isalnum())
+
+
+def _entry_matches_anchors(entry: Any, anchors: list[str]) -> bool:
+    entry_text = _normalized_anchor(entry.get_text(" ", strip=True))
+    return bool(anchors) and all(anchor in entry_text for anchor in anchors)
+
+
+def _project_binding_coverage(soup: BeautifulSoup, projects: Iterable[Any]) -> float:
+    sources = [_mapping(item) for item in projects]
+    if not sources:
+        return 1.0
+    unused = list(soup.select("#side-projects .entry"))
+    matched = 0
+    for source in sources:
+        anchor = _normalized_anchor(source.get("name"))
+        entry = next((item for item in unused if _entry_matches_anchors(item, [anchor])), None)
+        if entry is not None:
+            matched += 1
+            unused.remove(entry)
+    return matched / len(sources)
+
+
+def _project_required_fields(soup: BeautifulSoup, expected_count: int) -> tuple[float, tuple[str, ...]]:
+    """Measure mandatory narrative dimensions without rewriting candidate HTML."""
+
+    if expected_count <= 0:
+        return 1.0, ()
+    entries = list(soup.select("#side-projects .entry"))
+    found = 0
+    required = expected_count * len(PROJECT_REQUIRED_DIMENSIONS)
+    issues: list[str] = []
+    for index in range(expected_count):
+        if index >= len(entries):
+            issues.append(f"projects.{index}: missing project entry")
+            continue
+        labels = [_item_label(item) for item in entries[index].select("li")]
+        for dimension, accepted_labels in PROJECT_REQUIRED_DIMENSIONS.items():
+            if any(any(label in item_label for label in accepted_labels) for item_label in labels):
+                found += 1
+            else:
+                issues.append(f"projects.{index}: missing {dimension}")
+    return found / max(1, required), tuple(issues)
+
+
 def evaluate_resume_candidate(sections: Mapping[str, str], resume: Any) -> CandidateEvaluation:
     """Score a candidate locally against the golden sample's writing contract."""
 
@@ -179,11 +250,14 @@ def evaluate_resume_candidate(sections: Mapping[str, str], resume: Any) -> Candi
     project_items = soup.select("#side-projects li")
     themed = 0
     for item, labels in [*((item, WORK_LABELS) for item in work_items), *((item, PROJECT_LABELS) for item in project_items)]:
-        strong = item.find("strong")
-        label_text = strong.get_text(" ", strip=True) if strong else item.get_text(" ", strip=True).split("：", 1)[0]
+        label_text = _item_label(item)
         themed += any(label in label_text for label in labels)
     theme_total = len(work_items) + len(project_items)
-    narrative = 24.0 * themed / max(1, theme_total)
+    narrative = 18.0 * themed / max(1, theme_total)
+
+    project_coverage, project_issues = _project_required_fields(soup, len(data.get("projects") or []))
+    project_required = 12.0 * project_coverage
+    project_binding = _project_binding_coverage(soup, data.get("projects") or [])
 
     bullet_lengths = [len(item.get_text("", strip=True)) for item in soup.select("li")]
     well_sized = sum(16 <= length <= 110 for length in bullet_lengths)
@@ -193,21 +267,30 @@ def evaluate_resume_candidate(sections: Mapping[str, str], resume: Any) -> Candi
     hype_penalty = 2.0 * sum(all_text.count(phrase) for phrase in GENERIC_HYPE)
     claim_penalty = 5.0 * len(_new_numeric_or_contact_claims(all_html, source_text))
     long_penalty = 1.5 * sum(length > 140 for length in bullet_lengths)
-    score = completeness + coverage + narrative + density + rich_structure - hype_penalty - claim_penalty - long_penalty
+    score = completeness + coverage + narrative + project_required + density + rich_structure - hype_penalty - claim_penalty - long_penalty
     breakdown = {
         "completeness": round(completeness, 3), "hard_fact_coverage": round(coverage, 3),
-        "golden_narrative": round(narrative, 3), "density": round(density, 3),
+        "golden_narrative": round(narrative, 3), "project_required_fields": round(project_required, 3),
+        "project_binding_coverage": round(project_binding, 3),
+        "density": round(density, 3),
         "rich_structure": round(rich_structure, 3), "hype_penalty": round(-hype_penalty, 3),
         "claim_penalty": round(-claim_penalty, 3), "long_bullet_penalty": round(-long_penalty, 3),
     }
-    return CandidateEvaluation(candidate, round(score, 3), breakdown)
+    return CandidateEvaluation(candidate, round(score, 3), breakdown, project_issues)
 
 
 def select_best_candidate(candidates: Sequence[Mapping[str, str]], resume: Any) -> CandidateEvaluation:
     if not candidates:
         raise ValueError("No resume candidates were generated")
     evaluations = [evaluate_resume_candidate(candidate, resume) for candidate in candidates]
-    return max(evaluations, key=lambda item: item.score)
+    return max(
+        evaluations,
+        key=lambda item: (
+            item.breakdown.get("project_binding_coverage", 0.0),
+            item.breakdown.get("project_required_fields", 0.0),
+            item.score,
+        ),
+    )
 
 
 def candidate_count() -> int:
@@ -218,12 +301,17 @@ def candidate_count() -> int:
     return max(2, min(3, configured))
 
 
-def generate_candidates(invoke: Callable[[], str], count: int | None = None) -> list[str]:
+def generate_candidates(
+    invoke: Callable[[], str],
+    count: int | None = None,
+    on_complete: Callable[[int, int, bool], None] | None = None,
+) -> list[str]:
     """Generate 2-3 candidates concurrently and retain every successful result."""
 
     total = candidate_count() if count is None else max(2, min(3, int(count)))
     results: dict[int, str] = {}
     failures: list[Exception] = []
+    completed = 0
     with ThreadPoolExecutor(max_workers=total) as executor:
         futures = {executor.submit(invoke): index for index in range(total)}
         for future in as_completed(futures):
@@ -232,8 +320,13 @@ def generate_candidates(invoke: Callable[[], str], count: int | None = None) -> 
                 output = future.result()
                 if output and output.strip():
                     results[index] = output
+                success = bool(output and output.strip())
             except Exception as exc:  # Preserve provider errors if every candidate fails.
                 failures.append(exc)
+                success = False
+            completed += 1
+            if on_complete:
+                on_complete(completed, total, success)
     if not results:
         if failures:
             raise RuntimeError("All resume candidate generations failed") from failures[0]
@@ -249,18 +342,31 @@ def _replace_text(node: Any, value: Any) -> None:
         node.append(_raw(value))
 
 
-def _assign_entries(entries: list[Any], sources: list[dict[str, Any]], fields: tuple[str, ...]) -> dict[int, Any]:
+def _assign_entries(
+    entries: list[Any],
+    sources: list[dict[str, Any]],
+    fields: tuple[str, ...],
+    *,
+    strict: bool = False,
+) -> dict[int, Any]:
     assigned: dict[int, Any] = {}
     unused = list(entries)
+    unmatched: list[int] = []
     for index, source in enumerate(sources):
-        anchors = [_raw(source.get(field)) for field in fields if _present(source.get(field))]
+        anchors = [_normalized_anchor(source.get(field)) for field in fields if _present(source.get(field))]
         match = next(
-            (entry for entry in unused if anchors and all(anchor in entry.get_text(" ", strip=True) for anchor in anchors)),
+            (entry for entry in unused if _entry_matches_anchors(entry, anchors)),
             None,
         )
-        if match is None and unused:
-            match = unused[0]
         if match is not None:
+            assigned[index] = match
+            unused.remove(match)
+        else:
+            unmatched.append(index)
+    if strict and len(unmatched) == 1 and len(unused) == 1:
+        assigned[unmatched[0]] = unused.pop()
+    elif not strict:
+        for index, match in zip(unmatched, list(unused)):
             assigned[index] = match
             unused.remove(match)
     for entry in unused:
@@ -380,7 +486,9 @@ def _patch_projects(html: str, projects: Iterable[Any], violations: list[str]) -
     sources = [_mapping(item) for item in projects]
     soup = BeautifulSoup(html, "html.parser")
     entries = list(soup.select("#side-projects .entry")) or list(soup.select(".entry"))
-    assigned = _assign_entries(entries, sources, ("name",))
+    assigned = _assign_entries(entries, sources, ("name",), strict=True)
+    if len(assigned) != len(sources):
+        raise ValueError("Cannot safely bind generated project entries to source projects.")
     for index, source in enumerate(sources):
         entry = assigned.get(index)
         if entry is None:

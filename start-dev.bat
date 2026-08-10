@@ -27,7 +27,7 @@ echo.
 
 echo [1/3] Syncing backend dependencies with uv ...
 pushd "%ROOT%"
-call uv sync
+call uv sync --extra dev
 if errorlevel 1 (
   echo [ERROR] uv sync failed.
   popd

@@ -16,6 +16,7 @@
   "skills.incremental_detection_percent": { "min": 100 },
   "skills.execution_success_percent": { "min": 100 },
   "resume_quality.golden_score_margin": { "min": 10 },
+  "resume_quality.project_required_fields_percent": { "min": 100 },
   "resume_quality.hard_fact_correction_percent": { "min": 100 },
   "resume_quality.rich_markup_retention_percent": { "min": 100 },
   "resume_quality.successful_candidate_count": { "min": 3 },
