@@ -1,0 +1,25 @@
+/*墨绿侧线 · Modern Rail$local://resume-templates*/
+:root { --green:#1f5b50; --dark:#20312f; --mint:#e9f2ef; --line:#bfd0cb; --muted:#64736f; }
+* { box-sizing:border-box; }
+body { position:relative; width:100%; max-width:720px; margin:0 auto; padding:27px 31px 27px 48px; color:var(--dark); background:#fff; font:9.35pt/1.48 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif; }
+body::before { content:""; position:absolute; top:0; bottom:0; left:22px; width:7px; background:var(--green); }
+header { margin:0 0 17px; padding:0 0 14px; border-bottom:1px solid var(--line); }
+h1 { margin:0 0 7px; color:var(--green); font-size:24pt; line-height:1.08; letter-spacing:.1em; }
+.contact-info { display:flex; flex-wrap:wrap; gap:4px 16px; color:var(--muted); font-size:8.5pt; }
+.contact-info p { margin:0; }
+.contact-info a,a { color:inherit; text-decoration:none; }
+h2 { position:relative; margin:17px 0 8px; color:var(--green); font-size:12pt; line-height:1.25; }
+h2::before { content:""; position:absolute; left:-31px; top:.34em; width:13px; height:13px; border:3px solid #fff; border-radius:50%; background:var(--green); box-shadow:0 0 0 1px var(--green); }
+.entry { position:relative; margin:0 0 11px; padding:0 0 0 12px; border-left:1px solid var(--line); break-inside:avoid; }
+.entry-header,.entry-details { display:flex; justify-content:space-between; gap:16px; }
+.entry-header { font-weight:700; }
+.entry-details { margin-top:2px; color:var(--muted); font-size:8.7pt; }
+.entry-location,.entry-year { flex:none; text-align:right; }
+.compact-list,.stack-list,.inline-list { margin:4px 0 0; padding-left:17px; }
+.compact-list li,.stack-list li,.inline-list li { margin:1px 0; padding-left:2px; }
+li::marker { color:var(--green); }
+#technical-stack .stack-list { padding:9px 12px 9px 28px; background:var(--mint); border-radius:3px; }
+#languages-other .inline-list { display:grid; grid-template-columns:1fr 1fr; gap:2px 24px; }
+.two-column { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.two-column ul { margin:0; padding-left:17px; }
+@media print { @page { size:A4; margin:12mm 13mm; } body { max-width:none; padding:0 0 0 17px; font-size:9pt; } body::before { left:0; print-color-adjust:exact; -webkit-print-color-adjust:exact; } h2::before { left:-22px; print-color-adjust:exact; -webkit-print-color-adjust:exact; } h2 { margin-top:13px; } }

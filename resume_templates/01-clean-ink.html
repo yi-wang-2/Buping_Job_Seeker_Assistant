@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>简墨 - HTML 简历模板</title>
+  <style>
+    :root{--a:#171717;--m:#666;--l:#d9d9d9}*{box-sizing:border-box}body{max-width:720px;margin:auto;padding:24px 30px;color:var(--a);font:9.4pt/1.48 "Microsoft YaHei","PingFang SC",Arial,sans-serif}header{margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid var(--a)}h1{margin:0 0 6px;font-size:24pt;letter-spacing:.12em}.contact-info{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--m);font-size:8.6pt}.contact-info p{margin:0}a{color:inherit;text-decoration:none}h2{margin:17px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--l);font-size:12pt;letter-spacing:.08em}h2:before{content:"";display:inline-block;width:4px;height:1em;margin-right:8px;vertical-align:-.1em;background:var(--a)}.entry{margin-bottom:11px;break-inside:avoid}.entry-header,.entry-details{display:flex;justify-content:space-between;gap:16px}.entry-header{font-weight:700}.entry-details{margin-top:2px;color:var(--m);font-size:8.7pt}.entry-location,.entry-year{flex:none}.compact-list{margin:4px 0 0;padding-left:17px}.compact-list li{margin:1px 0}#languages-other .inline-list{display:grid;grid-template-columns:1fr 1fr;gap:2px 24px}@media print{@page{size:A4;margin:12mm 13mm}body{max-width:none;padding:0;font-size:9pt}h2{margin-top:13px}}
+  </style>
+</head>
+<body>
+  <!-- 将方括号中的示例内容替换为你的真实信息；可直接用浏览器打印为 A4 PDF。 -->
+  <header>
+    <h1>你的姓名</h1>
+    <div class="contact-info">
+      <p>南京</p><p>138-0000-0000</p><p>name@example.com</p>
+      <p><a href="https://github.com/yourname">GitHub</a></p>
+    </div>
+  </header>
+  <section id="profile">
+    <h2>个人简介</h2>
+    <ul class="compact-list">
+      <li>电子信息相关专业背景，具备扎实的工程基础与快速学习能力。</li>
+      <li>善于拆解问题、协作推进并将方案落实为稳定可交付的结果。</li>
+    </ul>
+  </section>
+  <section id="education">
+    <h2>教育经历</h2>
+    <div class="entry">
+      <div class="entry-header"><span class="entry-name">南京农业大学</span><span class="entry-location">南京</span></div>
+      <div class="entry-details"><span class="entry-title">电子信息科学与技术 · 本科</span><span class="entry-year">2016.09 - 2020.06</span></div>
+      <ul class="compact-list"><li>核心课程：数据结构、操作系统、数据库、计算机网络、信号与系统。</li><li>奖项：全国大学生电子设计竞赛省级奖项。</li></ul>
+    </div>
+  </section>
+  <section id="work-experience">
+    <h2>工作经历</h2>
+    <div class="entry">
+      <div class="entry-header"><span class="entry-name">某科技有限公司</span><span class="entry-location">深圳</span></div>
+      <div class="entry-details"><span class="entry-title">影像效果工程师</span><span class="entry-year">2022.04 - 至今</span></div>
+      <ul class="compact-list"><li>参与移动影像系统开发，负责关键模块调试、效果优化与版本交付。</li><li>协同算法、硬件和测试团队定位复杂问题，建立可复用的分析流程。</li><li>沉淀技术文档与调试规范，提升团队协作和问题闭环效率。</li></ul>
+    </div>
+    <div class="entry">
+      <div class="entry-header"><span class="entry-name">某信息服务有限公司</span><span class="entry-location">南京</span></div>
+      <div class="entry-details"><span class="entry-title">运维工程师</span><span class="entry-year">2020.08 - 2022.03</span></div>
+      <ul class="compact-list"><li>负责网络、终端与会议设备的日常维护，保障业务稳定运行。</li><li>为新办公点完成网络、收银及显示设备部署和现场支持。</li></ul>
+    </div>
+  </section>
+  <section id="side-projects">
+    <h2>项目经历</h2>
+    <div class="entry">
+      <div class="entry-header"><span class="entry-name">移动影像效果优化项目</span><span class="entry-location">核心成员</span></div>
+      <div class="entry-details"><span class="entry-title">图像处理 / ISP</span><span class="entry-year">2023.01 - 2023.07</span></div>
+      <ul class="compact-list"><li>完成多场景效果调试与图像质量优化，覆盖拍照和视频链路。</li><li>建立测试样本与问题追踪清单，推动关键缺陷按期收敛。</li></ul>
+    </div>
+    <div class="entry">
+      <div class="entry-header"><span class="entry-name">基于电容变化的手势识别装置</span><span class="entry-location">项目负责人</span></div>
+      <div class="entry-details"><span class="entry-title">STM32 / 传感器 / 算法</span><span class="entry-year">2018.06</span></div>
+      <ul class="compact-list"><li>完成硬件搭建、数据采集及识别算法实现，手势识别准确率超过 96%。</li></ul>
+    </div>
+  </section>
+  <section id="technical-stack">
+    <h2>专业技能</h2>
+    <ul class="compact-list stack-list"><li><strong>编程：</strong>C、C++、Python、MATLAB</li><li><strong>方向：</strong>图像处理、ISP、嵌入式系统、传感器调试</li><li><strong>工具：</strong>Git、Linux、Office、Simulink</li></ul>
+  </section>
+  <section id="languages-other">
+    <h2>语言与其他</h2>
+    <ul class="compact-list inline-list"><li><strong>英语：</strong>CET-4</li><li><strong>兴趣：</strong>阅读、音乐、摄影</li></ul>
+  </section>
+</body>
+</html>

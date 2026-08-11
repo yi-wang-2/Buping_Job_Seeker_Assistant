@@ -1,0 +1,22 @@
+/*简墨 · Clean Ink$local://resume-templates*/
+:root { --ink:#171717; --muted:#666; --line:#d9d9d9; }
+* { box-sizing:border-box; }
+body { width:100%; max-width:720px; margin:0 auto; padding:24px 30px; color:var(--ink); background:#fff; font:9.4pt/1.48 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif; }
+header { margin:0 0 18px; padding:0 0 14px; border-bottom:2px solid var(--ink); }
+h1 { margin:0 0 6px; font-size:24pt; line-height:1.1; letter-spacing:.12em; }
+.contact-info { display:flex; flex-wrap:wrap; gap:4px 16px; color:var(--muted); font-size:8.6pt; }
+.contact-info p { margin:0; }
+.contact-info a,a { color:inherit; text-decoration:none; }
+h2 { margin:17px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--line); font-size:12pt; line-height:1.25; letter-spacing:.08em; }
+h2::before { content:""; display:inline-block; width:4px; height:1em; margin-right:8px; vertical-align:-.1em; background:var(--ink); }
+.entry { margin:0 0 11px; padding:0; break-inside:avoid; }
+.entry-header,.entry-details { display:flex; justify-content:space-between; gap:16px; }
+.entry-header { font-weight:700; }
+.entry-details { margin-top:2px; color:var(--muted); font-size:8.7pt; }
+.entry-location,.entry-year { flex:none; text-align:right; }
+.compact-list,.stack-list,.inline-list { margin:4px 0 0; padding-left:17px; }
+.compact-list li,.stack-list li,.inline-list li { margin:1px 0; padding-left:2px; }
+#languages-other .inline-list { display:grid; grid-template-columns:1fr 1fr; gap:2px 24px; }
+.two-column { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.two-column ul { margin:0; padding-left:17px; }
+@media print { @page { size:A4; margin:12mm 13mm; } body { max-width:none; padding:0; font-size:9pt; } header { margin-bottom:14px; } h2 { margin-top:13px; } }

@@ -1,0 +1,23 @@
+/*暖砚 · Warm Stone$local://resume-templates*/
+:root { --brown:#59483d; --accent:#a76546; --sand:#f4f0eb; --line:#d7cdc3; --muted:#736c66; }
+* { box-sizing:border-box; }
+body { width:100%; max-width:720px; margin:0 auto; padding:27px 32px; color:#302c29; background:#fff; font:9.4pt/1.5 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif; }
+header { margin:0 0 18px; padding:0 0 15px; border-bottom:1px solid var(--line); text-align:center; }
+h1 { margin:0 0 7px; color:var(--brown); font:700 24pt/1.1 Georgia,"Microsoft YaHei",serif; letter-spacing:.12em; }
+.contact-info { display:flex; flex-wrap:wrap; justify-content:center; gap:4px 15px; color:var(--muted); font-size:8.5pt; }
+.contact-info p { margin:0; }
+.contact-info a,a { color:inherit; text-decoration:none; }
+h2 { margin:17px 0 9px; padding:5px 10px; color:var(--brown); background:var(--sand); border-left:4px solid var(--accent); font-size:11.6pt; line-height:1.25; letter-spacing:.06em; }
+.entry { margin:0 4px 11px; padding:0 0 10px; border-bottom:1px dotted var(--line); break-inside:avoid; }
+.entry:last-child { border-bottom:0; }
+.entry-header,.entry-details { display:flex; justify-content:space-between; gap:16px; }
+.entry-header { color:var(--brown); font-weight:700; }
+.entry-details { margin-top:2px; color:var(--muted); font-size:8.7pt; }
+.entry-location,.entry-year { flex:none; text-align:right; }
+.compact-list,.stack-list,.inline-list { margin:4px 0 0; padding-left:18px; }
+.compact-list li,.stack-list li,.inline-list li { margin:1px 0; padding-left:1px; }
+li::marker { color:var(--accent); }
+#languages-other .inline-list { display:grid; grid-template-columns:1fr 1fr; gap:2px 24px; }
+.two-column { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.two-column ul { margin:0; padding-left:18px; }
+@media print { @page { size:A4; margin:12mm 13mm; } body { max-width:none; padding:0; font-size:9pt; } h2 { margin-top:13px; print-color-adjust:exact; -webkit-print-color-adjust:exact; } }

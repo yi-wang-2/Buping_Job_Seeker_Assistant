@@ -1,0 +1,24 @@
+/*静蓝 · Calm Blue$local://resume-templates*/
+:root { --navy:#16324f; --pale:#eef5f8; --text:#263642; --muted:#62717c; }
+* { box-sizing:border-box; }
+body { width:100%; max-width:720px; margin:0 auto; padding:26px 30px; color:var(--text); background:#fff; font:9.4pt/1.48 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif; }
+header { margin:0 0 16px; padding:18px 21px; color:#fff; background:var(--navy); border-radius:3px; }
+h1 { margin:0 0 7px; font-size:23pt; line-height:1.05; letter-spacing:.1em; }
+.contact-info { display:flex; flex-wrap:wrap; gap:5px 16px; color:#e5eef4; font-size:8.5pt; }
+.contact-info p { margin:0; }
+.contact-info a,a { color:inherit; text-decoration:none; }
+h2 { display:flex; align-items:center; gap:9px; margin:16px 0 8px; color:var(--navy); font-size:12pt; line-height:1.2; }
+h2::after { content:""; height:1px; flex:1; background:#bfd0da; }
+.entry { margin:0 0 10px; padding:9px 11px; border-left:3px solid #8fb5c9; background:linear-gradient(90deg,var(--pale),#fff 58%); border-radius:0 3px 3px 0; break-inside:avoid; }
+.entry-header,.entry-details { display:flex; justify-content:space-between; gap:16px; }
+.entry-header { color:var(--navy); font-weight:700; }
+.entry-details { margin-top:2px; color:var(--muted); font-size:8.7pt; }
+.entry-location,.entry-year { flex:none; text-align:right; }
+.compact-list,.stack-list,.inline-list { margin:4px 0 0; padding-left:17px; }
+.compact-list li,.stack-list li,.inline-list li { margin:1px 0; padding-left:2px; }
+#technical-stack,#languages-other { padding:8px 11px; background:var(--pale); border-radius:3px; }
+#technical-stack h2,#languages-other h2 { margin-top:0; }
+#languages-other .inline-list { display:grid; grid-template-columns:1fr 1fr; gap:2px 24px; }
+.two-column { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.two-column ul { margin:0; padding-left:17px; }
+@media print { @page { size:A4; margin:12mm 13mm; } body { max-width:none; padding:0; font-size:9pt; } header,.entry,#technical-stack,#languages-other { print-color-adjust:exact; -webkit-print-color-adjust:exact; } h2 { margin-top:13px; } }
