@@ -8,6 +8,7 @@ import contextlib
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (ROOT / "data_folder" / "job_tracker" / "icon").mkdir(parents=True, exist_ok=True)
     public_demo = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
     cleanup_task = None
+    radar_sync_task = None
     if public_demo:
         # Public mode must not write prompts, resumes, provider replies, or browser payloads to logs.
         from loguru import logger as loguru_logger
@@ -58,6 +60,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         from src.libs.ai_engine.memory import SQLiteMemoryRepository
         SQLiteMemoryRepository(ROOT / "data_folder" / "ai_memory.sqlite3")
+        radar_auto_enabled = os.getenv("BUPING_JOB_RADAR_AUTO_SYNC", "1").lower() not in {"0", "false", "no"}
+        if radar_auto_enabled:
+            from backend.services import job_radar_service
+
+            async def radar_sync_loop() -> None:
+                attempted_date = None
+                while True:
+                    now = datetime.now().astimezone()
+                    today_run = now.replace(hour=6, minute=0, second=0, microsecond=0)
+                    last_sync = job_radar_service.get_stats().get("last_sync")
+                    last_sync_date = None
+                    if last_sync and last_sync.get("created_at"):
+                        with contextlib.suppress(ValueError):
+                            last_sync_date = datetime.fromisoformat(last_sync["created_at"]).astimezone().date()
+                    catch_up = now >= today_run and attempted_date != now.date() and last_sync_date != now.date()
+                    next_run = now + timedelta(seconds=5) if catch_up else today_run
+                    if not catch_up and next_run <= now:
+                        next_run += timedelta(days=1)
+                    await asyncio.sleep((next_run - now).total_seconds())
+                    settings = job_radar_service.get_radar_settings()
+                    attempted_date = datetime.now().astimezone().date()
+                    if settings["auto_sync"]:
+                        try:
+                            await asyncio.to_thread(job_radar_service.sync_tencent_sheet, settings["source_url"])
+                            logger.info("Job Radar automatic sync completed")
+                        except Exception:
+                            logger.exception("Job Radar automatic sync failed")
+
+            radar_sync_task = asyncio.create_task(radar_sync_loop())
     try:
         yield
     finally:
@@ -65,6 +96,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             cleanup_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await cleanup_task
+        if radar_sync_task:
+            radar_sync_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await radar_sync_task
 
 
 def create_app() -> FastAPI:

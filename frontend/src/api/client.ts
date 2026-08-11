@@ -671,3 +671,132 @@ export async function getJobTrackerStats(): Promise<{
   const { data } = await api.get("/job-tracker/stats");
   return data;
 }
+
+// ---- Job Radar ----
+
+export interface JobRecommendation {
+  id: string;
+  company: string;
+  role: string;
+  location: string;
+  industry: string;
+  recruitment_type: string;
+  link: string;
+  referral: string;
+  deadline: string;
+  description: string;
+  source_name: string;
+  source_url: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  updated_at: string;
+  score: number;
+  reasons: string[];
+  matched_skills: string[];
+  missing_skills: string[];
+  hard_risks: string[];
+  breakdown: Record<string, number>;
+  company_type: string;
+  match_level: "高匹配" | "中匹配" | "低匹配";
+  recruitment_tags: string[];
+  favorite: boolean;
+  not_interested: boolean;
+  applied: boolean;
+}
+
+export interface JobRadarStats {
+  total: number;
+  companies: number;
+  favorites: number;
+  schedule: { source_url: string; auto_sync: boolean; auto_sync_time: string };
+  last_sync: null | {
+    imported: number;
+    created: number;
+    updated: number;
+    unchanged: number;
+    created_at: string;
+  };
+}
+
+export interface JobPreferences {
+  target_roles: string[];
+  preferred_locations: string[];
+  acceptable_locations: string[];
+  excluded_locations: string[];
+  recruitment_types: string[];
+  industries: string[];
+  company_types: string[];
+  preferred_keywords: string[];
+  excluded_keywords: string[];
+  company_blacklist: string[];
+  weights: Record<string, number>;
+}
+
+export async function syncJobRadarUrl(sourceUrl: string): Promise<{
+  status: string; imported: number; created: number; updated: number; unchanged: number; synced_at: string;
+}> {
+  const { data } = await api.post("/job-radar/sync-url", { source_url: sourceUrl }, { timeout: 180000 });
+  return data;
+}
+
+export async function importJobRadarFile(file: File, sourceUrl = ""): Promise<{
+  status: string; imported: number; created: number; updated: number; unchanged: number; synced_at: string;
+}> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("source_url", sourceUrl);
+  const { data } = await api.post("/job-radar/import", form, { timeout: 120000 });
+  return data;
+}
+
+export async function getJobRadarRecommendations(params: {
+  minScore?: number; query?: string; limit?: number; companyType?: string;
+  matchLevel?: string; recruitmentType?: string; favoriteOnly?: boolean;
+} = {}): Promise<{
+  items: JobRecommendation[];
+  count: number;
+  profile: { preferred_roles: string[]; preferred_locations: string[]; resume_skills: string[] };
+}> {
+  const { data } = await api.get("/job-radar/recommendations", {
+    params: {
+      min_score: params.minScore ?? 0, query: params.query ?? "", limit: params.limit ?? 200,
+      company_type: params.companyType ?? "", match_level: params.matchLevel ?? "",
+      recruitment_type: params.recruitmentType ?? "", favorite_only: params.favoriteOnly ?? false,
+    },
+  });
+  return data;
+}
+
+export async function getJobRadarStats(): Promise<JobRadarStats> {
+  const { data } = await api.get("/job-radar/stats");
+  return data;
+}
+
+export async function getJobPreferences(): Promise<JobPreferences> {
+  const { data } = await api.get("/job-radar/preferences");
+  return data;
+}
+
+export async function saveJobPreferences(preferences: JobPreferences): Promise<{ status: string; preferences: JobPreferences }> {
+  const { data } = await api.put("/job-radar/preferences", preferences);
+  return data;
+}
+
+export async function trackRecommendedJob(jobId: string, confirmed?: {
+  company: string; role: string; base: string; recruitment_type: string; link: string; notes: string;
+}): Promise<{ status: "added" | "exists" | "updated"; record: JobEntry }> {
+  const { data } = await api.post(`/job-radar/${encodeURIComponent(jobId)}/track`, confirmed ?? {});
+  return data;
+}
+
+export async function getDailyJobRecommendations(): Promise<{ items: JobRecommendation[]; count: number; date: string }> {
+  const { data } = await api.get("/job-radar/daily");
+  return data;
+}
+
+export async function updateJobRadarAction(
+  jobId: string, action: "favorite" | "not_interested", enabled: boolean,
+): Promise<{ status: string; favorite: boolean; not_interested: boolean; applied: boolean }> {
+  const { data } = await api.put(`/job-radar/${encodeURIComponent(jobId)}/action`, { action, enabled });
+  return data;
+}

@@ -30,7 +30,7 @@ def _find_chrome_binary():
     ]
     return next((path for path in candidates if os.path.isfile(path)), None)
 
-def chrome_browser_options():
+def chrome_browser_options(headless: bool = True):
     logger.debug("Setting Chrome browser options")
     options = Options()
     options.add_argument("--start-maximized")
@@ -52,16 +52,17 @@ def chrome_browser_options():
     options.add_argument("--disable-animations")
     options.add_argument("--disable-cache")
     options.add_argument("--incognito")
-    options.add_argument("--headless=new")  # Aggiunto headless per evitare che la finestra del browser appaia
+    if headless:
+        options.add_argument("--headless=new")  # Aggiunto headless per evitare che la finestra del browser appaia
     options.add_argument("--allow-file-access-from-files")  # Consente l'accesso ai file locali
     options.add_argument("--disable-web-security")         # Disabilita la sicurezza web
     logger.debug("Using Chrome in incognito mode")
     
     return options
 
-def init_browser() -> webdriver.Chrome:
+def init_browser(headless: bool = True) -> webdriver.Chrome:
     try:
-        options = chrome_browser_options()
+        options = chrome_browser_options(headless=headless)
         # Give Selenium Manager the exact executable. This is especially important
         # on Windows versions where the legacy `wmic` command is no longer present.
         chrome_binary = _find_chrome_binary()

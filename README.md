@@ -94,6 +94,17 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
   - 记录保存到 `data_folder/job_tracker/records.json`
   - 内置常见公司图标，并通过 `/api/job-tracker/icon` 提供静态访问
 
+- **📡 岗位雷达**
+  - 新增 `/job-radar` 页面，可直接读取公开只读的腾讯智能表格岗位源
+  - 对岗位进行本地 SQLite 快照、去重及新增/变更/失效检测
+  - 根据本地简历、目标岗位、地点偏好和排除项计算可解释匹配分，不消耗 LLM Token
+  - 展示匹配技能、推荐理由和硬性风险，支持一键加入求职记录
+  - 展示行业、招聘批次标签、内推码和招聘原文，支持收藏与“不感兴趣”状态
+  - 每日推荐 3 家尚未收藏、忽略或投递的高匹配企业，并支持按公司类型、匹配度和招聘类型筛选
+  - 可在页面填写目标岗位、地点、行业、招聘/公司类型、关键词与排除项，并自定义各评分维度权重；偏好仅保存在本地 SQLite
+  - 应用运行期间每天本地时间 06:00 自动同步最近使用的腾讯文档源；设置 `BUPING_JOB_RADAR_AUTO_SYNC=0` 可关闭
+  - 腾讯智能表格采用 Canvas 渲染且可能禁止导出；直接同步会在本地 Chrome 中读取页面渲染时已获授权的只读数据，不依赖导出或系统剪贴板
+
 - **🧠 AI Runtime / Skills / Memory**
   - 新增统一 AI Runtime，集中处理 Skill 执行、Provider 调用、缓存和追踪
   - 内置 Text Rewriter、JD Analyzer、Interview Coach、Skill Matcher、Career Advisor 等 Skill

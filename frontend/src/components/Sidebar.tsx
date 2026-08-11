@@ -10,6 +10,7 @@ import {
   PanelLeftOpen,
   ClipboardList,
   ChartNoAxesCombined,
+  Radar,
 } from "lucide-react";
 import type { Lang, Strings } from "../i18n";
 
@@ -27,6 +28,7 @@ const navItems = [
   { to: "/mock-interview", icon: Bot, key: "mockInterview" as const },
   { to: "/history", icon: Clock, key: "history" as const },
   { to: "/job-tracker", icon: ClipboardList, key: "jobTracker" as const },
+  { to: "/job-radar", icon: Radar, key: "jobRadar" as const },
   { to: "/ai-monitoring", icon: ChartNoAxesCombined, key: "aiMonitoring" as const },
   { to: "/settings", icon: Settings, key: "settings" as const },
 ];
