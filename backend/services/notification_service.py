@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import smtplib
 import sqlite3
@@ -166,6 +167,8 @@ def _serverchan_endpoint(raw_sendkey: str) -> str:
 def send_notification(
     title: str, body: str, *, event_key: str, dedup_seconds: int = 86400,
 ) -> dict[str, Any]:
+    if os.getenv("PYTEST_CURRENT_TEST") and os.getenv("BUPING_ALLOW_TEST_NOTIFICATIONS") != "1":
+        return {"sent": 0, "results": [{"channel": "test", "status": "suppressed"}]}
     config = get_settings(include_secrets=True)
     channels = []
     if config["email_enabled"]:

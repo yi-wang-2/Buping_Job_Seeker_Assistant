@@ -31,6 +31,8 @@ import {
   checkJobFollowup,
   completeJobFollowupLogin,
   connectJobFollowup,
+  getJobFollowupSchedule,
+  saveJobFollowupSchedule,
   type JobEntry,
 } from "../api/client";
 
@@ -166,6 +168,8 @@ export default function JobTracker({ t }: Props) {
   const [followupDraft, setFollowupDraft] = useState({ enabled: false, aiEnabled: true, platform: "generic", url: "" });
   const [followupBusy, setFollowupBusy] = useState(false);
   const [followupMessage, setFollowupMessage] = useState("");
+  const [followupInterval, setFollowupInterval] = useState(8);
+  const [scheduleStatus, setScheduleStatus] = useState("");
 
   const iconFileInputRef = useRef<HTMLInputElement>(null);
   const dataFileInputRef = useRef<HTMLInputElement>(null);
@@ -286,6 +290,10 @@ export default function JobTracker({ t }: Props) {
   const deleteEntry = useCallback((id: number) => {
     if (!window.confirm("确定要删除这条记录吗？")) return;
     setEntries((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+
+  useEffect(() => {
+    getJobFollowupSchedule().then((schedule) => setFollowupInterval(schedule.interval_hours)).catch(() => {});
   }, []);
 
   const openFollowup = useCallback((entry: JobEntry) => {
@@ -516,7 +524,8 @@ export default function JobTracker({ t }: Props) {
 
       const onMouseMove = (e: MouseEvent) => {
         const width = startWidth + (e.pageX - startX);
-        if (width > 60) col.style.width = `${width}px`;
+        const minWidth = Number(col.dataset.minWidth || 60);
+        if (width >= minWidth) col.style.width = `${width}px`;
       };
 
       const onMouseUp = () => {
@@ -557,7 +566,8 @@ export default function JobTracker({ t }: Props) {
           </p>
         </div>
 
-        <div className="flex gap-4 items-center">
+        <div className="flex flex-wrap gap-3 items-center">
+          <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600 shadow-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"><span>自动跟进间隔</span><select value={followupInterval} onChange={async (event) => { const value = Number(event.target.value); setFollowupInterval(value); try { await saveJobFollowupSchedule(value); setScheduleStatus("已保存"); setTimeout(() => setScheduleStatus(""), 2000); } catch { setScheduleStatus("保存失败"); } }} className="rounded border border-gray-200 bg-white px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-700"><option value={4}>4 小时</option><option value={6}>6 小时</option><option value={8}>8 小时</option><option value={12}>12 小时</option><option value={24}>24 小时</option></select>{scheduleStatus && <span className={scheduleStatus === "已保存" ? "text-emerald-600" : "text-red-500"}>{scheduleStatus}</span>}</label>
           <button onClick={() => void checkAllFollowups()} disabled={followupBusy} className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300"><RefreshCw className={`h-4 w-4 ${followupBusy ? "animate-spin" : ""}`} />检查自动跟进</button>
           <div className="flex flex-col gap-2 mr-4">
             <button
@@ -735,7 +745,7 @@ export default function JobTracker({ t }: Props) {
                   {jt.colRole}
                   <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
                 </th>
-                <th className="py-4 px-6 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-2/12">
+                <th data-min-width="80" className="py-4 px-4 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-1/12">
                   {jt.colRemark}
                   <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
                 </th>
@@ -743,7 +753,7 @@ export default function JobTracker({ t }: Props) {
                   {jt.colLink}
                   <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
                 </th>
-                <th className="py-4 px-6 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-1/12">
+                <th data-min-width="140" className="py-4 px-4 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-2/12">
                   {jt.colStatus}
                   <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
                 </th>
@@ -832,7 +842,7 @@ export default function JobTracker({ t }: Props) {
                   </td>
 
                   {/* Remark */}
-                  <td className="py-4 px-6 truncate">
+                  <td className="py-4 px-4 truncate">
                     <div className="flex items-center">
                       <Tag className="h-3 w-3 text-gray-300 mr-2 shrink-0" />
                       <input
@@ -872,7 +882,7 @@ export default function JobTracker({ t }: Props) {
                   </td>
 
                   {/* Status */}
-                  <td className="py-4 px-6">
+                  <td className="py-4 px-4">
                     <select
                       value={entry.status}
                       onChange={(e) =>
@@ -961,7 +971,7 @@ export default function JobTracker({ t }: Props) {
       {followupEntry && <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={() => setFollowupEntry(null)} /><div className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
         <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700"><div><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white"><ShieldCheck className="h-5 w-5 text-emerald-500" />自动跟进 · {followupEntry.company}</h3><p className="mt-1 text-xs text-gray-500">使用本地独立 Chrome 会话；不保存密码，不绕过验证码。</p></div><button onClick={() => setFollowupEntry(null)} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"><X className="h-5 w-5" /></button></div>
         <div className="space-y-4 p-5">
-          <label className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">启用每日自动跟进</span><span className="text-xs text-gray-500">每天 06:00 检查；登录失效后停止更新并提示</span></span><input type="checkbox" checked={followupDraft.enabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, enabled: event.target.checked }))} className="h-4 w-4" /></label>
+          <label className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">启用定时自动跟进</span><span className="text-xs text-gray-500">按求职记录页顶部选择的间隔检查；默认每 8 小时（04:00、12:00、20:00）</span></span><input type="checkbox" checked={followupDraft.enabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, enabled: event.target.checked }))} className="h-4 w-4" /></label>
           <label className="flex items-center justify-between rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 dark:border-indigo-900 dark:bg-indigo-950/20"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">本地规则失败时使用 AI 兜底</span><span className="text-xs text-gray-500">仅发送解析所需页面文本，优先目标岗位附近；结论须由页面原文核验，相同页面优先走缓存</span></span><input type="checkbox" checked={followupDraft.aiEnabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, aiEnabled: event.target.checked }))} className="h-4 w-4" /></label>
           <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-gray-600 dark:text-gray-300"><span className="mb-1 block font-medium">招聘平台</span><select value={followupDraft.platform} onChange={(event) => setFollowupDraft((current) => ({ ...current, platform: event.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="moka">Moka</option><option value="feishu">飞书招聘</option><option value="zhiye">zhiye.com</option><option value="generic">其他网站</option></select></label><label className="text-xs text-gray-600 dark:text-gray-300 sm:col-span-2"><span className="mb-1 block font-medium">投递中心/个人中心链接</span><input value={followupDraft.url} onChange={(event) => setFollowupDraft((current) => ({ ...current, url: event.target.value }))} placeholder="请填写能看到投递状态的个人中心链接" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></label></div>
           <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">连接状态：{followupEntry.followup_state || "not_connected"}</span>{followupEntry.last_checked_at && <span className="text-xs text-gray-500">上次检查：{new Date(followupEntry.last_checked_at).toLocaleString()}</span>}{followupEntry.last_raw_status && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">网站原文：{followupEntry.last_raw_status}</span>}{followupEntry.last_parser && <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs text-violet-700 dark:bg-violet-950/30 dark:text-violet-300">识别方式：{followupEntry.last_parser === "llm" ? "AI 兜底" : followupEntry.last_parser === "local" ? "本地规则" : "未识别"}</span>}{followupEntry.last_parser === "llm" && <span className="text-xs text-gray-500">置信度：{Math.round((followupEntry.last_llm_confidence || 0) * 100)}% · 本次 {followupEntry.last_llm_tokens || 0} tokens</span>}</div>

@@ -15,6 +15,8 @@ router = APIRouter()
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data_folder" / "job_tracker"
 DATA_FILE = DATA_DIR / "records.json"
+FOLLOWUP_SETTINGS_FILE = DATA_DIR / "followup_settings.json"
+ALLOWED_FOLLOWUP_INTERVALS = {4, 6, 8, 12, 24}
 
 
 # ---- Pydantic models ----
@@ -65,6 +67,10 @@ class FollowupCompleteRequest(BaseModel):
     platform: str
 
 
+class FollowupScheduleRequest(BaseModel):
+    interval_hours: int = 8
+
+
 # ---- Helpers ----
 
 def _ensure_dir() -> None:
@@ -95,7 +101,29 @@ def _save_records(records: list[dict]) -> None:
     )
 
 
-def _apply_followup_result(record: dict, result: dict) -> None:
+def get_followup_schedule() -> dict:
+    interval = 8
+    if FOLLOWUP_SETTINGS_FILE.exists():
+        try:
+            interval = int(json.loads(FOLLOWUP_SETTINGS_FILE.read_text("utf-8")).get("interval_hours", 8))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            interval = 8
+    if interval not in ALLOWED_FOLLOWUP_INTERVALS:
+        interval = 8
+    return {"interval_hours": interval, "anchor_hour": 4}
+
+
+def save_followup_schedule(interval_hours: int) -> dict:
+    if interval_hours not in ALLOWED_FOLLOWUP_INTERVALS:
+        raise ValueError("检查间隔仅支持 4、6、8、12 或 24 小时")
+    _ensure_dir()
+    FOLLOWUP_SETTINGS_FILE.write_text(
+        json.dumps({"interval_hours": interval_hours}, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    return get_followup_schedule()
+
+
+def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) -> None:
     old_status = str(record.get("status") or "")
     record["last_checked_at"] = result.get("checked_at", "")
     record["followup_state"] = result.get("connection_state", record.get("followup_state", ""))
@@ -119,13 +147,13 @@ def _apply_followup_result(record: dict, result: dict) -> None:
     notification = None
     company = str(record.get("company") or "未知企业")
     role = str(record.get("role") or "未知岗位")
-    if status_changed:
+    if notify and status_changed:
         notification = _safe_notify(
             f"求职状态更新：{company}",
             f"企业：{company}\n岗位：{role}\n原状态：{old_status or '未记录'}\n新状态：{new_status}\n网站原文：{result.get('raw_status') or '无'}\n检查时间：{result.get('checked_at') or '未知'}",
             event_key=f"status:{record.get('id')}:{old_status}:{new_status}",
         )
-    elif result.get("result") in {"login_required", "verification_required"}:
+    elif notify and result.get("result") in {"login_required", "verification_required"}:
         reason = "登录已失效" if result.get("result") == "login_required" else "网站要求人机验证"
         notification = _safe_notify(
             f"求职跟进需要处理：{company}",
@@ -153,7 +181,7 @@ def run_followup_all() -> dict:
             result = job_followup_service.check_application(record)
         except Exception as exc:
             result = {"result": "error", "connection_state": "error", "message": str(exc), "checked_at": ""}
-        _apply_followup_result(record, result)
+        _apply_followup_result(record, result, notify=True)
         results.append({"id": record.get("id"), **result})
     if results:
         _save_records(records)
@@ -204,6 +232,19 @@ def check_all_followups() -> dict:
     return run_followup_all()
 
 
+@router.get("/followup/schedule")
+def get_followup_schedule_endpoint() -> dict:
+    return get_followup_schedule()
+
+
+@router.put("/followup/schedule")
+def save_followup_schedule_endpoint(req: FollowupScheduleRequest) -> dict:
+    try:
+        return {"status": "success", **save_followup_schedule(req.interval_hours)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/{entry_id}/followup/check")
 def check_followup(entry_id: int) -> dict:
     records = _load_records()
@@ -214,7 +255,7 @@ def check_followup(entry_id: int) -> dict:
         result = job_followup_service.check_application(record, headless=False)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _apply_followup_result(record, result)
+    _apply_followup_result(record, result, notify=True)
     _save_records(records)
     return {"status": "ok", "record": record, **result}
 

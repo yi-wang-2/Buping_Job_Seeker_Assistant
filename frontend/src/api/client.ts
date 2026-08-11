@@ -738,6 +738,23 @@ export async function checkAllJobFollowups(): Promise<{ status: string; checked:
   return data;
 }
 
+const PUBLIC_FOLLOWUP_INTERVAL_KEY = "buping_followup_interval_hours";
+
+export async function getJobFollowupSchedule(): Promise<{ interval_hours: number; anchor_hour: number }> {
+  if (IS_PUBLIC) return { interval_hours: Number(window.sessionStorage.getItem(PUBLIC_FOLLOWUP_INTERVAL_KEY) || 8), anchor_hour: 4 };
+  const { data } = await api.get("/job-tracker/followup/schedule");
+  return data;
+}
+
+export async function saveJobFollowupSchedule(intervalHours: number): Promise<{ status: string; interval_hours: number; anchor_hour: number }> {
+  if (IS_PUBLIC) {
+    window.sessionStorage.setItem(PUBLIC_FOLLOWUP_INTERVAL_KEY, String(intervalHours));
+    return { status: "success", interval_hours: intervalHours, anchor_hour: 4 };
+  }
+  const { data } = await api.put("/job-tracker/followup/schedule", { interval_hours: intervalHours });
+  return data;
+}
+
 // ---- Job Radar ----
 
 export interface JobRecommendation {

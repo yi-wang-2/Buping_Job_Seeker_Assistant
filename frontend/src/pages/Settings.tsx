@@ -128,6 +128,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const [serverchanSendkey, setServerchanSendkey] = useState("");
   const [notificationStatus, setNotificationStatus] = useState("");
   const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationLoadState, setNotificationLoadState] = useState<"loading" | "loaded" | "error">("loading");
 
   const [resumeContent, setResumeContent] = useState("");
   const [resumeStatus, setResumeStatus] = useState("");
@@ -159,12 +160,23 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setMemoryEnabled(settings.memory_enabled);
       setCacheEnabled(settings.cache_enabled);
     }).catch(() => {});
-    getNotificationSettings().then(setNotificationSettings).catch(() => {});
+    void loadNotificationSettings();
     getResumePhotoStatus().then((result) => {
       setPhotoUploaded(result.uploaded);
       if (result.uploaded) setPhotoCacheKey(String(Date.now()));
     }).catch(() => {});
   }, []);
+
+  const loadNotificationSettings = async () => {
+    setNotificationLoadState("loading");
+    try {
+      const settings = await getNotificationSettings();
+      setNotificationSettings(settings);
+      setNotificationLoadState("loaded");
+    } catch {
+      setNotificationLoadState("error");
+    }
+  };
 
   const loadResume = async (lang: string) => {
     setLoadingResume(true);
@@ -476,6 +488,9 @@ export default function SettingsPage({ t }: { t: Strings }) {
           <MessageCircle className="h-5 w-5 text-brand-500" />求职状态通知
         </h3>
         <p className="mb-5 text-sm text-gray-500 dark:text-gray-400">登录失效、需要人机验证或投递状态变化时通知。相同登录问题 24 小时内只发送一次。</p>
+        {notificationLoadState === "loading" && <div className="mb-4 flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-950/30 dark:text-blue-300"><Loader2 className="h-4 w-4 animate-spin" />正在从后端读取通知配置…</div>}
+        {notificationLoadState === "error" && <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><span>通知配置加载失败，通常是后端尚未启动；本地配置不会因此被清空。</span><button onClick={() => void loadNotificationSettings()} className="shrink-0 rounded border border-amber-300 px-2 py-1 text-xs font-medium hover:bg-amber-100 dark:border-amber-800">重新读取</button></div>}
+        {notificationLoadState === "loaded" && <div className="mb-4 flex items-center gap-2 text-xs text-emerald-600"><CheckCircle2 className="h-4 w-4" />已从后端同步通知配置；敏感凭证只显示配置状态，不回传明文。</div>}
 
         <div className="space-y-5">
           <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
@@ -484,7 +499,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
               <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 主机<input value={notificationSettings.smtp_host} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_host: event.target.value }))} placeholder="smtp.qq.com" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
               <div className="grid grid-cols-2 gap-2"><label className="text-xs text-gray-600 dark:text-gray-300">端口<input type="number" value={notificationSettings.smtp_port} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_port: Number(event.target.value) }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label><label className="text-xs text-gray-600 dark:text-gray-300">加密<select value={notificationSettings.smtp_security} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_security: event.target.value as NotificationSettings["smtp_security"] }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">无</option></select></label></div>
               <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 用户名<input value={notificationSettings.smtp_username} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_username: event.target.value }))} placeholder="your-email@qq.com" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
-              <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 授权码<input type="password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} placeholder={notificationSettings.smtp_password_configured ? "已配置，留空表示不修改" : "邮箱 SMTP 授权码"} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+              <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 授权码{notificationSettings.smtp_password_configured && <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600 dark:bg-emerald-950/30">已配置</span>}<input type="password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} placeholder={notificationSettings.smtp_password_configured ? "留空表示不修改现有授权码" : "邮箱 SMTP 授权码"} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
               <label className="text-xs text-gray-600 dark:text-gray-300">发件邮箱<input value={notificationSettings.smtp_from} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_from: event.target.value }))} placeholder="留空则使用 SMTP 用户名" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
               <label className="text-xs text-gray-600 dark:text-gray-300">收件邮箱<input value={notificationSettings.smtp_to} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_to: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
             </div>
@@ -492,14 +507,14 @@ export default function SettingsPage({ t }: { t: Strings }) {
 
           <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
             <label className="mb-3 flex items-center justify-between gap-4"><span><span className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100"><MessageCircle className="h-4 w-4" />个人微信通知</span><span className="mt-1 block text-xs text-gray-500">通过 Server酱 SendKey 推送，不登录或控制你的微信客户端。</span></span><input type="checkbox" checked={notificationSettings.wechat_enabled} onChange={(event) => setNotificationSettings((current) => ({ ...current, wechat_enabled: event.target.checked }))} className="h-4 w-4 accent-brand-600" /></label>
-            <label className="text-xs text-gray-600 dark:text-gray-300">Server酱 SendKey<input type="password" value={serverchanSendkey} onChange={(event) => setServerchanSendkey(event.target.value)} placeholder={notificationSettings.serverchan_sendkey_configured ? "已配置，留空表示不修改" : "SCT..."} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+            <label className="text-xs text-gray-600 dark:text-gray-300">Server酱 SendKey{notificationSettings.serverchan_sendkey_configured && <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600 dark:bg-emerald-950/30">已配置</span>}<input type="password" value={serverchanSendkey} onChange={(event) => setServerchanSendkey(event.target.value)} placeholder={notificationSettings.serverchan_sendkey_configured ? "留空表示不修改现有 SendKey" : "SCT..."} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
             <a href="https://sct.ftqq.com/" target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-brand-600 hover:underline">获取 Server酱 SendKey</a>
           </section>
         </div>
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button onClick={handleSaveNotifications} disabled={notificationBusy} className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"><Save className="h-4 w-4" />保存通知设置</button>
-          <button onClick={handleTestNotifications} disabled={notificationBusy} className="flex items-center gap-2 rounded-lg border border-brand-300 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-800 dark:text-brand-300"><Send className="h-4 w-4" />发送测试通知</button>
+          <button onClick={handleSaveNotifications} disabled={notificationBusy || notificationLoadState !== "loaded"} className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"><Save className="h-4 w-4" />保存通知设置</button>
+          <button onClick={handleTestNotifications} disabled={notificationBusy || notificationLoadState !== "loaded"} className="flex items-center gap-2 rounded-lg border border-brand-300 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-800 dark:text-brand-300"><Send className="h-4 w-4" />发送测试通知</button>
           {notificationBusy && <Loader2 className="h-4 w-4 animate-spin text-brand-500" />}
           {notificationStatus && <span className={`text-sm ${notificationStatus.startsWith("❌") ? "text-red-600" : "text-green-600"}`}>{notificationStatus}</span>}
         </div>

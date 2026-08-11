@@ -10,7 +10,7 @@ import os
 
 import yaml
 
-DATA_FOLDER = Path("data_folder")
+DATA_FOLDER = Path(__file__).resolve().parents[2] / "data_folder"
 PUBLIC_DEMO_MODE = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
 RESUME_PHOTO_BASENAME = "resume_photo"
 SUPPORTED_PHOTO_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")

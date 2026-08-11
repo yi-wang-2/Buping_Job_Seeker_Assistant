@@ -23,6 +23,25 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIST = ROOT / "frontend" / "dist"
+RADAR_SYNC_HOUR = 6
+
+
+def followup_schedule_hours(interval_hours: int, anchor_hour: int = 4) -> tuple[int, ...]:
+    if interval_hours not in {4, 6, 8, 12, 24}:
+        interval_hours = 8
+    return tuple(sorted({(anchor_hour + offset) % 24 for offset in range(0, 24, interval_hours)}))
+
+
+def latest_scheduled_time(now: datetime, hours: tuple[int, ...]) -> datetime:
+    candidates = [now.replace(hour=hour, minute=0, second=0, microsecond=0) for hour in hours]
+    due = [candidate for candidate in candidates if candidate <= now]
+    return max(due) if due else (candidates[-1] - timedelta(days=1))
+
+
+def next_scheduled_time(now: datetime, hours: tuple[int, ...]) -> datetime:
+    candidates = [now.replace(hour=hour, minute=0, second=0, microsecond=0) for hour in hours]
+    future = [candidate for candidate in candidates if candidate > now]
+    return min(future) if future else (candidates[0] + timedelta(days=1))
 
 
 @asynccontextmanager
@@ -37,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     public_demo = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
     cleanup_task = None
     radar_sync_task = None
+    followup_check_task = None
     if public_demo:
         # Public mode must not write prompts, resumes, provider replies, or browser payloads to logs.
         from loguru import logger as loguru_logger
@@ -70,15 +90,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 attempted_date = None
                 while True:
                     now = datetime.now().astimezone()
-                    today_run = now.replace(hour=6, minute=0, second=0, microsecond=0)
+                    today_run = now.replace(hour=RADAR_SYNC_HOUR, minute=0, second=0, microsecond=0)
                     last_sync = job_radar_service.get_stats().get("last_sync")
                     last_sync_date = None
                     if last_sync and last_sync.get("created_at"):
                         with contextlib.suppress(ValueError):
                             last_sync_date = datetime.fromisoformat(last_sync["created_at"]).astimezone().date()
-                    catch_up = now >= today_run and attempted_date != now.date() and (
-                        last_sync_date != now.date() or followup_auto_enabled
-                    )
+                    catch_up = now >= today_run and attempted_date != now.date() and last_sync_date != now.date()
                     next_run = now + timedelta(seconds=5) if catch_up else today_run
                     if not catch_up and next_run <= now:
                         next_run += timedelta(days=1)
@@ -91,14 +109,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             logger.info("Job Radar automatic sync completed")
                         except Exception:
                             logger.exception("Job Radar automatic sync failed")
-                    if followup_auto_enabled:
-                        try:
-                            result = await asyncio.to_thread(job_tracker.run_followup_all)
-                            logger.info("Job follow-up automatic check completed: %s", result.get("checked", 0))
-                        except Exception:
-                            logger.exception("Job follow-up automatic check failed")
+            async def followup_check_loop() -> None:
+                attempted_slot: datetime | None = None
+                while True:
+                    now = datetime.now().astimezone()
+                    schedule = job_tracker.get_followup_schedule()
+                    hours = followup_schedule_hours(schedule["interval_hours"], schedule["anchor_hour"])
+                    due_slot = latest_scheduled_time(now, hours)
+                    if attempted_slot != due_slot:
+                        await asyncio.sleep(5)
+                    else:
+                        next_slot = next_scheduled_time(now, hours)
+                        # Re-read user settings promptly instead of sleeping through a changed interval.
+                        await asyncio.sleep(min((next_slot - now).total_seconds(), 60))
+                    # Recompute after wake/sleep so multiple missed slots collapse to the latest one.
+                    now = datetime.now().astimezone()
+                    schedule = job_tracker.get_followup_schedule()
+                    hours = followup_schedule_hours(schedule["interval_hours"], schedule["anchor_hour"])
+                    due_slot = latest_scheduled_time(now, hours)
+                    if attempted_slot == due_slot:
+                        continue
+                    attempted_slot = due_slot
+                    try:
+                        result = await asyncio.to_thread(job_tracker.run_followup_all)
+                        logger.info(
+                            "Job follow-up scheduled check completed for %s: %s records",
+                            due_slot.strftime("%Y-%m-%d %H:%M"), result.get("checked", 0),
+                        )
+                    except Exception:
+                        logger.exception("Job follow-up automatic check failed")
 
-            radar_sync_task = asyncio.create_task(radar_sync_loop())
+            if radar_auto_enabled:
+                radar_sync_task = asyncio.create_task(radar_sync_loop())
+            if followup_auto_enabled:
+                followup_check_task = asyncio.create_task(followup_check_loop())
     try:
         yield
     finally:
@@ -110,6 +154,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             radar_sync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await radar_sync_task
+        if followup_check_task:
+            followup_check_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await followup_check_task
 
 
 def create_app() -> FastAPI:

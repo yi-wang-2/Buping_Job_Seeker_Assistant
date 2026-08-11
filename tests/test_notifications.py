@@ -16,6 +16,7 @@ def test_notification_secrets_are_not_returned(monkeypatch):
 
 
 def test_duplicate_event_is_only_sent_once(monkeypatch, tmp_path):
+    monkeypatch.setenv("BUPING_ALLOW_TEST_NOTIFICATIONS", "1")
     monkeypatch.setattr(notifications, "LOG_DB", tmp_path / "notifications.sqlite3")
     monkeypatch.setattr(notifications, "get_settings", lambda **_: {
         "email_enabled": True, "wechat_enabled": False,
@@ -36,11 +37,11 @@ def test_status_change_and_login_expiry_trigger_notifications(monkeypatch):
     job_tracker._apply_followup_result(record, {
         "result": "changed", "status": "技术面", "raw_status": "专业面试",
         "checked_at": "2026-08-11T00:00:00+00:00", "connection_state": "connected",
-    })
+    }, notify=True)
     job_tracker._apply_followup_result(record, {
         "result": "login_required", "checked_at": "2026-08-12T00:00:00+00:00",
         "connection_state": "login_required", "message": "登录失效",
-    })
+    }, notify=True)
     assert len(events) == 2
     assert "原状态：简历筛选" in events[0][1]
     assert "登录已失效" in events[1][1]
@@ -52,9 +53,20 @@ def test_notification_failure_does_not_block_status_update(monkeypatch):
     job_tracker._apply_followup_result(record, {
         "result": "changed", "status": "笔试", "raw_status": "在线测评",
         "checked_at": "2026-08-11T00:00:00+00:00", "connection_state": "connected",
-    })
+    }, notify=True)
     assert record["status"] == "笔试"
     assert record["last_notification"]["results"][0]["status"] == "error"
+
+
+def test_plain_status_application_never_notifies(monkeypatch):
+    monkeypatch.setattr(job_tracker.notification_service, "send_notification", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not send")))
+    record = {"id": 9, "status": "简历筛选", "status_history": []}
+    job_tracker._apply_followup_result(record, {
+        "result": "changed", "status": "技术面", "raw_status": "测试数据",
+        "checked_at": "2026-08-11T00:00:00+00:00", "connection_state": "connected",
+    })
+    assert record["status"] == "技术面"
+    assert "last_notification" not in record
 
 
 def test_serverchan_endpoint_supports_turbo_and_sc3_keys():

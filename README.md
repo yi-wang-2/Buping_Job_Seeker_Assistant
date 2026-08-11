@@ -90,7 +90,11 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
 
 - **🧭 求职记录面板**
   - 可为每条投递连接 Moka、飞书招聘、zhiye.com 或其他投递中心，使用本地独立 Chrome Profile 保存登录会话
-  - 支持立即检查、每天 06:00 自动检查、登录/验证码失效提示和状态变化时间线；不保存密码，也不绕过人机验证
+  - 支持立即检查和可选定时间隔（4 / 6 / 8 / 12 / 24 小时），默认每 8 小时于 04:00 / 12:00 / 20:00 检查；错过时段后启动会补做最近一次
+  - 状态识别采用“本地规则优先、LLM 兜底”：陌生网站或多志愿表格由 `job_status_classifier` 理解页面语义，结论必须引用页面原文且置信度达到 85%
+  - LLM 兜底仅发送限长后的必要页面文本，支持 7 天 Prompt Cache，并记录识别方式、置信度、Token 与缓存命中情况
+  - 登录失效、需要人机验证或状态变化时，可通过 SMTP 邮件和 Server酱推送到个人微信；通知按事件去重，发送失败不影响状态保存
+  - 不保存招聘网站密码，也不绕过短信、滑块或其他人机验证
   - 记录公司、岗位、地点、状态、链接、备注与面试笔记
   - 支持内联编辑、状态统计、JSON 导入/导出
   - 记录保存到 `data_folder/job_tracker/records.json`
@@ -138,6 +142,7 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
   - 模型类型选择（`anthropic` / `openai`）
   - 简历语言选择（中文/英文）
   - AI 记忆与 Prompt Cache 隐私控制
+  - 求职状态通知：SMTP 邮件、Server酱个人微信、测试通知与凭证状态提示
   - 配置会写入 `data_folder/secrets.yaml`
 
 - **📚 历史记录**
@@ -165,6 +170,7 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
 | AI Runtime | Skill Registry + Context Manager + LLM Gateway |
 | 记忆与缓存 | SQLite/WAL + Prompt Cache |
 | 观测性 | JSONL Trace + AI Metrics API |
+| 求职状态通知 | SMTP Email + Server酱微信推送 + SQLite 去重日志 |
 | PDF 生成 | Selenium + Chrome DevTools Protocol |
 | 数据验证 | Pydantic v2 |
 | LLM 框架 | LangChain |
@@ -185,6 +191,10 @@ Buping_Job_Seeker_Assistant/
 ├── backend/                     # FastAPI 后端
 │   ├── app.py                   # FastAPI 入口
 │   ├── dev_launcher.py          # 开发启动器 (同时启前后端)
+│   ├── services/
+│   │   ├── job_radar_service.py    # 岗位同步、去重、偏好评分与每日推荐
+│   │   ├── job_followup_service.py # 招聘网站会话与状态识别
+│   │   └── notification_service.py # SMTP / Server酱发送与事件去重
 │   └── api/
 │       ├── router.py            # API 路由汇总
 │       └── endpoints/
@@ -193,6 +203,7 @@ Buping_Job_Seeker_Assistant/
 │           ├── settings.py      # 配置管理 API
 │           ├── history.py       # 历史记录 API
 │           ├── job_tracker.py   # 求职记录 API
+│           ├── job_radar.py     # 岗位雷达 API
 │           ├── memory.py        # AI 记忆与缓存设置 API
 │           ├── ai_metrics.py    # AI 调用监控 API
 │           └── ai_skills.py     # JD 分析 / 技能匹配 / 职业建议 API
@@ -202,7 +213,9 @@ Buping_Job_Seeker_Assistant/
 │   ├── plain_text_resume_zh.yaml # 简历内容 (中文)
 │   ├── work_preferences.yaml    # 工作偏好
 │   ├── work_preferences_zh.yaml
-│   ├── job_tracker/             # 求职记录与公司图标
+│   ├── job_tracker/             # 求职记录、公司图标与通知去重日志
+│   ├── browser_profiles/        # 招聘网站本地 Chrome 登录会话
+│   ├── job_radar.sqlite3        # 岗位快照、偏好和用户操作
 │   ├── ai_memory.sqlite3        # 本地 AI 记忆 / 缓存 / 简历版本库
 │   └── secrets.yaml             # API 密钥 (模板)
 │
@@ -297,6 +310,16 @@ system_language: "zh"
 > **语音面试说明**：推荐使用 MiniMax TTS 流式播报，需要有效的 MiniMax API Key。
 > 若未单独配置 `minimax_tts_api_key`，系统会尝试复用 `llm_api_key`。
 > 本地 TTS 可选择 Kokoro 或 ChatTTS，其中 ChatTTS 更依赖 GPU。
+
+### 配置邮件与个人微信通知
+
+进入「设置 → 求职状态通知」配置两个渠道。个人微信通知使用 [Server酱](https://sct.ftqq.com/)，支持 `SCT...` 与新版 `sctp...` SendKey；系统不会登录或控制个人微信客户端。
+
+邮件以 QQ 邮箱为例：SMTP 主机填写 `smtp.qq.com`，端口 `465`，加密选择 `SSL`，密码填写邮箱生成的 SMTP 授权码而不是登录密码。保存后点击「发送测试通知」验证两个渠道。
+
+> 通知凭证仅保存在本地 `data_folder/secrets.yaml`，接口不会将授权码或 SendKey 返回前端，通知日志也不记录凭证明文。该配置文件本身为本地明文文件，请勿提交到 Git。
+
+> 每日同步与自动跟进依赖后端进程运行；电脑关机或休眠时无法准时检查，应用恢复运行后会按调度逻辑补做当日检查。
 
 ---
 
@@ -415,8 +438,20 @@ projects:
 1. 点击「求职记录」
 2. 录入公司、岗位、地点、状态、链接和备注
 3. 在表格中直接编辑状态、链接或笔记
-4. 使用 JSON 导入/导出备份记录
-5. 数据保存在 `data_folder/job_tracker/records.json`
+4. 点击盾牌按钮连接招聘网站；在普通 Chrome 中自行完成登录和验证后关闭窗口并确认
+5. 可在页面顶部选择 4 / 6 / 8 / 12 / 24 小时检查间隔；默认 8 小时，对应 04:00、12:00、20:00
+6. 可为每条记录启用定时自动跟进，以及“本地规则失败时使用 AI 兜底”
+7. 检查结果会显示网站原文、识别方式、LLM 置信度和本次 Token；多志愿页面自动交给 LLM 解析申请级状态
+8. 在「设置 → 求职状态通知」配置邮件和个人微信后，登录失效、人机验证或状态变化会自动提醒
+9. 使用 JSON 导入/导出备份记录；数据保存在 `data_folder/job_tracker/records.json`
+
+### 📡 岗位雷达
+
+1. 点击「岗位雷达」，填写腾讯智能表格链接并同步岗位
+2. 在“我的求职偏好”中配置目标岗位、地点、行业、招聘类型、关键词和评分权重
+3. 查看每天 3 家高匹配企业，并按公司类型、匹配度和招聘类型筛选
+4. 可收藏、不感兴趣或确认信息后加入求职记录；已操作或已投递岗位不会持续占用每日推荐
+5. 应用运行期间每天 06:00 自动同步最近使用的数据源，并通过本地 SQLite 去重
 
 ### 📈 AI 监控
 1. 点击「AI 监控」
