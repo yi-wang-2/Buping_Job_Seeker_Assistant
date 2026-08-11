@@ -1,4 +1,5 @@
 import os
+import logging
 import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -30,7 +31,7 @@ def _find_chrome_binary():
     ]
     return next((path for path in candidates if os.path.isfile(path)), None)
 
-def chrome_browser_options(headless: bool = True):
+def chrome_browser_options(headless: bool = True, user_data_dir: str | None = None):
     logger.debug("Setting Chrome browser options")
     options = Options()
     options.add_argument("--start-maximized")
@@ -51,18 +52,25 @@ def chrome_browser_options(headless: bool = True):
     options.add_argument("--disable-plugins")
     options.add_argument("--disable-animations")
     options.add_argument("--disable-cache")
-    options.add_argument("--incognito")
+    if user_data_dir:
+        options.add_argument(f"--user-data-dir={os.path.abspath(user_data_dir)}")
+    else:
+        options.add_argument("--incognito")
     if headless:
-        options.add_argument("--headless=new")  # Aggiunto headless per evitare che la finestra del browser appaia
-    options.add_argument("--allow-file-access-from-files")  # Consente l'accesso ai file locali
-    options.add_argument("--disable-web-security")         # Disabilita la sicurezza web
+        options.add_argument("--headless=new")  # PDF rendering and other background tasks
+    if not user_data_dir:
+        options.add_argument("--allow-file-access-from-files")
+        options.add_argument("--disable-web-security")
     logger.debug("Using Chrome in incognito mode")
     
     return options
 
-def init_browser(headless: bool = True) -> webdriver.Chrome:
+def init_browser(headless: bool = True, user_data_dir: str | None = None) -> webdriver.Chrome:
     try:
-        options = chrome_browser_options(headless=headless)
+        # Selenium's DEBUG transport logger includes full command responses,
+        # which may contain private resume/application page text.
+        logging.getLogger("selenium.webdriver.remote.remote_connection").setLevel(logging.WARNING)
+        options = chrome_browser_options(headless=headless, user_data_dir=user_data_dir)
         # Give Selenium Manager the exact executable. This is especially important
         # on Windows versions where the legacy `wmic` command is no longer present.
         chrome_binary = _find_chrome_binary()

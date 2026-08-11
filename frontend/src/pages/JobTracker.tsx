@@ -17,11 +17,20 @@ import {
   Image as ImageIcon,
   FileDown,
   Server,
+  History,
+  LoaderCircle,
+  LogIn,
+  RefreshCw,
+  ShieldCheck,
 } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
   getJobTrackerRecords,
   saveJobTrackerRecords,
+  checkAllJobFollowups,
+  checkJobFollowup,
+  completeJobFollowupLogin,
+  connectJobFollowup,
   type JobEntry,
 } from "../api/client";
 
@@ -153,6 +162,10 @@ export default function JobTracker({ t }: Props) {
   const [currentEntry, setCurrentEntry] = useState<JobEntry | null>(null);
   const [tempNotes, setTempNotes] = useState("");
   const [syncStatus, setSyncStatus] = useState<"loading" | "synced" | "unsaved" | "error">("loading");
+  const [followupEntry, setFollowupEntry] = useState<JobEntry | null>(null);
+  const [followupDraft, setFollowupDraft] = useState({ enabled: false, aiEnabled: true, platform: "generic", url: "" });
+  const [followupBusy, setFollowupBusy] = useState(false);
+  const [followupMessage, setFollowupMessage] = useState("");
 
   const iconFileInputRef = useRef<HTMLInputElement>(null);
   const dataFileInputRef = useRef<HTMLInputElement>(null);
@@ -273,6 +286,85 @@ export default function JobTracker({ t }: Props) {
   const deleteEntry = useCallback((id: number) => {
     if (!window.confirm("确定要删除这条记录吗？")) return;
     setEntries((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+
+  const openFollowup = useCallback((entry: JobEntry) => {
+    const host = (() => { try { return new URL(entry.followup_url || entry.link).hostname; } catch { return ""; } })();
+    const detected = host.includes("mokahr.com") ? "moka" : host.includes("jobs.feishu.cn") ? "feishu" : host.includes("zhiye.com") ? "zhiye" : "generic";
+    setFollowupEntry(entry);
+    setFollowupDraft({ enabled: entry.followup_enabled ?? false, aiEnabled: entry.followup_ai_enabled ?? true, platform: entry.followup_platform || detected, url: entry.followup_url || entry.link });
+    setFollowupMessage("");
+  }, []);
+
+  const persistFollowupDraft = useCallback(async () => {
+    if (!followupEntry) return [] as JobEntry[];
+    const updated = entries.map((entry) => entry.id === followupEntry.id ? {
+      ...entry, followup_enabled: followupDraft.enabled, followup_ai_enabled: followupDraft.aiEnabled, followup_platform: followupDraft.platform,
+      followup_url: followupDraft.url,
+    } : entry);
+    setEntries(updated);
+    await saveJobTrackerRecords(updated);
+    return updated;
+  }, [entries, followupDraft, followupEntry]);
+
+  const connectFollowup = useCallback(async () => {
+    if (!followupEntry || !followupDraft.url) return;
+    setFollowupBusy(true);
+    try {
+      await persistFollowupDraft();
+      const result = await connectJobFollowup(followupDraft.platform, followupDraft.url);
+      setFollowupMessage(result.message);
+    } catch (error: any) {
+      setFollowupMessage(error?.response?.data?.detail || error?.message || "连接失败");
+    } finally {
+      setFollowupBusy(false);
+    }
+  }, [followupDraft, followupEntry, persistFollowupDraft]);
+
+  const completeFollowup = useCallback(async () => {
+    if (!followupEntry) return;
+    setFollowupBusy(true);
+    try {
+      const result = await completeJobFollowupLogin(followupDraft.platform);
+      setFollowupMessage(result.message);
+      if (result.status === "connected") {
+        setEntries((current) => current.map((entry) => entry.id === followupEntry.id ? { ...entry, followup_state: "connected" } : entry));
+      }
+    } catch (error: any) {
+      setFollowupMessage(error?.response?.data?.detail || error?.message || "确认登录失败");
+    } finally {
+      setFollowupBusy(false);
+    }
+  }, [followupDraft.platform, followupEntry]);
+
+  const checkFollowup = useCallback(async () => {
+    if (!followupEntry) return;
+    setFollowupBusy(true);
+    try {
+      await persistFollowupDraft();
+      const result = await checkJobFollowup(followupEntry.id);
+      setEntries((current) => current.map((entry) => entry.id === followupEntry.id ? result.record : entry));
+      setFollowupEntry(result.record);
+      setFollowupMessage(result.message);
+    } catch (error: any) {
+      setFollowupMessage(error?.response?.data?.detail || error?.message || "检查失败");
+    } finally {
+      setFollowupBusy(false);
+    }
+  }, [followupEntry, persistFollowupDraft]);
+
+  const checkAllFollowups = useCallback(async () => {
+    setFollowupBusy(true);
+    try {
+      const result = await checkAllJobFollowups();
+      const refreshed = await getJobTrackerRecords();
+      setEntries(refreshed.records);
+      window.alert(`检查完成：${result.checked} 条自动跟进记录`);
+    } catch (error: any) {
+      window.alert(error?.response?.data?.detail || error?.message || "自动跟进检查失败");
+    } finally {
+      setFollowupBusy(false);
+    }
   }, []);
 
   /* ---- icon upload ---- */
@@ -466,6 +558,7 @@ export default function JobTracker({ t }: Props) {
         </div>
 
         <div className="flex gap-4 items-center">
+          <button onClick={() => void checkAllFollowups()} disabled={followupBusy} className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300"><RefreshCw className={`h-4 w-4 ${followupBusy ? "animate-spin" : ""}`} />检查自动跟进</button>
           <div className="flex flex-col gap-2 mr-4">
             <button
               onClick={triggerDataImport}
@@ -821,13 +914,13 @@ export default function JobTracker({ t }: Props) {
 
                   {/* Actions */}
                   <td className="py-4 px-6 text-center">
-                    <button
+                    <div className="flex items-center justify-center gap-1"><button onClick={() => openFollowup(entry)} className={`rounded-lg p-2 transition-colors ${entry.followup_enabled ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300" : "text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/30"}`} title={entry.followup_enabled ? `自动跟进：${entry.followup_state || "待连接"}` : "设置自动跟进"}><ShieldCheck className="h-4 w-4" /></button><button
                       onClick={() => deleteEntry(entry.id)}
                       className="text-gray-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 opacity-0 group-hover:opacity-100"
                       title={jt.deleteAction}
                     >
                       <Trash2 className="h-4 w-4" />
-                    </button>
+                    </button></div>
                   </td>
                 </tr>
               ))}
@@ -863,6 +956,20 @@ export default function JobTracker({ t }: Props) {
         className="hidden"
         onChange={handleDataImport}
       />
+
+      {/* Automatic follow-up modal */}
+      {followupEntry && <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={() => setFollowupEntry(null)} /><div className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
+        <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700"><div><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white"><ShieldCheck className="h-5 w-5 text-emerald-500" />自动跟进 · {followupEntry.company}</h3><p className="mt-1 text-xs text-gray-500">使用本地独立 Chrome 会话；不保存密码，不绕过验证码。</p></div><button onClick={() => setFollowupEntry(null)} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"><X className="h-5 w-5" /></button></div>
+        <div className="space-y-4 p-5">
+          <label className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">启用每日自动跟进</span><span className="text-xs text-gray-500">每天 06:00 检查；登录失效后停止更新并提示</span></span><input type="checkbox" checked={followupDraft.enabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, enabled: event.target.checked }))} className="h-4 w-4" /></label>
+          <label className="flex items-center justify-between rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 dark:border-indigo-900 dark:bg-indigo-950/20"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">本地规则失败时使用 AI 兜底</span><span className="text-xs text-gray-500">仅发送解析所需页面文本，优先目标岗位附近；结论须由页面原文核验，相同页面优先走缓存</span></span><input type="checkbox" checked={followupDraft.aiEnabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, aiEnabled: event.target.checked }))} className="h-4 w-4" /></label>
+          <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-gray-600 dark:text-gray-300"><span className="mb-1 block font-medium">招聘平台</span><select value={followupDraft.platform} onChange={(event) => setFollowupDraft((current) => ({ ...current, platform: event.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="moka">Moka</option><option value="feishu">飞书招聘</option><option value="zhiye">zhiye.com</option><option value="generic">其他网站</option></select></label><label className="text-xs text-gray-600 dark:text-gray-300 sm:col-span-2"><span className="mb-1 block font-medium">投递中心/个人中心链接</span><input value={followupDraft.url} onChange={(event) => setFollowupDraft((current) => ({ ...current, url: event.target.value }))} placeholder="请填写能看到投递状态的个人中心链接" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></label></div>
+          <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">连接状态：{followupEntry.followup_state || "not_connected"}</span>{followupEntry.last_checked_at && <span className="text-xs text-gray-500">上次检查：{new Date(followupEntry.last_checked_at).toLocaleString()}</span>}{followupEntry.last_raw_status && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">网站原文：{followupEntry.last_raw_status}</span>}{followupEntry.last_parser && <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs text-violet-700 dark:bg-violet-950/30 dark:text-violet-300">识别方式：{followupEntry.last_parser === "llm" ? "AI 兜底" : followupEntry.last_parser === "local" ? "本地规则" : "未识别"}</span>}{followupEntry.last_parser === "llm" && <span className="text-xs text-gray-500">置信度：{Math.round((followupEntry.last_llm_confidence || 0) * 100)}% · 本次 {followupEntry.last_llm_tokens || 0} tokens</span>}</div>
+          {followupMessage && <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{followupMessage}</div>}
+          <div className="flex flex-wrap gap-2"><button onClick={() => void connectFollowup()} disabled={followupBusy || !followupDraft.url} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"><LogIn className="h-4 w-4" />普通 Chrome 登录</button><button onClick={() => void completeFollowup()} disabled={followupBusy} className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">关闭登录窗口后确认</button><button onClick={() => void checkFollowup()} disabled={followupBusy || !followupDraft.url} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 px-3 py-2 text-sm font-medium text-emerald-700 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300">{followupBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}立即检查</button><button onClick={async () => { await persistFollowupDraft(); setFollowupMessage("自动跟进设置已保存"); }} disabled={followupBusy} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white"><Save className="h-4 w-4" />保存设置</button></div>
+          <div className="border-t border-gray-100 pt-4 dark:border-gray-700"><h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100"><History className="h-4 w-4" />状态时间线</h4>{(followupEntry.status_history || []).length === 0 ? <p className="text-sm text-gray-400">尚未检测到状态变化。</p> : <div className="space-y-3">{[...(followupEntry.status_history || [])].reverse().map((event, index) => <div key={`${event.checked_at}-${index}`} className="border-l-2 border-indigo-200 pl-3 dark:border-indigo-800"><div className="text-sm font-medium text-gray-800 dark:text-gray-100">{event.status}</div><div className="text-xs text-gray-500">{new Date(event.checked_at).toLocaleString()} · {event.raw_status || "网站状态"}</div>{event.evidence_url && <a href={event.evidence_url} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline">查看检查页面</a>}</div>)}</div>}</div>
+        </div>
+      </div></div>}
 
       {/* Notes Modal */}
       {isModalOpen && (

@@ -209,6 +209,9 @@ data_folder/resume_photo.jpeg
 data_folder/resume_photo.webp
 # Job tracker user records (icon assets are tracked)
 data_folder/job_tracker/records.json
+data_folder/job_tracker/notifications.sqlite3
+# Dedicated Chrome profiles may contain private login cookies and tokens.
+data_folder/browser_profiles/
 # ChatTTS local weights are multi-gigabyte runtime assets. Kokoro is kept in
 # Git LFS so its bundled offline voice remains reproducible.
 data_folder/models/ChatTTS/

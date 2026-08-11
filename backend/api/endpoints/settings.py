@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.services import config_service
+from backend.services import notification_service
 from backend.services.resume_validation import validate_resume_data, validate_resume_yaml
 from src.libs.resume_and_cover_builder.document_parser import parse_document
 from src.logging import logger
@@ -41,6 +42,19 @@ class DiscoverModelsRequest(BaseModel):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_protocol: str = "openai_chat"
+
+
+class NotificationSettingsRequest(BaseModel):
+    email_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_to: str = ""
+    smtp_security: str = "ssl"
+    wechat_enabled: bool = False
+    serverchan_sendkey: str = ""
 
 
 @router.get("", response_model=SettingsResponse)
@@ -93,6 +107,27 @@ async def discover_models(req: DiscoverModelsRequest) -> dict:
         req.llm_api_key, req.llm_base_url, req.llm_protocol
     )
     return {"models": models}
+
+
+@router.get("/notifications")
+def get_notification_settings() -> dict:
+    return notification_service.get_settings()
+
+
+@router.put("/notifications")
+def save_notification_settings(req: NotificationSettingsRequest) -> dict:
+    try:
+        return {"status": "success", "settings": notification_service.save_settings(req.model_dump())}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/notifications/test")
+def test_notifications() -> dict:
+    result = notification_service.send_test_notification()
+    if not result["results"]:
+        raise HTTPException(status_code=400, detail="请先启用并保存至少一个通知渠道")
+    return {"status": "success", **result}
 
 
 class ResumeContentRequest(BaseModel):

@@ -547,6 +547,39 @@ export async function saveSettings(params: {
   return data;
 }
 
+export interface NotificationSettings {
+  email_enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_from: string;
+  smtp_to: string;
+  smtp_security: "ssl" | "starttls" | "none";
+  wechat_enabled: boolean;
+  smtp_password_configured: boolean;
+  serverchan_sendkey_configured: boolean;
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const { data } = await api.get("/settings/notifications");
+  return data;
+}
+
+export async function saveNotificationSettings(settings: NotificationSettings & {
+  smtp_password?: string;
+  serverchan_sendkey?: string;
+}): Promise<{ status: string; settings: NotificationSettings }> {
+  const { data } = await api.put("/settings/notifications", settings);
+  return data;
+}
+
+export async function testNotifications(): Promise<{
+  status: string; sent: number; results: Array<{ channel: string; status: string; error?: string }>;
+}> {
+  const { data } = await api.post("/settings/notifications/test", {}, { timeout: 30000 });
+  return data;
+}
+
 export interface ResumeValidationItem {
   path: string;
   message: string;
@@ -626,6 +659,19 @@ export interface JobEntry {
   status: string;
   icon: string;
   notes: string;
+  followup_enabled?: boolean;
+  followup_ai_enabled?: boolean;
+  followup_platform?: string;
+  followup_url?: string;
+  followup_state?: string;
+  last_checked_at?: string;
+  last_raw_status?: string;
+  last_check_message?: string;
+  last_parser?: string;
+  last_llm_confidence?: number | null;
+  last_llm_tokens?: number;
+  last_notification?: { sent: number; results: Array<{ channel: string; status: string; error?: string }> };
+  status_history?: Array<{ status: string; raw_status: string; checked_at: string; evidence_url: string; source: string }>;
 }
 
 export async function getJobTrackerRecords(): Promise<{ records: JobEntry[]; count: number }> {
@@ -669,6 +715,26 @@ export async function getJobTrackerStats(): Promise<{
     };
   }
   const { data } = await api.get("/job-tracker/stats");
+  return data;
+}
+
+export async function connectJobFollowup(platform: string, portalUrl: string): Promise<{ status: string; platform: string; message: string }> {
+  const { data } = await api.post("/job-tracker/followup/connect", { platform, portal_url: portalUrl }, { timeout: 120000 });
+  return data;
+}
+
+export async function completeJobFollowupLogin(platform: string): Promise<{ status: string; platform: string; message: string }> {
+  const { data } = await api.post("/job-tracker/followup/complete", { platform });
+  return data;
+}
+
+export async function checkJobFollowup(entryId: number): Promise<{ status: string; record: JobEntry; result: string; message: string }> {
+  const { data } = await api.post(`/job-tracker/${entryId}/followup/check`, {}, { timeout: 120000 });
+  return data;
+}
+
+export async function checkAllJobFollowups(): Promise<{ status: string; checked: number; results: Array<Record<string, unknown>> }> {
+  const { data } = await api.post("/job-tracker/followup/check-all", {}, { timeout: 300000 });
   return data;
 }
 

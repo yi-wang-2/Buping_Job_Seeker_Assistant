@@ -61,7 +61,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from src.libs.ai_engine.memory import SQLiteMemoryRepository
         SQLiteMemoryRepository(ROOT / "data_folder" / "ai_memory.sqlite3")
         radar_auto_enabled = os.getenv("BUPING_JOB_RADAR_AUTO_SYNC", "1").lower() not in {"0", "false", "no"}
-        if radar_auto_enabled:
+        followup_auto_enabled = os.getenv("BUPING_JOB_FOLLOWUP_AUTO_CHECK", "1").lower() not in {"0", "false", "no"}
+        if radar_auto_enabled or followup_auto_enabled:
+            from backend.api.endpoints import job_tracker
             from backend.services import job_radar_service
 
             async def radar_sync_loop() -> None:
@@ -74,19 +76,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     if last_sync and last_sync.get("created_at"):
                         with contextlib.suppress(ValueError):
                             last_sync_date = datetime.fromisoformat(last_sync["created_at"]).astimezone().date()
-                    catch_up = now >= today_run and attempted_date != now.date() and last_sync_date != now.date()
+                    catch_up = now >= today_run and attempted_date != now.date() and (
+                        last_sync_date != now.date() or followup_auto_enabled
+                    )
                     next_run = now + timedelta(seconds=5) if catch_up else today_run
                     if not catch_up and next_run <= now:
                         next_run += timedelta(days=1)
                     await asyncio.sleep((next_run - now).total_seconds())
                     settings = job_radar_service.get_radar_settings()
                     attempted_date = datetime.now().astimezone().date()
-                    if settings["auto_sync"]:
+                    if radar_auto_enabled and settings["auto_sync"]:
                         try:
                             await asyncio.to_thread(job_radar_service.sync_tencent_sheet, settings["source_url"])
                             logger.info("Job Radar automatic sync completed")
                         except Exception:
                             logger.exception("Job Radar automatic sync failed")
+                    if followup_auto_enabled:
+                        try:
+                            result = await asyncio.to_thread(job_tracker.run_followup_all)
+                            logger.info("Job follow-up automatic check completed: %s", result.get("checked", 0))
+                        except Exception:
+                            logger.exception("Job follow-up automatic check failed")
 
             radar_sync_task = asyncio.create_task(radar_sync_loop())
     try:

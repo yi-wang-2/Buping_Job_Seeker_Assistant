@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from backend.services import job_followup_service
+from backend.services import notification_service
 
 router = APIRouter()
 
@@ -15,6 +18,14 @@ DATA_FILE = DATA_DIR / "records.json"
 
 
 # ---- Pydantic models ----
+
+class StatusEvent(BaseModel):
+    status: str
+    raw_status: str = ""
+    checked_at: str
+    evidence_url: str = ""
+    source: str = "website"
+
 
 class JobEntry(BaseModel):
     id: int
@@ -26,10 +37,32 @@ class JobEntry(BaseModel):
     status: str
     icon: str
     notes: str
+    followup_enabled: bool = False
+    followup_ai_enabled: bool = True
+    followup_platform: str = ""
+    followup_url: str = ""
+    followup_state: str = "not_connected"
+    last_checked_at: str = ""
+    last_raw_status: str = ""
+    last_check_message: str = ""
+    last_parser: str = ""
+    last_llm_confidence: float | None = None
+    last_llm_tokens: int = 0
+    last_notification: dict = Field(default_factory=dict)
+    status_history: list[StatusEvent] = Field(default_factory=list)
 
 
 class JobTrackerData(BaseModel):
     records: list[JobEntry]
+
+
+class FollowupConnectionRequest(BaseModel):
+    platform: str = ""
+    portal_url: str
+
+
+class FollowupCompleteRequest(BaseModel):
+    platform: str
 
 
 # ---- Helpers ----
@@ -62,6 +95,71 @@ def _save_records(records: list[dict]) -> None:
     )
 
 
+def _apply_followup_result(record: dict, result: dict) -> None:
+    old_status = str(record.get("status") or "")
+    record["last_checked_at"] = result.get("checked_at", "")
+    record["followup_state"] = result.get("connection_state", record.get("followup_state", ""))
+    record["last_raw_status"] = result.get("raw_status", "")
+    record["last_check_message"] = result.get("message", "")
+    record["last_parser"] = result.get("parser", "")
+    record["last_llm_confidence"] = result.get("llm_confidence")
+    record["last_llm_tokens"] = int((result.get("llm_usage") or {}).get("total_tokens", 0))
+    new_status = result.get("status")
+    status_changed = bool(new_status and new_status != old_status)
+    if status_changed:
+        record["status"] = new_status
+        history = record.setdefault("status_history", [])
+        history.append({
+            "status": new_status,
+            "raw_status": result.get("raw_status", ""),
+            "checked_at": result.get("checked_at", ""),
+            "evidence_url": result.get("evidence_url", ""),
+            "source": "website",
+        })
+    notification = None
+    company = str(record.get("company") or "未知企业")
+    role = str(record.get("role") or "未知岗位")
+    if status_changed:
+        notification = _safe_notify(
+            f"求职状态更新：{company}",
+            f"企业：{company}\n岗位：{role}\n原状态：{old_status or '未记录'}\n新状态：{new_status}\n网站原文：{result.get('raw_status') or '无'}\n检查时间：{result.get('checked_at') or '未知'}",
+            event_key=f"status:{record.get('id')}:{old_status}:{new_status}",
+        )
+    elif result.get("result") in {"login_required", "verification_required"}:
+        reason = "登录已失效" if result.get("result") == "login_required" else "网站要求人机验证"
+        notification = _safe_notify(
+            f"求职跟进需要处理：{company}",
+            f"企业：{company}\n岗位：{role}\n问题：{reason}\n请打开不平，在求职记录中重新登录或完成验证。",
+            event_key=f"auth:{record.get('id')}:{result.get('result')}", dedup_seconds=86400,
+        )
+    if notification:
+        record["last_notification"] = notification
+
+
+def _safe_notify(title: str, body: str, **kwargs: object) -> dict:
+    try:
+        return notification_service.send_notification(title, body, **kwargs)
+    except Exception as exc:
+        return {"sent": 0, "results": [{"channel": "system", "status": "error", "error": str(exc)}]}
+
+
+def run_followup_all() -> dict:
+    records = _load_records()
+    results = []
+    for record in records:
+        if not record.get("followup_enabled"):
+            continue
+        try:
+            result = job_followup_service.check_application(record)
+        except Exception as exc:
+            result = {"result": "error", "connection_state": "error", "message": str(exc), "checked_at": ""}
+        _apply_followup_result(record, result)
+        results.append({"id": record.get("id"), **result})
+    if results:
+        _save_records(records)
+    return {"status": "ok", "checked": len(results), "results": results}
+
+
 # ---- Endpoints ----
 
 @router.get("")
@@ -86,6 +184,39 @@ def save_records(payload: JobTrackerData) -> dict:
 def get_data_path() -> dict:
     """Return the on-disk path of the records file."""
     return {"path": str(DATA_FILE), "dir": str(DATA_DIR)}
+
+
+@router.post("/followup/connect")
+def connect_followup(req: FollowupConnectionRequest) -> dict:
+    try:
+        return job_followup_service.open_login_browser(req.platform, req.portal_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/followup/complete")
+def complete_followup(req: FollowupCompleteRequest) -> dict:
+    return job_followup_service.complete_login(req.platform)
+
+
+@router.post("/followup/check-all")
+def check_all_followups() -> dict:
+    return run_followup_all()
+
+
+@router.post("/{entry_id}/followup/check")
+def check_followup(entry_id: int) -> dict:
+    records = _load_records()
+    record = next((item for item in records if int(item.get("id", -1)) == entry_id), None)
+    if not record:
+        raise HTTPException(status_code=404, detail="求职记录不存在")
+    try:
+        result = job_followup_service.check_application(record, headless=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _apply_followup_result(record, result)
+    _save_records(records)
+    return {"status": "ok", "record": record, **result}
 
 
 @router.get("/stats")

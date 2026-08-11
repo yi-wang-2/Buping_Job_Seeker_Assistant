@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2, Image as ImageIcon } from "lucide-react";
+import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2, Image as ImageIcon, Mail, MessageCircle, Send } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
   getSettings,
@@ -14,6 +14,10 @@ import {
   clearAIMemory,
   getMemorySettings,
   saveMemorySettings,
+  getNotificationSettings,
+  saveNotificationSettings,
+  testNotifications,
+  type NotificationSettings,
   type ResumeValidation,
 } from "../api/client";
 import { useAvailableModels } from "../hooks/useAvailableModels";
@@ -116,6 +120,14 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [cacheEnabled, setCacheEnabled] = useState(true);
   const [memoryStatus, setMemoryStatus] = useState("");
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
+    email_enabled: false, smtp_host: "", smtp_port: 465, smtp_username: "", smtp_from: "", smtp_to: "",
+    smtp_security: "ssl", wechat_enabled: false, smtp_password_configured: false, serverchan_sendkey_configured: false,
+  });
+  const [smtpPassword, setSmtpPassword] = useState("");
+  const [serverchanSendkey, setServerchanSendkey] = useState("");
+  const [notificationStatus, setNotificationStatus] = useState("");
+  const [notificationBusy, setNotificationBusy] = useState(false);
 
   const [resumeContent, setResumeContent] = useState("");
   const [resumeStatus, setResumeStatus] = useState("");
@@ -147,6 +159,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setMemoryEnabled(settings.memory_enabled);
       setCacheEnabled(settings.cache_enabled);
     }).catch(() => {});
+    getNotificationSettings().then(setNotificationSettings).catch(() => {});
     getResumePhotoStatus().then((result) => {
       setPhotoUploaded(result.uploaded);
       if (result.uploaded) setPhotoCacheKey(String(Date.now()));
@@ -198,6 +211,42 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setMemoryStatus(`已删除 ${result.deleted} 条长期记忆`);
     } catch (err: any) {
       setMemoryStatus(`❌ ${err.message}`);
+    }
+  };
+
+  const handleSaveNotifications = async () => {
+    setNotificationBusy(true);
+    try {
+      const result = await saveNotificationSettings({
+        ...notificationSettings, smtp_password: smtpPassword, serverchan_sendkey: serverchanSendkey,
+      });
+      setNotificationSettings(result.settings);
+      setSmtpPassword("");
+      setServerchanSendkey("");
+      setNotificationStatus("通知设置已保存");
+    } catch (err: any) {
+      setNotificationStatus(`❌ ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setNotificationBusy(false);
+    }
+  };
+
+  const handleTestNotifications = async () => {
+    setNotificationBusy(true);
+    try {
+      const saved = await saveNotificationSettings({
+        ...notificationSettings, smtp_password: smtpPassword, serverchan_sendkey: serverchanSendkey,
+      });
+      setNotificationSettings(saved.settings);
+      setSmtpPassword("");
+      setServerchanSendkey("");
+      const result = await testNotifications();
+      const summary = result.results.map((item) => `${item.channel === "email" ? "邮件" : "微信"}：${item.status === "success" ? "成功" : item.error || item.status}`).join("；");
+      setNotificationStatus(summary || "没有启用通知渠道");
+    } catch (err: any) {
+      setNotificationStatus(`❌ ${err?.response?.data?.detail || err.message}`);
+    } finally {
+      setNotificationBusy(false);
     }
   };
 
@@ -418,6 +467,41 @@ export default function SettingsPage({ t }: { t: Strings }) {
               {configStatus}
             </span>
           )}
+        </div>
+      </div>
+
+      {/* Job follow-up notifications */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <h3 className="mb-2 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <MessageCircle className="h-5 w-5 text-brand-500" />求职状态通知
+        </h3>
+        <p className="mb-5 text-sm text-gray-500 dark:text-gray-400">登录失效、需要人机验证或投递状态变化时通知。相同登录问题 24 小时内只发送一次。</p>
+
+        <div className="space-y-5">
+          <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <label className="mb-4 flex items-center justify-between gap-4"><span className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100"><Mail className="h-4 w-4" />邮件通知</span><input type="checkbox" checked={notificationSettings.email_enabled} onChange={(event) => setNotificationSettings((current) => ({ ...current, email_enabled: event.target.checked }))} className="h-4 w-4 accent-brand-600" /></label>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 主机<input value={notificationSettings.smtp_host} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_host: event.target.value }))} placeholder="smtp.qq.com" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+              <div className="grid grid-cols-2 gap-2"><label className="text-xs text-gray-600 dark:text-gray-300">端口<input type="number" value={notificationSettings.smtp_port} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_port: Number(event.target.value) }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label><label className="text-xs text-gray-600 dark:text-gray-300">加密<select value={notificationSettings.smtp_security} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_security: event.target.value as NotificationSettings["smtp_security"] }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">无</option></select></label></div>
+              <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 用户名<input value={notificationSettings.smtp_username} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_username: event.target.value }))} placeholder="your-email@qq.com" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+              <label className="text-xs text-gray-600 dark:text-gray-300">SMTP 授权码<input type="password" value={smtpPassword} onChange={(event) => setSmtpPassword(event.target.value)} placeholder={notificationSettings.smtp_password_configured ? "已配置，留空表示不修改" : "邮箱 SMTP 授权码"} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+              <label className="text-xs text-gray-600 dark:text-gray-300">发件邮箱<input value={notificationSettings.smtp_from} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_from: event.target.value }))} placeholder="留空则使用 SMTP 用户名" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+              <label className="text-xs text-gray-600 dark:text-gray-300">收件邮箱<input value={notificationSettings.smtp_to} onChange={(event) => setNotificationSettings((current) => ({ ...current, smtp_to: event.target.value }))} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <label className="mb-3 flex items-center justify-between gap-4"><span><span className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100"><MessageCircle className="h-4 w-4" />个人微信通知</span><span className="mt-1 block text-xs text-gray-500">通过 Server酱 SendKey 推送，不登录或控制你的微信客户端。</span></span><input type="checkbox" checked={notificationSettings.wechat_enabled} onChange={(event) => setNotificationSettings((current) => ({ ...current, wechat_enabled: event.target.checked }))} className="h-4 w-4 accent-brand-600" /></label>
+            <label className="text-xs text-gray-600 dark:text-gray-300">Server酱 SendKey<input type="password" value={serverchanSendkey} onChange={(event) => setServerchanSendkey(event.target.value)} placeholder={notificationSettings.serverchan_sendkey_configured ? "已配置，留空表示不修改" : "SCT..."} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700" /></label>
+            <a href="https://sct.ftqq.com/" target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-brand-600 hover:underline">获取 Server酱 SendKey</a>
+          </section>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <button onClick={handleSaveNotifications} disabled={notificationBusy} className="flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"><Save className="h-4 w-4" />保存通知设置</button>
+          <button onClick={handleTestNotifications} disabled={notificationBusy} className="flex items-center gap-2 rounded-lg border border-brand-300 px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-800 dark:text-brand-300"><Send className="h-4 w-4" />发送测试通知</button>
+          {notificationBusy && <Loader2 className="h-4 w-4 animate-spin text-brand-500" />}
+          {notificationStatus && <span className={`text-sm ${notificationStatus.startsWith("❌") ? "text-red-600" : "text-green-600"}`}>{notificationStatus}</span>}
         </div>
       </div>
 
