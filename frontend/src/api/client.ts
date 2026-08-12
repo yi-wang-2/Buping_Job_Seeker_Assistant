@@ -670,6 +670,24 @@ export interface JobEntry {
   last_parser?: string;
   last_llm_confidence?: number | null;
   last_llm_tokens?: number;
+  last_llm_candidate_status?: string;
+  last_llm_candidate_evidence?: string;
+  last_llm_application_confidence?: number | null;
+  last_llm_status_confidence?: number | null;
+  last_llm_evidence_excerpt?: string;
+  last_application_statuses?: Array<{
+    role: string;
+    status: string;
+    raw_status: string;
+    confidence: number;
+    application_match_confidence: number;
+    status_confidence: number;
+    matched_target: boolean;
+    accepted: boolean;
+    status_inferred_by_rule?: boolean;
+    reason?: string;
+    evidence_excerpt?: string;
+  }>;
   last_notification?: { sent: number; results: Array<{ channel: string; status: string; error?: string }> };
   status_history?: Array<{ status: string; raw_status: string; checked_at: string; evidence_url: string; source: string }>;
 }
@@ -740,16 +758,32 @@ export async function checkAllJobFollowups(): Promise<{ status: string; checked:
 
 const PUBLIC_FOLLOWUP_INTERVAL_KEY = "buping_followup_interval_hours";
 
-export async function getJobFollowupSchedule(): Promise<{ interval_hours: number; anchor_hour: number }> {
-  if (IS_PUBLIC) return { interval_hours: Number(window.sessionStorage.getItem(PUBLIC_FOLLOWUP_INTERVAL_KEY) || 8), anchor_hour: 4 };
+export interface JobFollowupSchedule {
+  interval_hours: number;
+  anchor_hour: number;
+  auto_enabled: boolean;
+  last_run_at: string;
+  last_scheduled_for: string;
+  last_run_status: "never" | "success" | "error";
+  last_checked: number;
+  last_error: string;
+}
+
+const EMPTY_FOLLOWUP_RUNTIME = {
+  auto_enabled: false, last_run_at: "", last_scheduled_for: "", last_run_status: "never" as const,
+  last_checked: 0, last_error: "",
+};
+
+export async function getJobFollowupSchedule(): Promise<JobFollowupSchedule> {
+  if (IS_PUBLIC) return { interval_hours: Number(window.sessionStorage.getItem(PUBLIC_FOLLOWUP_INTERVAL_KEY) || 8), anchor_hour: 4, ...EMPTY_FOLLOWUP_RUNTIME };
   const { data } = await api.get("/job-tracker/followup/schedule");
   return data;
 }
 
-export async function saveJobFollowupSchedule(intervalHours: number): Promise<{ status: string; interval_hours: number; anchor_hour: number }> {
+export async function saveJobFollowupSchedule(intervalHours: number): Promise<JobFollowupSchedule & { status: string }> {
   if (IS_PUBLIC) {
     window.sessionStorage.setItem(PUBLIC_FOLLOWUP_INTERVAL_KEY, String(intervalHours));
-    return { status: "success", interval_hours: intervalHours, anchor_hour: 4 };
+    return { status: "success", interval_hours: intervalHours, anchor_hour: 4, ...EMPTY_FOLLOWUP_RUNTIME };
   }
   const { data } = await api.put("/job-tracker/followup/schedule", { interval_hours: intervalHours });
   return data;

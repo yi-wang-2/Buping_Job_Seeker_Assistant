@@ -79,23 +79,16 @@ class InterviewPrepGenerator:
             question_count=target_count,
         )
         model = self.model_name or ("MiniMax-M3" if self.model_type == "anthropic" else "gpt-4o-mini")
-        from src.libs.ai_engine.memory import SQLiteMemoryRepository
-        from src.libs.ai_engine.observability import JsonlTraceSink
-        from src.libs.ai_engine.optimization import PromptCache
-        from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
-        from src.libs.ai_engine.runtime import AIRuntime
-        from src.libs.ai_engine.skills import SkillRegistry
+        from backend.services.ai_runtime_service import build_ai_runtime
         from src.libs.ai_engine.skills.builtin import InterviewCoachSkill
 
-        repository = SQLiteMemoryRepository()
-        cache = PromptCache(repository.path) if repository.get_setting("cache_enabled", True) else None
-        gateway = LLMGateway(
-            GatewayConfig(api_key=self.api_key, base_url=self.base_url, max_retries=2),
-            trace_sink=JsonlTraceSink(),
-        )
-        registry = SkillRegistry()
-        registry.register(InterviewCoachSkill())
-        runtime = AIRuntime(gateway, registry, cache=cache)
+        bundle = build_ai_runtime({
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            "provider": self.model_type,
+            "model": model,
+        }, [InterviewCoachSkill()])
+        runtime = bundle.runtime
 
         def execute(prepared_prompt: str):
             return runtime.execute("interview_coach", {

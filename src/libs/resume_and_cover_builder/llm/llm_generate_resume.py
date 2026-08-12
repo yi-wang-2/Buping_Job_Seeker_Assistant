@@ -186,9 +186,11 @@ def _create_chat_model(api_key: str):
 
 def _create_gateway_chat_model(api_key: str, *, skill: str, max_output_tokens: int = 4096):
     """Build the common Gateway adapter for incrementally migrated resume calls."""
+    from backend.services.ai_runtime_service import build_ai_runtime
     from src.libs.ai_engine.observability import JsonlTraceSink
-    from src.libs.ai_engine.observability.langchain_tracing import GatewayChatClient
+    from src.libs.ai_engine.observability.langchain_tracing import GatewayChatClient, SkillChatClient
     from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+    from src.libs.ai_engine.skills.builtin import ResumeWriterSkill
 
     protocol = _resolve_protocol()
     provider = "anthropic" if protocol == "anthropic" else "openai"
@@ -199,6 +201,14 @@ def _create_gateway_chat_model(api_key: str, *, skill: str, max_output_tokens: i
         model = cfg.LLM_MODEL or getattr(cfg, "OPENAI_MODEL", "") or "gpt-4o-mini"
         raw_base_url = getattr(cfg, "OPENAI_BASE_URL", None) or cfg.LLM_API_URL or ""
         base_url = _strip_base_url_path(raw_base_url, proto=protocol)
+    if skill == "resume_writer":
+        bundle = build_ai_runtime(
+            {"api_key": api_key, "base_url": base_url, "provider": provider, "model": model},
+            [ResumeWriterSkill()],
+        )
+        return SkillChatClient(
+            bundle.runtime, provider=provider, model=model, skill="resume_writer",
+        )
     gateway = LLMGateway(
         GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2),
         trace_sink=JsonlTraceSink(),
@@ -226,9 +236,9 @@ class LLMResumer:
     def __init__(self, openai_api_key, strings):
         # instantiate appropriate chat model
         api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
-        llm_client = _create_chat_model(api_key)
+        llm_client = _create_gateway_chat_model(api_key, skill="resume_writer")
         self.llm_cheap = LoggerChatModel(llm_client)
-        self.gateway_chat = _create_gateway_chat_model(api_key, skill="resume_writer")
+        self.gateway_chat = llm_client
         self.strings = strings
         self.regeneration_context_html = ""
         self.regenerate_targets: list[str] = []

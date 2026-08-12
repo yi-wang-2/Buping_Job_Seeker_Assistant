@@ -8,7 +8,6 @@ profile data and stop when verification is required.
 from __future__ import annotations
 
 import re
-import json
 import subprocess
 import threading
 import time
@@ -44,8 +43,11 @@ STATUS_RULES = (
     ("简历筛选", ("hr初筛", "初筛", "筛选中", "简历筛选", "处理中", "待处理", "已投递", "投递成功")),
 )
 ALLOWED_STATUSES = {"简历筛选", "笔试", "技术面", "主管面", "HR面", "Offer", "泡池子", "简历挂"}
-LLM_SKILL_NAME = "job_status_classifier"
-LLM_SKILL_VERSION = "1.1.0"
+STATUS_CHANGE_CONFIDENCE = 0.85
+UNCHANGED_CONFIRMATION_CONFIDENCE = 0.65
+SUBMISSION_RECEIPT_MARKERS = ("投递简历", "内推投递", "投递成功", "已投递")
+APPLICATION_RECORD_MARKERS = ("应聘记录", "投递记录", "申请记录")
+TERMINAL_REJECTION_MARKERS = ("流程终止", "已淘汰", "未通过", "不合适", "很遗憾")
 
 
 def _now() -> str:
@@ -174,125 +176,190 @@ def _llm_page_context(
     return f"{source[:half]}\n...[页面中段已截断]...\n{source[-half:]}"
 
 
-def _json_object(content: str) -> dict[str, Any]:
-    fenced = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content.strip(), flags=re.IGNORECASE)
-    start, end = fenced.find("{"), fenced.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("AI 未返回 JSON 对象")
-    value = json.loads(fenced[start:end + 1])
-    if not isinstance(value, dict):
-        raise ValueError("AI 返回格式错误")
-    return value
+def _confidence(payload: dict[str, Any], field: str) -> float:
+    value = payload.get(field)
+    if value is None:
+        value = payload.get("confidence")
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
-def _validated_llm_result(payload: dict[str, Any], context: str) -> dict[str, Any] | None:
+def _is_submission_receipt(context: str, status: str, evidence: str) -> bool:
+    """Treat a receipt marker inside an application list as initial screening.
+
+    The application-list guard prevents a generic job-detail CTA such as
+    "投递简历" from being mistaken for an already submitted application.
+    """
+    return (
+        status == "简历筛选"
+        and any(marker in context for marker in APPLICATION_RECORD_MARKERS)
+        and any(marker in evidence or marker in context for marker in SUBMISSION_RECEIPT_MARKERS)
+    )
+
+
+def _terminal_status_for_application(
+    context: str, role: str, application_roles: list[str],
+) -> tuple[str, str] | None:
+    """Find a terminal marker only inside the matching application's row."""
+    role = role.strip()
+    roles = [value.strip() for value in application_roles if value.strip()]
+    if not context or not role or not roles:
+        return None
+    lowered = context.lower()
+    for match in re.finditer(re.escape(role.lower()), lowered):
+        content_start = match.end()
+        boundaries = [
+            next_match.start()
+            for candidate in roles
+            for next_match in [re.search(re.escape(candidate.lower()), lowered[content_start:])]
+            if next_match is not None
+        ]
+        content_end = content_start + min(boundaries) if boundaries else min(len(context), content_start + 1600)
+        segment = context[content_start:content_end]
+        for marker in TERMINAL_REJECTION_MARKERS:
+            if marker.lower() in segment.lower():
+                return "简历挂", marker
+    return None
+
+
+def _effective_status_confidence(payload: dict[str, Any], context: str) -> float:
     status = str(payload.get("normalized_status") or "").strip()
     evidence = str(payload.get("raw_status") or "").strip()
-    try:
-        confidence = float(payload.get("confidence") or 0)
-    except (TypeError, ValueError):
+    if _is_submission_receipt(context, status, evidence):
+        return 1.0
+    return _confidence(payload, "status_confidence")
+
+
+def _validated_llm_result(
+    payload: dict[str, Any], context: str, current_status: str = "",
+) -> dict[str, Any] | None:
+    status = str(payload.get("normalized_status") or "").strip()
+    evidence = str(payload.get("raw_status") or "").strip()
+    confidence = _confidence(payload, "confidence")
+    match_confidence = _confidence(payload, "application_match_confidence")
+    status_confidence = _effective_status_confidence(payload, context)
+    threshold = (
+        UNCHANGED_CONFIRMATION_CONFIDENCE
+        if current_status and status == current_status
+        else STATUS_CHANGE_CONFIDENCE
+    )
+    if payload.get("matched_application") is not True or status not in ALLOWED_STATUSES:
         return None
-    if payload.get("matched_application") is not True or status not in ALLOWED_STATUSES or confidence < 0.85:
+    if match_confidence < threshold or status_confidence < threshold:
         return None
     if not evidence or evidence.lower() not in context.lower():
         return None
     return {"status": status, "raw_status": evidence, "confidence": confidence}
 
 
+def _llm_rejection_reason(payload: dict[str, Any], context: str, current_status: str) -> str:
+    status = str(payload.get("normalized_status") or "").strip()
+    evidence = str(payload.get("raw_status") or "").strip()
+    overall = _confidence(payload, "confidence")
+    match_confidence = _confidence(payload, "application_match_confidence")
+    status_confidence = _effective_status_confidence(payload, context)
+    if payload.get("matched_application") is not True:
+        return "AI 判断页面中的岗位与当前求职记录不匹配"
+    if status not in ALLOWED_STATUSES:
+        return "AI 没有在页面中找到明确的投递状态"
+    if not evidence or evidence.lower() not in context.lower():
+        return "AI 给出的状态证据无法在页面原文中复核"
+    threshold = (
+        UNCHANGED_CONFIRMATION_CONFIDENCE
+        if current_status and status == current_status
+        else STATUS_CHANGE_CONFIDENCE
+    )
+    risk = "确认当前状态" if status == current_status else "更新投递状态"
+    return (
+        f"AI 候选状态为“{status}”（证据：{evidence}，综合置信度 {overall:.0%}，"
+        f"岗位匹配 {match_confidence:.0%}，状态识别 {status_confidence:.0%}）；"
+        f"{risk}要求两项置信度均不低于 {threshold:.0%}，因此未更新"
+    )
+
+
+def _evidence_excerpt(context: str, evidence: str, limit: int = 600) -> str:
+    if not context.strip():
+        return ""
+    index = context.lower().find(evidence.lower()) if evidence else -1
+    if index < 0:
+        excerpt = context[:limit]
+    else:
+        padding = max(0, (limit - len(evidence)) // 2)
+        excerpt = context[max(0, index - padding):index + len(evidence) + padding]
+    excerpt = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[邮箱已隐藏]", excerpt)
+    excerpt = re.sub(r"(?<!\d)1[3-9]\d{9}(?!\d)", "[手机号已隐藏]", excerpt)
+    return re.sub(r"\s+", " ", excerpt).strip()[:limit]
+
+
 def classify_status_with_llm(context: str, record: dict[str, Any]) -> dict[str, Any]:
     """Classify an unknown site using the configured model, with cache and evidence checks."""
     # Imports stay lazy so browser follow-up still works when optional AI packages are absent.
+    from backend.services.ai_runtime_service import build_ai_runtime
     from backend.services.ai_skill_service import _resolve_config
-    from src.libs.ai_engine.memory import SQLiteMemoryRepository
-    from src.libs.ai_engine.models import LLMRequest, Message
-    from src.libs.ai_engine.observability import JsonlTraceSink
-    from src.libs.ai_engine.optimization import PromptCache, document_fingerprint
-    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+    from src.libs.ai_engine.skills.builtin import JobStatusClassifierSkill
 
     config = _resolve_config("", "", "", "")
     if not config["api_key"] and config["provider"].lower() != "ollama":
         raise ValueError("未配置可用的 AI 模型/API Key")
-    system_prompt = (
-        "你是招聘投递状态分类器。只能依据页面文本中目标企业和岗位对应的明确状态作答，禁止推测。"
-        "招聘网站可能同时展示志愿一、志愿二和当前应聘职位，目标岗位也可能是用户使用的简称。"
-        "如果页面只有一条申请记录且状态明显属于整条申请流程，不得仅因志愿名称不同而判定不匹配；"
-        "如果页面有多条独立申请记录，则必须定位目标岗位对应的状态。"
-        "例如‘待处理’且页面说明简历评估尚未结束，应归类为‘简历筛选’。"
-        "返回且仅返回 JSON：matched_application(boolean), normalized_status(string), "
-        "raw_status(string), confidence(number), reason(string)。normalized_status 只能是："
-        "简历筛选、笔试、技术面、主管面、HR面、Offer、泡池子、简历挂、unknown。"
-        "raw_status 必须逐字复制页面文本中的最短状态证据；无法确认时返回 unknown，置信度不得高于0.5。"
+    skill = JobStatusClassifierSkill()
+    bundle = build_ai_runtime(config, [skill], max_retries=1)
+    result = bundle.runtime.execute(
+        skill.metadata.name,
+        {
+            "page_context": context,
+            "company": str(record.get("company") or "").strip(),
+            "role": str(record.get("role") or "").strip(),
+            "current_status": str(record.get("status") or "").strip(),
+            "source_url": str(record.get("followup_url") or record.get("link") or "").strip(),
+        },
+        provider=config["provider"],
+        model=config["model"],
     )
-    user_prompt = (
-        f"目标企业：{str(record.get('company') or '').strip()}\n"
-        f"目标岗位：{str(record.get('role') or '').strip()}\n"
-        f"页面文本：\n{context}"
-    )
-    messages = (Message("system", system_prompt), Message("user", user_prompt))
-    repository = SQLiteMemoryRepository()
-    cache = PromptCache(repository.path) if repository.get_setting("cache_enabled", True) else None
-    cache_key = PromptCache.key(
-        provider=config["provider"], model=config["model"], skill=LLM_SKILL_NAME,
-        skill_version=LLM_SKILL_VERSION, messages=[message.as_dict() for message in messages],
-        parameters={"temperature": 0, "max_output_tokens": 300},
-    )
-    response = cache.get(cache_key) if cache else None
-    cache_hit = response is not None
-    if response is None:
-        gateway = LLMGateway(
-            GatewayConfig(api_key=config["api_key"], base_url=config["base_url"], max_retries=1),
-            trace_sink=JsonlTraceSink(),
-        )
-        response = gateway.invoke(LLMRequest(
-            messages=messages, provider=config["provider"], model=config["model"],
-            temperature=0, max_output_tokens=300,
-            metadata={"skill": LLM_SKILL_NAME, "skill_version": LLM_SKILL_VERSION},
-        ))
+    payload = result.structured_output
     usage = {
-        "input_tokens": 0 if cache_hit else response.usage.input_tokens,
-        "output_tokens": 0 if cache_hit else response.usage.output_tokens,
-        "total_tokens": 0 if cache_hit else response.usage.total_tokens,
+        "input_tokens": result.usage.input_tokens,
+        "output_tokens": result.usage.output_tokens,
+        "total_tokens": result.usage.total_tokens,
     }
-    payload = _json_object(response.content)
-    validated = _validated_llm_result(payload, context)
-    if not validated:
-        repository.record_skill_run(
-            skill_name=LLM_SKILL_NAME, skill_version=LLM_SKILL_VERSION,
-            input_hash=document_fingerprint(user_prompt), model=config["model"],
-            usage=usage, cache_hit=cache_hit, status="error", error_code="unverified_status",
-        )
-        status = str(payload.get("normalized_status") or "").strip()
-        evidence = str(payload.get("raw_status") or "").strip()
-        try:
-            confidence = float(payload.get("confidence") or 0)
-        except (TypeError, ValueError):
-            confidence = 0
-        if payload.get("matched_application") is not True:
-            reason = "AI 判断页面中的岗位与当前求职记录不匹配"
-        elif status not in ALLOWED_STATUSES:
-            reason = "AI 没有在页面中找到明确的投递状态"
-        elif confidence < 0.85:
-            reason = f"AI 识别置信度仅为 {confidence:.0%}，低于 85% 安全线"
-        elif not evidence or evidence.lower() not in context.lower():
-            reason = "AI 给出的状态证据无法在页面原文中复核"
-        else:
-            reason = "AI 返回结果未通过安全校验"
-        raise ValueError(reason)
-    if cache and not cache_hit:
-        cache.put(cache_key, response, ttl_seconds=7 * 86400)
-    repository.record_skill_run(
-        skill_name=LLM_SKILL_NAME, skill_version=LLM_SKILL_VERSION,
-        input_hash=document_fingerprint(user_prompt), model=config["model"],
-        usage=usage, cache_hit=cache_hit,
-    )
-    return {**validated, "usage": usage, "cache_hit": cache_hit}
+    return {
+        "status": payload["normalized_status"],
+        "raw_status": payload["raw_status"],
+        "confidence": payload["confidence"],
+        "matched_application": payload["matched_application"],
+        "application_match_confidence": payload.get("application_match_confidence"),
+        "status_confidence": payload.get("status_confidence"),
+        "reason": payload.get("reason", ""),
+        "applications": payload.get("applications", []),
+        "usage": usage,
+        "cache_hit": result.cache_hit,
+    }
 
 
 def classify_application_status(
     page_text: str, matched_context: str, record: dict[str, Any],
 ) -> dict[str, Any]:
     status, evidence = extract_status(matched_context)
-    multi_preference_page = "志愿一" in page_text and ("志愿二" in page_text or "当前应聘职位" in page_text)
+    role_text = str(record.get("role") or "")
+    multi_target_record = bool(re.search(r"[,，、/；;\n]", role_text))
+    normalized_page = re.sub(r"\s+", " ", page_text).lower()
+    marker_positions = sorted({
+        match.start()
+        for _, markers in STATUS_RULES for marker in markers if len(marker) >= 2
+        for match in re.finditer(re.escape(marker.lower()), normalized_page)
+    })
+    status_marker_hits = 0
+    last_position = -100
+    for position in marker_positions:
+        if position - last_position > 12:
+            status_marker_hits += 1
+            last_position = position
+    multi_preference_page = (
+        ("志愿一" in page_text and ("志愿二" in page_text or "当前应聘职位" in page_text))
+        or multi_target_record
+        or status_marker_hits >= 2
+    )
     if status and not multi_preference_page:
         return {
             "status": status, "raw_status": evidence, "parser": "local",
@@ -311,10 +378,131 @@ def classify_application_status(
                 "fallback_error": "页面没有可解析文本"}
     try:
         result = classify_status_with_llm(llm_context, record)
+        # Compatibility: injected/legacy classifiers returned only already-validated fields.
+        if "matched_application" not in result:
+            return {
+                "status": result["status"], "raw_status": result["raw_status"], "parser": "llm",
+                "llm_used": True, "llm_confidence": result["confidence"],
+                "llm_usage": result["usage"], "cache_hit": result["cache_hit"],
+            }
+        applications = result.get("applications") or []
+        if applications:
+            details: list[dict[str, Any]] = []
+            application_roles = [str(item.get("role") or "").strip() for item in applications]
+            for application in applications:
+                application_role = str(application.get("role") or "未命名岗位")
+                app_payload = {
+                    "matched_application": application.get("matched_target") is True,
+                    "normalized_status": application.get("normalized_status", "unknown"),
+                    "raw_status": application.get("raw_status", ""),
+                    "confidence": application.get("confidence", 0),
+                    "application_match_confidence": application.get("application_match_confidence"),
+                    "status_confidence": application.get("status_confidence"),
+                }
+                terminal = _terminal_status_for_application(
+                    llm_context, application_role, application_roles,
+                )
+                if terminal:
+                    app_payload.update({
+                        "normalized_status": terminal[0],
+                        "raw_status": terminal[1],
+                        "confidence": 1.0,
+                        "status_confidence": 1.0,
+                    })
+                accepted = _validated_llm_result(
+                    app_payload, llm_context, str(record.get("status") or ""),
+                )
+                details.append({
+                    "role": application_role,
+                    "status": str(app_payload.get("normalized_status") or "unknown"),
+                    "raw_status": str(app_payload.get("raw_status") or ""),
+                    "confidence": _confidence(app_payload, "confidence"),
+                    "application_match_confidence": _confidence(app_payload, "application_match_confidence"),
+                    "status_confidence": _effective_status_confidence(app_payload, llm_context),
+                    "status_inferred_by_rule": _is_submission_receipt(
+                        llm_context,
+                        str(app_payload.get("normalized_status") or ""),
+                        str(app_payload.get("raw_status") or ""),
+                    ),
+                    "matched_target": application.get("matched_target") is True,
+                    "accepted": accepted is not None,
+                    "reason": (
+                        f"同一岗位记录出现“{terminal[1]}”，终态优先于历史投递节点"
+                        if terminal else str(application.get("reason") or "")
+                    ),
+                    "evidence_excerpt": _evidence_excerpt(
+                        llm_context,
+                        application_role or str(app_payload.get("raw_status") or ""),
+                        limit=300,
+                    ),
+                })
+            accepted_details = [item for item in details if item["accepted"]]
+            accepted_statuses = {item["status"] for item in accepted_details}
+            if len(accepted_details) == len(details) and len(accepted_statuses) == 1:
+                common_status = next(iter(accepted_statuses))
+                evidence = "；".join(dict.fromkeys(item["raw_status"] for item in details if item["raw_status"]))
+                confidence = min(item["confidence"] for item in details)
+                return {
+                    "status": common_status, "raw_status": evidence, "parser": "llm",
+                    "llm_used": True, "llm_confidence": confidence,
+                    "llm_usage": result["usage"], "cache_hit": result["cache_hit"],
+                    "llm_candidate_status": common_status,
+                    "llm_candidate_evidence": evidence,
+                    "llm_application_confidence": min(item["application_match_confidence"] for item in details),
+                    "llm_status_confidence": min(item["status_confidence"] for item in details),
+                    "llm_evidence_excerpt": " | ".join(dict.fromkeys(
+                        item["evidence_excerpt"] for item in details if item["evidence_excerpt"]
+                    )),
+                    "application_statuses": details,
+                }
+            summary = "；".join(
+                f"{item['role']}：{item['status']}（{item['confidence']:.0%}）" for item in details
+            )
+            return {
+                "status": None, "raw_status": "", "parser": "llm", "llm_used": True,
+                "llm_confidence": min((item["confidence"] for item in details), default=0),
+                "llm_usage": result["usage"], "cache_hit": result["cache_hit"],
+                "llm_candidate_status": "多岗位",
+                "llm_candidate_evidence": summary,
+                "llm_application_confidence": min((item["application_match_confidence"] for item in details), default=0),
+                "llm_status_confidence": min((item["status_confidence"] for item in details), default=0),
+                "llm_evidence_excerpt": " | ".join(dict.fromkeys(
+                    item["evidence_excerpt"] for item in details if item["evidence_excerpt"]
+                )),
+                "application_statuses": details,
+                "fallback_error": f"识别到 {len(details)} 条并行申请，状态不一致或部分岗位未达到安全线；已保留明细，未覆盖汇总状态：{summary}",
+            }
+        payload = {
+            "matched_application": result["matched_application"],
+            "normalized_status": result["status"],
+            "raw_status": result["raw_status"],
+            "confidence": result["confidence"],
+            "application_match_confidence": result.get("application_match_confidence"),
+            "status_confidence": result.get("status_confidence"),
+        }
+        validated = _validated_llm_result(payload, llm_context, str(record.get("status") or ""))
+        excerpt = _evidence_excerpt(llm_context, result["raw_status"])
+        if not validated:
+            return {
+                "status": None, "raw_status": "", "parser": "none", "llm_used": True,
+                "llm_confidence": result["confidence"], "llm_usage": result["usage"],
+                "cache_hit": result["cache_hit"],
+                "llm_candidate_status": result["status"],
+                "llm_candidate_evidence": result["raw_status"],
+                "llm_application_confidence": _confidence(payload, "application_match_confidence"),
+                "llm_status_confidence": _confidence(payload, "status_confidence"),
+                "llm_evidence_excerpt": excerpt,
+                "fallback_error": _llm_rejection_reason(payload, llm_context, str(record.get("status") or "")),
+            }
         return {
-            "status": result["status"], "raw_status": result["raw_status"], "parser": "llm",
-            "llm_used": True, "llm_confidence": result["confidence"],
+            "status": validated["status"], "raw_status": validated["raw_status"], "parser": "llm",
+            "llm_used": True, "llm_confidence": validated["confidence"],
             "llm_usage": result["usage"], "cache_hit": result["cache_hit"],
+            "llm_candidate_status": validated["status"],
+            "llm_candidate_evidence": validated["raw_status"],
+            "llm_application_confidence": _confidence(payload, "application_match_confidence"),
+            "llm_status_confidence": _confidence(payload, "status_confidence"),
+            "llm_evidence_excerpt": excerpt,
         }
     except Exception as exc:
         return {"status": None, "raw_status": "", "parser": "none", "llm_used": True,
@@ -363,13 +551,22 @@ def check_application(record: dict[str, Any], headless: bool = True) -> dict[str
             context = context or application_context(page_text, str(record.get("company", "")), str(record.get("role", "")))
             classification = classify_application_status(page_text, context, record)
             status, evidence = classification["status"], classification["raw_status"]
+            application_statuses = classification.get("application_statuses") or []
             if status:
                 parser_name = "AI 兜底" if classification["parser"] == "llm" else "本地规则"
                 message = f"{parser_name}识别到状态：{status}（原文：{evidence}）"
+                result_name = "changed" if status != record.get("status") else "unchanged"
+            elif application_statuses:
+                summary = "；".join(
+                    f"{item['role']}：{item['status']}" for item in application_statuses
+                )
+                message = f"AI 已识别 {len(application_statuses)} 个并行岗位：{summary}；状态不一致，未覆盖汇总状态"
+                result_name = "multi_status"
             else:
                 message = "页面已检查，本地规则未识别；AI 兜底失败：" + classification.get("fallback_error", "未知原因")
+                result_name = "unknown"
             return {
-                "result": "changed" if status and status != record.get("status") else "unchanged",
+                "result": result_name,
                 "status": status,
                 "raw_status": evidence,
                 "connection_state": "connected",
@@ -378,8 +575,11 @@ def check_application(record: dict[str, Any], headless: bool = True) -> dict[str
                 "page_title": driver.title,
                 "message": message,
                 **{key: classification[key] for key in (
-                    "parser", "llm_used", "llm_confidence", "llm_usage", "cache_hit"
-                )},
+                    "parser", "llm_used", "llm_confidence", "llm_usage", "cache_hit",
+                    "llm_candidate_status", "llm_candidate_evidence",
+                    "llm_application_confidence", "llm_status_confidence", "llm_evidence_excerpt",
+                    "application_statuses",
+                ) if key in classification},
             }
         finally:
             driver.quit()

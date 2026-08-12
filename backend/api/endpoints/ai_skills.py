@@ -8,11 +8,17 @@ from pydantic import BaseModel, Field
 from backend.services.ai_skill_service import (
     advise_career,
     analyze_job_description,
+    list_builtin_skills,
     list_archived_jobs,
     match_skills,
 )
 
 router = APIRouter()
+
+
+@router.get("/skills")
+def skills() -> dict[str, Any]:
+    return {"items": list_builtin_skills()}
 
 
 class JDAnalyzeRequest(BaseModel):

@@ -35,6 +35,7 @@ def test_next_slot_rolls_to_tomorrow_after_evening_run():
 
 def test_followup_interval_is_saved_and_invalid_values_are_rejected(monkeypatch, tmp_path):
     monkeypatch.setattr(job_tracker, "FOLLOWUP_SETTINGS_FILE", tmp_path / "followup_settings.json")
+    monkeypatch.setattr(job_tracker, "FOLLOWUP_RUNTIME_FILE", tmp_path / "followup_runtime.json")
     assert job_tracker.get_followup_schedule()["interval_hours"] == 8
     assert job_tracker.save_followup_schedule(6)["interval_hours"] == 6
     assert job_tracker.get_followup_schedule()["interval_hours"] == 6
@@ -44,3 +45,16 @@ def test_followup_interval_is_saved_and_invalid_values_are_rejected(monkeypatch,
         assert "4、6、8、12 或 24" in str(exc)
     else:
         raise AssertionError("invalid interval should be rejected")
+
+
+def test_scheduler_runtime_is_persisted_and_exposed(monkeypatch, tmp_path):
+    monkeypatch.setattr(job_tracker, "FOLLOWUP_SETTINGS_FILE", tmp_path / "followup_settings.json")
+    monkeypatch.setattr(job_tracker, "FOLLOWUP_RUNTIME_FILE", tmp_path / "followup_runtime.json")
+    due = datetime(2026, 8, 12, 12, 0, tzinfo=TZ)
+
+    job_tracker.record_followup_run(due, {"checked": 4})
+
+    schedule = job_tracker.get_followup_schedule()
+    assert schedule["last_run_status"] == "success"
+    assert schedule["last_scheduled_for"] == due.isoformat()
+    assert schedule["last_checked"] == 4

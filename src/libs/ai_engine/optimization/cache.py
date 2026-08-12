@@ -91,6 +91,15 @@ class PromptCache:
             db.execute("UPDATE prompt_cache SET hit_count=hit_count+1 WHERE cache_key=?", (key,))
             db.commit()
 
+    def delete(self, key: str) -> None:
+        with self._lock:
+            self._memory.pop(key, None)
+        if not self.path.exists():
+            return
+        with closing(sqlite3.connect(self.path, timeout=5)) as db:
+            db.execute("DELETE FROM prompt_cache WHERE cache_key=?", (key,))
+            db.commit()
+
     def _ensure_schema(self) -> None:
         with closing(sqlite3.connect(self.path, timeout=5)) as db:
             db.execute("""

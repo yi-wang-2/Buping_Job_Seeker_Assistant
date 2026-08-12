@@ -132,11 +132,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     attempted_slot = due_slot
                     try:
                         result = await asyncio.to_thread(job_tracker.run_followup_all)
+                        await asyncio.to_thread(job_tracker.record_followup_run, due_slot, result)
                         logger.info(
                             "Job follow-up scheduled check completed for %s: %s records",
                             due_slot.strftime("%Y-%m-%d %H:%M"), result.get("checked", 0),
                         )
-                    except Exception:
+                    except Exception as exc:
+                        await asyncio.to_thread(job_tracker.record_followup_run, due_slot, None, str(exc))
                         logger.exception("Job follow-up automatic check failed")
 
             if radar_auto_enabled:

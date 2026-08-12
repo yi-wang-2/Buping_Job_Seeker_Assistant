@@ -6,6 +6,8 @@ from typing import Any
 from ....context import ContextItem, ContextKind, TokenBudget
 from ....models import LLMResponse, Message
 from ...base import SkillMetadata, SkillResult
+from ...schemas import TextRewriterInput
+from .prompts import REWRITE_SYSTEM_PROMPTS
 
 
 class TextRewriterSkill:
@@ -16,10 +18,11 @@ class TextRewriterSkill:
         token_budget=TokenBudget(model_context_limit=12000, reserved_output=2000, reserved_system=1200, safety_margin=500),
         memory_read=("resume_style",),
         tags=("resume", "writing"),
+        input_schema=TextRewriterInput,
     )
 
-    def __init__(self, prompts: dict[str, dict[str, str]]) -> None:
-        self.prompts = prompts
+    def __init__(self, prompts: dict[str, dict[str, str]] | None = None) -> None:
+        self.prompts = prompts or REWRITE_SYSTEM_PROMPTS
 
     def validate_input(self, inputs: dict[str, Any]) -> None:
         if not str(inputs.get("text", "")).strip():

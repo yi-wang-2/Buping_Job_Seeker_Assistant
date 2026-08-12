@@ -6,6 +6,7 @@ from typing import Any
 from ....context import ContextItem, ContextKind, TokenBudget
 from ....models import LLMResponse, Message
 from ...base import SkillMetadata, SkillResult
+from ...schemas import JDAnalysis, JDAnalyzerInput
 
 
 class JDAnalyzerSkill:
@@ -17,6 +18,8 @@ class JDAnalyzerSkill:
         memory_read=("job_preferences",),
         memory_write=("job_descriptions",),
         tags=("job", "analysis"),
+        input_schema=JDAnalyzerInput,
+        output_schema=JDAnalysis,
     )
 
     SYSTEM = """你是职位描述分析器。仅根据输入 JD 提取信息，不得补充未出现的要求。严格输出 JSON，字段为 role、company、responsibilities、required_skills、preferred_skills、experience_years、education、location、salary、keywords。未知标量使用 null，未知列表使用空列表。"""

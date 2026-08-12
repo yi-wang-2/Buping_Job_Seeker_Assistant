@@ -6,6 +6,7 @@ from typing import Any
 
 from ..models import LLMRequest, Message
 from ..providers.gateway import LLMGateway
+from ..runtime import AIRuntime
 from .tracing import JsonlTraceSink, TraceSink
 
 
@@ -88,3 +89,55 @@ class GatewayChatClient:
             max_output_tokens=self.max_output_tokens,
             metadata={"skill": self.skill, **(trace_metadata or {})},
         ))
+
+
+class SkillChatClient:
+    """Compatibility adapter that routes legacy ``chat.invoke`` calls through a Skill."""
+
+    def __init__(self, runtime: AIRuntime, *, provider: str, model: str, skill: str) -> None:
+        self.runtime = runtime
+        self.provider = provider
+        self.model = model
+        self.skill = skill
+
+    @staticmethod
+    def _prompt(messages: Any) -> str:
+        if hasattr(messages, "to_messages"):
+            values = messages.to_messages()
+        else:
+            values = messages if isinstance(messages, (list, tuple)) else [messages]
+        parts: list[str] = []
+        for value in values:
+            if isinstance(value, dict):
+                role = str(value.get("role") or value.get("type") or "user")
+                content = value.get("content", "")
+            else:
+                role = str(getattr(value, "type", None) or getattr(value, "role", None) or "user")
+                content = getattr(value, "content", value)
+            if len(values) == 1:
+                parts.append(str(content))
+            else:
+                parts.append(f"{role}: {content}")
+        return "\n\n".join(parts)
+
+    def invoke(self, messages: Any, *, trace_metadata: dict[str, Any] | None = None) -> Any:
+        metadata = trace_metadata or {}
+        result = self.runtime.execute(
+            self.skill,
+            {"prepared_prompt": self._prompt(messages)},
+            provider=self.provider,
+            model=self.model,
+            trace_id=str(metadata.get("trace_id") or ""),
+            session_id=str(metadata.get("session_id") or ""),
+        )
+        from langchain_core.messages import AIMessage
+        return AIMessage(
+            content=result.content,
+            id=result.trace_id or None,
+            response_metadata={"finish_reason": "stop", "model_name": self.model},
+            usage_metadata={
+                "input_tokens": result.usage.input_tokens,
+                "output_tokens": result.usage.output_tokens,
+                "total_tokens": result.usage.total_tokens,
+            },
+        )

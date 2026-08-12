@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +18,7 @@ router = APIRouter()
 DATA_DIR = Path(__file__).resolve().parents[3] / "data_folder" / "job_tracker"
 DATA_FILE = DATA_DIR / "records.json"
 FOLLOWUP_SETTINGS_FILE = DATA_DIR / "followup_settings.json"
+FOLLOWUP_RUNTIME_FILE = DATA_DIR / "followup_runtime.json"
 ALLOWED_FOLLOWUP_INTERVALS = {4, 6, 8, 12, 24}
 
 
@@ -50,6 +53,12 @@ class JobEntry(BaseModel):
     last_parser: str = ""
     last_llm_confidence: float | None = None
     last_llm_tokens: int = 0
+    last_llm_candidate_status: str = ""
+    last_llm_candidate_evidence: str = ""
+    last_llm_application_confidence: float | None = None
+    last_llm_status_confidence: float | None = None
+    last_llm_evidence_excerpt: str = ""
+    last_application_statuses: list[dict] = Field(default_factory=list)
     last_notification: dict = Field(default_factory=dict)
     status_history: list[StatusEvent] = Field(default_factory=list)
 
@@ -110,7 +119,45 @@ def get_followup_schedule() -> dict:
             interval = 8
     if interval not in ALLOWED_FOLLOWUP_INTERVALS:
         interval = 8
-    return {"interval_hours": interval, "anchor_hour": 4}
+    return {
+        "interval_hours": interval,
+        "anchor_hour": 4,
+        "auto_enabled": os.getenv("BUPING_JOB_FOLLOWUP_AUTO_CHECK", "1").lower() not in {"0", "false", "no"},
+        **get_followup_runtime(),
+    }
+
+
+def get_followup_runtime() -> dict:
+    default = {
+        "last_run_at": "",
+        "last_scheduled_for": "",
+        "last_run_status": "never",
+        "last_checked": 0,
+        "last_error": "",
+    }
+    if not FOLLOWUP_RUNTIME_FILE.exists():
+        return default
+    try:
+        data = json.loads(FOLLOWUP_RUNTIME_FILE.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+    return {key: data.get(key, value) for key, value in default.items()}
+
+
+def record_followup_run(due_slot: datetime, result: dict | None = None, error: str = "") -> dict:
+    """Persist scheduler health so the UI can prove automatic checks are running."""
+    _ensure_dir()
+    runtime = {
+        "last_run_at": datetime.now().astimezone().isoformat(),
+        "last_scheduled_for": due_slot.isoformat(),
+        "last_run_status": "error" if error else "success",
+        "last_checked": int((result or {}).get("checked", 0)),
+        "last_error": error,
+    }
+    FOLLOWUP_RUNTIME_FILE.write_text(
+        json.dumps(runtime, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    return runtime
 
 
 def save_followup_schedule(interval_hours: int) -> dict:
@@ -132,6 +179,12 @@ def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) 
     record["last_parser"] = result.get("parser", "")
     record["last_llm_confidence"] = result.get("llm_confidence")
     record["last_llm_tokens"] = int((result.get("llm_usage") or {}).get("total_tokens", 0))
+    record["last_llm_candidate_status"] = result.get("llm_candidate_status", "")
+    record["last_llm_candidate_evidence"] = result.get("llm_candidate_evidence", "")
+    record["last_llm_application_confidence"] = result.get("llm_application_confidence")
+    record["last_llm_status_confidence"] = result.get("llm_status_confidence")
+    record["last_llm_evidence_excerpt"] = result.get("llm_evidence_excerpt", "")
+    record["last_application_statuses"] = result.get("application_statuses", [])
     new_status = result.get("status")
     status_changed = bool(new_status and new_status != old_status)
     if status_changed:
@@ -158,7 +211,8 @@ def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) 
         notification = _safe_notify(
             f"求职跟进需要处理：{company}",
             f"企业：{company}\n岗位：{role}\n问题：{reason}\n请打开不平，在求职记录中重新登录或完成验证。",
-            event_key=f"auth:{record.get('id')}:{result.get('result')}", dedup_seconds=86400,
+            event_key=f"auth:{record.get('id')}:{result.get('result')}",
+            dedup_seconds=max(3600, get_followup_schedule()["interval_hours"] * 3600 - 300),
         )
     if notification:
         record["last_notification"] = notification

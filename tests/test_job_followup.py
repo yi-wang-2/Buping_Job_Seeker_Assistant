@@ -48,6 +48,21 @@ def test_legacy_job_entry_gets_safe_followup_defaults():
     assert entry.status_history == []
 
 
+def test_auth_notification_dedup_follows_user_schedule(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(job_tracker, "get_followup_schedule", lambda: {"interval_hours": 8})
+    monkeypatch.setattr(job_tracker, "_safe_notify", lambda *args, **kwargs: sent.update(kwargs) or {"sent": 1})
+    record = {"id": 7, "company": "示例公司", "role": "AI Agent", "status": "简历筛选"}
+
+    job_tracker._apply_followup_result(record, {
+        "result": "verification_required", "connection_state": "verification_required",
+        "message": "网站要求完成人机验证", "checked_at": "2026-08-12T08:00:00+00:00",
+    }, notify=True)
+
+    assert sent["event_key"] == "auth:7:verification_required"
+    assert sent["dedup_seconds"] == 8 * 3600 - 300
+
+
 def test_login_uses_normal_chrome_process_instead_of_webdriver(monkeypatch, tmp_path):
     class FakeProcess:
         returncode = None
@@ -97,6 +112,149 @@ def test_llm_result_must_quote_page_evidence():
     }, context)
     assert valid == {"status": "技术面", "raw_status": "专业交流环节", "confidence": 0.91}
     assert hallucinated is None
+
+
+def test_same_status_can_be_confirmed_at_lower_risk_threshold():
+    context = "蔚来汽车\nAI Agent 开发\n当前状态：简历筛选"
+    payload = {
+        "matched_application": True, "normalized_status": "简历筛选",
+        "raw_status": "简历筛选", "confidence": 0.70,
+        "application_match_confidence": 0.70, "status_confidence": 0.92,
+    }
+    assert followup._validated_llm_result(payload, context, "简历筛选") == {
+        "status": "简历筛选", "raw_status": "简历筛选", "confidence": 0.70,
+    }
+    assert followup._validated_llm_result(payload, context, "技术面") is None
+
+
+def test_low_confidence_status_change_keeps_candidate_for_review(monkeypatch):
+    monkeypatch.setattr(followup, "classify_status_with_llm", lambda context, record: {
+        "status": "技术面", "raw_status": "专业交流环节", "confidence": 0.70,
+        "matched_application": True, "application_match_confidence": 0.72,
+        "status_confidence": 0.93, "reason": "岗位名称为简称",
+        "usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100},
+        "cache_hit": False,
+    })
+    result = followup.classify_application_status(
+        "蔚来汽车\nAI Agent 开发\n专业交流环节",
+        "蔚来汽车\nAI Agent 开发\n专业交流环节",
+        {"company": "蔚来汽车", "role": "Agent 开发", "status": "简历筛选"},
+    )
+    assert result["status"] is None
+    assert result["llm_confidence"] == 0.70
+    assert result["llm_candidate_status"] == "技术面"
+    assert result["llm_candidate_evidence"] == "专业交流环节"
+    assert result["llm_usage"]["total_tokens"] == 100
+    assert "更新投递状态" in result["fallback_error"]
+
+
+def test_evidence_excerpt_masks_contact_information():
+    excerpt = followup._evidence_excerpt(
+        "候选人 13812345678 test@example.com 当前状态：简历筛选 页面结束",
+        "简历筛选",
+    )
+    assert "13812345678" not in excerpt
+    assert "test@example.com" not in excerpt
+    assert "简历筛选" in excerpt
+
+
+def test_three_parallel_applications_are_preserved_without_forcing_one_status(monkeypatch):
+    monkeypatch.setattr(followup, "classify_status_with_llm", lambda context, record: {
+        "status": "unknown", "raw_status": "", "confidence": 0.88,
+        "matched_application": True, "application_match_confidence": 0.90,
+        "status_confidence": 0.90, "reason": "三条并行申请状态不同",
+        "applications": [
+            {"role": "AI Agent 开发", "matched_target": True, "normalized_status": "简历筛选", "raw_status": "筛选中", "confidence": 0.91, "application_match_confidence": 0.92, "status_confidence": 0.93},
+            {"role": "AI 视觉开发", "matched_target": True, "normalized_status": "技术面", "raw_status": "专业面试", "confidence": 0.90, "application_match_confidence": 0.91, "status_confidence": 0.94},
+            {"role": "算法工程师", "matched_target": True, "normalized_status": "简历筛选", "raw_status": "待处理", "confidence": 0.89, "application_match_confidence": 0.90, "status_confidence": 0.92},
+        ],
+        "usage": {"input_tokens": 180, "output_tokens": 80, "total_tokens": 260},
+        "cache_hit": False,
+    })
+    page = "AI Agent 开发 筛选中\nAI 视觉开发 专业面试\n算法工程师 待处理"
+    result = followup.classify_application_status(page, page, {
+        "company": "蔚来汽车", "role": "AI Agent 开发，AI 视觉开发", "status": "简历筛选",
+    })
+    assert result["status"] is None
+    assert result["llm_candidate_status"] == "多岗位"
+    assert len(result["application_statuses"]) == 3
+    assert result["application_statuses"][1]["status"] == "技术面"
+    assert "未覆盖汇总状态" in result["fallback_error"]
+
+
+def test_submission_receipts_in_application_list_confirm_initial_screening(monkeypatch):
+    applications = [
+        {"role": role, "matched_target": True, "normalized_status": "简历筛选", "raw_status": "投递简历", "confidence": 0.62, "application_match_confidence": 0.95, "status_confidence": 0.45}
+        for role in ("跨端Agent开发工程师", "AI视觉模型开发工程师", "agent研发工程师")
+    ]
+    monkeypatch.setattr(followup, "classify_status_with_llm", lambda context, record: {
+        "status": "简历筛选", "raw_status": "投递简历", "confidence": 0.62,
+        "matched_application": True, "application_match_confidence": 0.95,
+        "status_confidence": 0.45, "reason": "应聘记录已收到简历",
+        "applications": applications,
+        "usage": {"input_tokens": 450, "output_tokens": 117, "total_tokens": 567},
+        "cache_hit": False,
+    })
+    page = (
+        "应聘记录\n跨端Agent开发工程师 内推投递 投递简历 2026-08-12\n"
+        "AI视觉模型开发工程师 内推投递 投递简历 2026-08-12\n"
+        "agent研发工程师 内推投递 投递简历 2026-08-12"
+    )
+    result = followup.classify_application_status(page, page, {
+        "company": "蔚来汽车", "role": "跨端Agent开发，AI视觉模型开发，agent研发",
+        "status": "简历筛选",
+    })
+    assert result["status"] == "简历筛选"
+    assert result["parser"] == "llm"
+    assert all(item["accepted"] for item in result["application_statuses"])
+    assert all(item["status_inferred_by_rule"] for item in result["application_statuses"])
+    assert all(item["status_confidence"] == 1.0 for item in result["application_statuses"])
+    excerpts = result["llm_evidence_excerpt"].split(" | ")
+    assert len(excerpts) == len(set(excerpts))
+
+
+def test_submission_button_outside_application_list_is_not_a_receipt():
+    assert followup._is_submission_receipt(
+        "职位详情\n欢迎投递\n投递简历", "简历筛选", "投递简历",
+    ) is False
+
+
+def test_terminal_status_overrides_receipt_only_for_matching_application(monkeypatch):
+    roles = ("提前批-跨端Agent开发工程师", "提前批-AI视觉模型开发工程师", "提前批-agent研发工程师")
+    applications = [
+        {"role": role, "matched_target": True, "normalized_status": "简历筛选", "raw_status": "投递简历", "confidence": 0.95, "application_match_confidence": 0.98, "status_confidence": 0.95}
+        for role in roles
+    ]
+    monkeypatch.setattr(followup, "classify_status_with_llm", lambda context, record: {
+        "status": "简历筛选", "raw_status": "投递简历", "confidence": 0.95,
+        "matched_application": True, "application_match_confidence": 0.98,
+        "status_confidence": 0.95, "reason": "投递记录", "applications": applications,
+        "usage": {"input_tokens": 300, "output_tokens": 100, "total_tokens": 400},
+        "cache_hit": False,
+    })
+    page = (
+        "应聘记录\n提前批-跨端Agent开发工程师 内推投递 投递简历 2026-08-12 流程终止 2026-08-12\n"
+        "提前批-AI视觉模型开发工程师 内推投递 投递简历 2026-08-12 流程终止 2026-08-12\n"
+        "提前批-agent研发工程师 内推投递 投递简历 2026-08-12"
+    )
+
+    result = followup.classify_application_status(page, page, {
+        "company": "蔚来汽车", "role": "跨端agent开发，ai视觉模型开发，agent研发",
+        "status": "简历筛选",
+    })
+
+    assert result["status"] is None
+    assert result["parser"] == "llm"
+    assert [item["status"] for item in result["application_statuses"]] == ["简历挂", "简历挂", "简历筛选"]
+    assert [item["raw_status"] for item in result["application_statuses"]] == ["流程终止", "流程终止", "投递简历"]
+    assert all(item["accepted"] for item in result["application_statuses"])
+
+
+def test_terminal_marker_does_not_leak_across_application_rows():
+    roles = ["岗位甲", "岗位乙"]
+    page = "岗位甲 投递简历 流程终止 岗位乙 投递简历"
+    assert followup._terminal_status_for_application(page, "岗位甲", roles) == ("简历挂", "流程终止")
+    assert followup._terminal_status_for_application(page, "岗位乙", roles) is None
 
 
 def test_ai_fallback_can_be_disabled(monkeypatch):

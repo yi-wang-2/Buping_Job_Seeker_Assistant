@@ -93,6 +93,7 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
   - 支持立即检查和可选定时间隔（4 / 6 / 8 / 12 / 24 小时），默认每 8 小时于 04:00 / 12:00 / 20:00 检查；错过时段后启动会补做最近一次
   - 状态识别采用“本地规则优先、LLM 兜底”：陌生网站或多志愿表格由 `job_status_classifier` 理解页面语义，结论必须引用页面原文且置信度达到 85%
   - LLM 兜底仅发送限长后的必要页面文本，支持 7 天 Prompt Cache，并记录识别方式、置信度、Token 与缓存命中情况
+  - 支持同一企业三条并行申请逐岗识别；状态一致时更新汇总状态，不一致时保留岗位明细并等待用户核对
   - 登录失效、需要人机验证或状态变化时，可通过 SMTP 邮件和 Server酱推送到个人微信；通知按事件去重，发送失败不影响状态保存
   - 不保存招聘网站密码，也不绕过短信、滑块或其他人机验证
   - 记录公司、岗位、地点、状态、链接、备注与面试笔记
@@ -112,8 +113,10 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
   - 腾讯智能表格采用 Canvas 渲染且可能禁止导出；直接同步会在本地 Chrome 中读取页面渲染时已获授权的只读数据，不依赖导出或系统剪贴板
 
 - **🧠 AI Runtime / Skills / Memory**
-  - 新增统一 AI Runtime，集中处理 Skill 执行、Provider 调用、缓存和追踪
-  - 内置 Text Rewriter、JD Analyzer、Interview Coach、Skill Matcher、Career Advisor 等 Skill
+  - 统一 AI Runtime 集中处理 Pydantic 输入/输出校验、上下文预算、Provider 调用、缓存、长期记忆和追踪
+  - 内置 Resume Writer、Mock Interviewer、Interview Coach、Text Rewriter、JD Analyzer、Skill Matcher、Career Advisor 和 Job Status Classifier
+  - Skill 支持独立 Prompt/Schema 版本、Token Budget、temperature、缓存 TTL、启停和 Tool/Memory 白名单
+  - 缓存命中时本次真实 Token 记为 0，并单独保留缓存节省量；Skill Run 由 Runtime 自动记录
   - 新增本地 SQLite 长期记忆与 Prompt Cache，可保存偏好、JD 归档、简历版本和缓存结果
   - 设置页提供「AI 记忆与隐私」开关，可开启/关闭长期记忆和本地缓存，并支持清空长期记忆
 

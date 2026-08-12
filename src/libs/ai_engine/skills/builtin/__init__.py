@@ -1,5 +1,6 @@
 from .jd_analyzer.skill import JDAnalyzerSkill
 from .text_rewriter.skill import TextRewriterSkill
+from .job_status_classifier import JobStatusClassifierSkill
 from .career_skills import (
     CareerAdvisorSkill,
     InterviewCoachSkill,
@@ -11,5 +12,5 @@ from .career_skills import (
 __all__ = [
     "CareerAdvisorSkill", "InterviewCoachSkill", "JDAnalyzerSkill",
     "MockInterviewerSkill", "ResumeWriterSkill", "SkillMatcherSkill",
-    "TextRewriterSkill",
+    "TextRewriterSkill", "JobStatusClassifierSkill",
 ]

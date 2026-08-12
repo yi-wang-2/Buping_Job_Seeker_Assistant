@@ -1134,24 +1134,17 @@ def rewrite_text(
         model_name = resolve_llm_model(model_type, saved_model=secrets.get("llm_model", ""), saved_provider=secrets.get("llm_model_provider", ""))
 
     # ---- Execute through the unified AI Runtime ----
-    from src.libs.ai_engine.observability import JsonlTraceSink
-    from src.libs.ai_engine.memory import SQLiteMemoryRepository
-    from src.libs.ai_engine.optimization import PromptCache
-    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
-    from src.libs.ai_engine.runtime import AIRuntime
-    from src.libs.ai_engine.skills import SkillRegistry
+    from backend.services.ai_runtime_service import build_ai_runtime
     from src.libs.ai_engine.skills.builtin import TextRewriterSkill
 
     provider = model_type or ("anthropic" if llm_protocol == "anthropic" else "openai")
-    memory_repository = SQLiteMemoryRepository()
-    gateway = LLMGateway(
-        GatewayConfig(api_key=api_key, base_url=normalized_base_url, max_retries=2),
-        trace_sink=JsonlTraceSink(),
-    )
-    registry = SkillRegistry()
-    registry.register(TextRewriterSkill(_REWRITE_SYSTEM_PROMPTS))
-    cache = PromptCache(memory_repository.path) if memory_repository.get_setting("cache_enabled", True) else None
-    result = AIRuntime(gateway, registry, cache=cache).execute(
+    bundle = build_ai_runtime({
+        "api_key": api_key,
+        "base_url": normalized_base_url,
+        "provider": provider,
+        "model": model_name,
+    }, [TextRewriterSkill(_REWRITE_SYSTEM_PROMPTS)])
+    result = bundle.runtime.execute(
         "text_rewriter",
         {
             "text": text,

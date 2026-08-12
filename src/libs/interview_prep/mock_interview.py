@@ -112,59 +112,17 @@ class MockInterviewSession:
 
 def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name: str = ""):
     """创建 LLM 模型（复用 interview_generator 的模式）"""
-    from src.libs.ai_engine.observability import JsonlTraceSink
-    from src.libs.ai_engine.observability.langchain_tracing import GatewayChatClient
-    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
+    from backend.services.ai_runtime_service import build_ai_runtime
+    from src.libs.ai_engine.observability.langchain_tracing import SkillChatClient
+    from src.libs.ai_engine.skills.builtin import MockInterviewerSkill
 
     model = model_name or ("MiniMax-M3" if model_type == "anthropic" else "gpt-4o-mini")
-    gateway = LLMGateway(
-        GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2),
-        trace_sink=JsonlTraceSink(),
+    bundle = build_ai_runtime(
+        {"api_key": api_key, "base_url": base_url, "provider": model_type, "model": model},
+        [MockInterviewerSkill()],
     )
-    return GatewayChatClient(
-        gateway, provider=model_type, model=model, skill="mock_interviewer",
-        temperature=0.6, max_output_tokens=1024,
-    )
-
-    if model_type == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        model = model_name or "MiniMax-M3"
-        kwargs = {
-            "model": model,
-            "api_key": api_key,
-            "temperature": 0.6,  # 稍高一些让对话更自然
-            "max_tokens": 1024,  # 短回复不需要太长
-        }
-        if base_url:
-            kwargs["base_url"] = base_url
-        try:
-            client = ChatAnthropic(**kwargs)
-        except TypeError:
-            if "base_url" in kwargs:
-                kwargs["anthropic_api_url"] = kwargs.pop("base_url")
-            if "max_tokens" in kwargs:
-                kwargs["max_tokens_to_sample"] = kwargs.pop("max_tokens")
-            if "model" in kwargs:
-                kwargs["model_name"] = kwargs.pop("model")
-            client = ChatAnthropic(**kwargs)
-        return TracedChatClient(
-            client, provider=model_type, model=model, skill="mock_interviewer",
-            temperature=0.6, max_output_tokens=1024,
-        )
-
-    from langchain_openai import ChatOpenAI
-    model = model_name or "gpt-4o-mini"
-    kwargs = {
-        "model": model,
-        "api_key": api_key,
-        "temperature": 0.6,
-        "max_tokens": 1024,
-    }
-    if base_url:
-        kwargs["base_url"] = base_url
-    return TracedChatClient(
-        ChatOpenAI(**kwargs), provider=model_type, model=model, skill="mock_interviewer",
-        temperature=0.6, max_output_tokens=1024,
+    return SkillChatClient(
+        bundle.runtime, provider=model_type, model=model, skill="mock_interviewer",
     )
 
 

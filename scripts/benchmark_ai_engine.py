@@ -27,7 +27,7 @@ from src.libs.ai_engine.harness import (
     protect_hard_facts_in_place,
 )
 from src.libs.ai_engine.skills.builtin import (
-    CareerAdvisorSkill, InterviewCoachSkill, JDAnalyzerSkill, MockInterviewerSkill,
+    CareerAdvisorSkill, InterviewCoachSkill, JDAnalyzerSkill, JobStatusClassifierSkill, MockInterviewerSkill,
     ResumeWriterSkill, SkillMatcherSkill, TextRewriterSkill,
 )
 
@@ -143,7 +143,7 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
     }
     skills = [
         TextRewriterSkill(prompts), JDAnalyzerSkill(), InterviewCoachSkill(), MockInterviewerSkill(),
-        ResumeWriterSkill(), SkillMatcherSkill(), CareerAdvisorSkill(),
+        ResumeWriterSkill(), SkillMatcherSkill(), CareerAdvisorSkill(), JobStatusClassifierSkill(),
     ]
     sample_inputs = {
         "text_rewriter": {"text": "负责 Python 开发", "mode": "fix_grammar", "target_language": "zh"},
@@ -156,6 +156,10 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
         "resume_writer": {"resume": "3 年 Python 经验"},
         "skill_matcher": {"resume": "3 年 Python 经验", "job_description": "Python 工程师"},
         "career_advisor": {"resume": "3 年 Python 经验"},
+        "job_status_classifier": {
+            "page_context": "测试公司 Python 工程师 当前状态：技术面试",
+            "company": "测试公司", "role": "Python 工程师",
+        },
     }
     manager = ContextManager()
     allocator = TokenBudgetAllocator()
@@ -168,11 +172,19 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
             skill.validate_input(inputs)
             bundle = manager.build(skill.context_items(inputs), allocator.allocate(skill.metadata.token_budget))
             messages = skill.build_messages(inputs, bundle.items)
-            output = (
-                '{"role":"Python 工程师","company":null,"responsibilities":[],"required_skills":["Python"],"preferred_skills":[],"experience_years":3,"education":null,"location":null,"salary":null,"keywords":["Python"]}'
-                if skill.metadata.name == "jd_analyzer" else "符合约束的测试输出"
-            )
+            structured_outputs = {
+                "jd_analyzer": '{"role":"Python 工程师","company":null,"responsibilities":[],"required_skills":["Python"],"preferred_skills":[],"experience_years":3,"education":null,"location":null,"salary":null,"keywords":["Python"]}',
+                "skill_matcher": '{"match_score":80,"matched_skills":["Python"],"gaps":[],"evidence":[],"recommendations":[]}',
+                "career_advisor": '{"summary":"继续提升 AI 能力","priorities":["项目"],"action_plan":["完善作品集"],"assumptions":[]}',
+                "job_status_classifier": '{"matched_application":true,"normalized_status":"技术面","raw_status":"技术面试","confidence":0.95,"reason":"页面明确显示"}',
+            }
+            output = structured_outputs.get(skill.metadata.name, "符合约束的测试输出")
             parsed = skill.parse_output(LLMResponse(output, "fake", "fake", TokenUsage(10, 2, 12)))
+            if skill.metadata.output_schema is not None:
+                skill.metadata.output_schema.model_validate(parsed.structured_output)
+            validator = getattr(skill, "validate_output", None)
+            if callable(validator):
+                validator(parsed, inputs)
             success = bool(parsed.content)
         except Exception:
             bundle = None
