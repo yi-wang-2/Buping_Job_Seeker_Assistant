@@ -278,28 +278,35 @@ def HTML_to_PDF(html_content, driver):
     else:
         html_content = centering_css + html_content
 
-    # Load the HTML via a file:// URL to avoid the ~2MB data: URL
-    # limit on Windows. We write to a temp file, navigate to it,
-    # and clean up afterwards.
-    import os as _os
-    import tempfile as _tempfile
-    tmp_dir = _tempfile.mkdtemp(prefix="buping_pdf_")
-    tmp_html_path = _os.path.join(tmp_dir, "input.html")
     try:
-        with open(tmp_html_path, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        # Navigate Chrome to the temp file (file:// protocol supports
-        # arbitrarily large content without OS URL-length limits)
-        file_url = "file://" + tmp_html_path.replace("\\", "/")
+        # Inject the document through CDP instead of navigating to a temporary
+        # file. A normal driver.get(file://...) waits for every remote font and
+        # stylesheet referenced by the resume. If a CDN is slow or unavailable,
+        # Selenium blocks until its 120-second HTTP timeout even though the HTML
+        # itself is already ready to print. setDocumentContent has no URL-length
+        # limit and returns without tying PDF generation to remote resources.
         try:
-            driver.get(file_url)
+            # A newly-created Chrome session can initially expose a transient
+            # frame. Establish a stable, local main frame before replacing its
+            # document; about:blank never waits on network resources.
+            driver.get("about:blank")
+            driver.execute_cdp_cmd("Page.enable", {})
+            frame_tree = driver.execute_cdp_cmd("Page.getFrameTree", {})
+            frame_id = frame_tree["frameTree"]["frame"]["id"]
+            driver.execute_cdp_cmd(
+                "Page.setDocumentContent",
+                {"frameId": frame_id, "html": html_content},
+            )
         except Exception as e:
-            logger.error(f"Failed to load file:// URL ({len(html_content)} chars HTML): {e}")
+            logger.error(
+                f"Failed to inject HTML into Chrome ({len(html_content)} chars HTML): {e}"
+            )
             raise RuntimeError(f"Failed to load HTML in Chrome: {e}")
 
-        # Attendi che la pagina si carichi completamente
-        time.sleep(2)  # Potrebbe essere necessario aumentare questo tempo per HTML complessi
+        # Give data-URI images and immediately available styles a short,
+        # deterministic render window. Remote assets may continue loading, but
+        # they can no longer stall the resume request indefinitely.
+        time.sleep(1)
 
         # Esegue il comando CDP per stampare la pagina in PDF
         pdf_base64 = driver.execute_cdp_cmd("Page.printToPDF", {
@@ -322,10 +329,3 @@ def HTML_to_PDF(html_content, driver):
     except Exception as e:
         logger.error(f"Si è verificata un'eccezione WebDriver: {e}")
         raise RuntimeError(f"Si è verificata un'eccezione WebDriver: {e}")
-    finally:
-        # Clean up the temp directory
-        try:
-            import shutil as _shutil
-            _shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
-            pass
