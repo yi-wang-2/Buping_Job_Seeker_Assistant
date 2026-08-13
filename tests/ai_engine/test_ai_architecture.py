@@ -27,3 +27,16 @@ def test_new_provider_construction_is_confined_to_gateway_or_legacy_allowlist():
             if "from langchain_openai import ChatOpenAI" in source or "from langchain_anthropic import ChatAnthropic" in source:
                 offenders.append(relative)
     assert offenders == [], f"Route new model construction through LLMGateway: {offenders}"
+
+
+def test_resume_prompt_is_owned_by_resume_writer_skill():
+    generator = (ROOT / "src/libs/resume_and_cover_builder/llm/llm_generate_resume.py").read_text("utf-8")
+    tailored = (ROOT / "src/libs/resume_and_cover_builder/llm/llm_generate_resume_from_job.py").read_text("utf-8")
+    skill_prompt = (ROOT / "src/libs/ai_engine/skills/builtin/resume_writer/prompts.py").read_text("utf-8")
+
+    assert "GOLDEN_RESUME_WRITING_GUIDE" not in generator
+    assert "GOLDEN_RESUME_WRITING_GUIDE" not in tailored
+    assert "模块模板：" not in generator
+    assert "RESUME_PROMPT_TEMPLATE" in skill_prompt
+    assert "【职位描述】（用于定制化）" in skill_prompt
+    assert "�" not in skill_prompt

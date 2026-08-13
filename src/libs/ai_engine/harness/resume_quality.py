@@ -329,7 +329,9 @@ def generate_candidates(
                 on_complete(completed, total, success)
     if not results:
         if failures:
-            raise RuntimeError("All resume candidate generations failed") from failures[0]
+            raise RuntimeError(
+                f"All resume candidate generations failed. First error: {failures[0]}"
+            ) from failures[0]
         raise RuntimeError("All resume candidate generations returned empty output")
     return [results[index] for index in sorted(results)]
 

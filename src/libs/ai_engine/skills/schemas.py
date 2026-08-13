@@ -36,17 +36,13 @@ class JDAnalysis(BaseModel):
 
 
 class ResumeWriterInput(SkillInputModel):
-    resume: str = ""
+    resume: dict[str, Any]
     job_description: str = ""
+    target_pages: Literal[1, 2] = 1
+    regenerate_targets: list[str] = Field(default_factory=list)
+    regeneration_context: str = ""
     language: Literal["zh", "en"] = "zh"
-    template: str = ""
-    prepared_prompt: str = ""
-
-    @model_validator(mode="after")
-    def validate_source(self) -> "ResumeWriterInput":
-        if not self.prepared_prompt.strip() and not self.resume.strip():
-            raise ValueError("Provide prepared_prompt or resume")
-        return self
+    operation: Literal["base_resume", "tailored_resume"] = "base_resume"
 
 
 class InterviewCoachInput(SkillInputModel):

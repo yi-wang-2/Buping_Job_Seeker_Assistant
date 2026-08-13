@@ -5,10 +5,7 @@ from src.libs.ai_engine.harness import (
     protect_hard_facts_in_place,
     select_best_candidate,
 )
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda
 from src.libs.resume_and_cover_builder.llm.llm_generate_resume import LLMResumer
-from types import SimpleNamespace
 from bs4 import BeautifulSoup
 
 
@@ -154,30 +151,14 @@ def test_project_guard_keeps_reordered_project_names_bound_to_their_own_content(
 
 
 def test_partial_regeneration_context_and_targets_reach_llm_prompt():
-    captured = []
+    from src.libs.ai_engine.skills.builtin.resume_writer.prompts import build_resume_generation_prompt
 
-    def fake_model(messages):
-        captured.append(str(messages))
-        return "[HEADER]<header><h1>测试</h1></header>[/HEADER]"
+    prompt_text = build_resume_generation_prompt({
+        "resume": _resume(), "target_pages": 2,
+        "regenerate_targets": ["entry:work-experience:1"],
+        "regeneration_context": '<LOCKED_CONTENT><div class="entry">保留公司</div></LOCKED_CONTENT>',
+    })
 
-    resumer = LLMResumer.__new__(LLMResumer)
-    resumer.resume = SimpleNamespace(
-        personal_information={"name": "测试"},
-        education_details=[], experience_details=[], projects=[], achievements=[],
-        certifications=[], languages=[], interests=[],
-    )
-    resumer.llm_cheap = RunnableLambda(fake_model)
-    resumer.regenerate_targets = ["entry:work-experience:1"]
-    resumer.target_pages = 2
-    resumer.regeneration_context_html = (
-        '<PRESERVED_RESUME_CONTEXT><LOCKED_CONTENT><div class="entry">保留公司</div>'
-        '</LOCKED_CONTENT></PRESERVED_RESUME_CONTEXT>'
-    )
-
-    resumer.generate_all_sections()
-
-    prompt_text = "\n".join(captured)
-    assert len(captured) == 3
     assert "Target PDF pages: 2" in prompt_text
     assert "entry:work-experience:1" in prompt_text
     assert "保留公司" in prompt_text
@@ -244,19 +225,50 @@ def test_llm_resumer_pipeline_selects_candidates_then_applies_guard():
     [ADDITIONAL_SKILLS]<section id="technical-stack"><li><strong>平台与工具：</strong>ISP Tuning</li></section>[/ADDITIONAL_SKILLS]
     '''
 
-    def fake_model(_messages):
+    def fake_model(_inputs):
         calls.append(1)
         return output
 
     resumer = LLMResumer.__new__(LLMResumer)
     resumer.resume = _resume()
-    resumer.llm_cheap = RunnableLambda(fake_model)
-    prompt = ChatPromptTemplate.from_template("generate {value}")
+    resumer._invoke_resume_skill = fake_model
 
-    sections = resumer._generate_best_sections(prompt, {"value": "resume"}, operation="test")
+    sections = resumer._generate_best_sections({"resume": _resume()}, operation="test")
 
     assert len(calls) == 3
     assert "易旺" in sections["header"]
     assert "中国科学院大学" in sections["education"]
     assert "真实公司" in sections["work_experience"]
     assert "真实项目" in sections["projects"]
+
+
+def test_resume_writer_requires_structured_resume_and_builds_prompt_itself():
+    from src.libs.ai_engine.skills.builtin import ResumeWriterSkill
+
+    skill = ResumeWriterSkill()
+    inputs = {"resume": _resume(), "job_description": "AI Agent 工程师"}
+    skill.validate_input(inputs)
+    prompt = skill.context_items(inputs)[1].content
+    assert "【个人信息】" in prompt
+    assert "AI Agent 工程师" in prompt
+    assert "�" not in prompt
+    try:
+        skill.validate_input({"request": "调用方拼好的旧 Prompt"})
+    except ValueError as exc:
+        assert "resume" in str(exc)
+    else:
+        raise AssertionError("pre-rendered prompt must not remain a second contract")
+
+
+def test_candidate_failure_exposes_first_underlying_error():
+    from src.libs.ai_engine.harness.resume_quality import generate_candidates
+
+    def fail():
+        raise ValueError("Missing required inputs: resume")
+
+    try:
+        generate_candidates(fail, count=2)
+    except RuntimeError as exc:
+        assert "Missing required inputs: resume" in str(exc)
+    else:
+        raise AssertionError("candidate generation should fail")

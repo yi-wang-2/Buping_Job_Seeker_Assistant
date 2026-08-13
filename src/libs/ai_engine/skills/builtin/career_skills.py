@@ -12,7 +12,6 @@ from ..schemas import (
     CareerAdviceOutput,
     InterviewCoachInput,
     MockInterviewerInput,
-    ResumeWriterInput,
     SkillMatcherInput,
     SkillMatchOutput,
 )
@@ -116,33 +115,6 @@ class MockInterviewerSkill(_PromptSkill):
         by_id = {item.id: item.content for item in context}
         if "mock-prepared-prompt" in by_id:
             return (Message("user", by_id["mock-prepared-prompt"]),)
-        return super().build_messages(inputs, context)
-
-
-class ResumeWriterSkill(_PromptSkill):
-    metadata = SkillMetadata(
-        "resume_writer", "1.0.0", "Tailor a resume to a job without inventing facts.",
-        TokenBudget(32000, 5000, 2200, 1200), memory_read=("resume_style",),
-        memory_write=("resume_versions",), tags=("resume", "writing"), cacheable=False,
-        context_weights={"system": .10, "task": .80, "long_term": .10},
-        input_schema=ResumeWriterInput,
-    )
-    required_inputs = ("resume",)
-    system_prompt = "你是专业简历作者。优化结构和措辞并适配 JD，但不得新增原始简历无法支持的公司、项目、数字、技能或经历。保持输入语言并输出结构化简历正文。"
-
-    def context_items(self, inputs: dict[str, Any]) -> list[ContextItem]:
-        prepared_prompt = str(inputs.get("prepared_prompt", "")).strip()
-        if prepared_prompt:
-            return [ContextItem(
-                "resume-writer-prepared", ContextKind.TASK, prepared_prompt, "resume_workflow",
-                priority=100, relevance=1, protected=True,
-            )]
-        return super().context_items(inputs)
-
-    def build_messages(self, inputs: dict[str, Any], context: tuple[ContextItem, ...]) -> tuple[Message, ...]:
-        by_id = {item.id: item.content for item in context}
-        if "resume-writer-prepared" in by_id:
-            return (Message("user", by_id["resume-writer-prepared"]),)
         return super().build_messages(inputs, context)
 
 

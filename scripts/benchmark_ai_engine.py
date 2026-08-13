@@ -153,7 +153,7 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
             "prepared_prompt": "# 第一部分：岗位分析\n\n简历：3 年 Python 经验\n\n# 第二部分：面试准备报告",
         },
         "mock_interviewer": {"resume": "3 年 Python 经验", "job_description": "Python 工程师", "history": []},
-        "resume_writer": {"resume": "3 年 Python 经验"},
+        "resume_writer": {"resume": {"experience_details": [{"position": "Python 工程师", "description": "3 年 Python 经验"}]}},
         "skill_matcher": {"resume": "3 年 Python 经验", "job_description": "Python 工程师"},
         "career_advisor": {"resume": "3 年 Python 经验"},
         "job_status_classifier": {
@@ -203,6 +203,8 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
     source_files = [
         ROOT / "backend" / "services" / "resume_service.py",
         ROOT / "src" / "libs" / "ai_engine" / "skills" / "builtin" / "career_skills.py",
+        ROOT / "src" / "libs" / "ai_engine" / "skills" / "builtin" / "resume_writer" / "skill.py",
+        ROOT / "src" / "libs" / "ai_engine" / "skills" / "builtin" / "resume_writer" / "prompts.py",
         ROOT / "src" / "libs" / "ai_engine" / "skills" / "builtin" / "jd_analyzer" / "skill.py",
     ]
     source = "\n".join(path.read_text(encoding="utf-8") for path in source_files)

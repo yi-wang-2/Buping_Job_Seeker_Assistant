@@ -1,11 +1,11 @@
 from .jd_analyzer.skill import JDAnalyzerSkill
 from .text_rewriter.skill import TextRewriterSkill
 from .job_status_classifier import JobStatusClassifierSkill
+from .resume_writer import ResumeWriterSkill
 from .career_skills import (
     CareerAdvisorSkill,
     InterviewCoachSkill,
     MockInterviewerSkill,
-    ResumeWriterSkill,
     SkillMatcherSkill,
 )
 

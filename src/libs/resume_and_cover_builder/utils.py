@@ -128,7 +128,10 @@ class LoggerChatModel:
                 error_str = str(e)
                 is_non_retryable = any(
                     code in error_str
-                    for code in ["401", "400", "403", "404", "invalid api key", "authentication_error", "unexpected keyword argument"]
+                    for code in [
+                        "401", "400", "403", "404", "invalid api key", "authentication_error",
+                        "unexpected keyword argument", "Missing required inputs", "validation error",
+                    ]
                 )
                 if is_non_retryable:
                     logger.error(f"Non-retryable error: {error_str[:200]}")
