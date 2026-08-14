@@ -1,4 +1,7 @@
-# YAML Schema for plain_text_resume.yaml
+# Canonical YAML Schema for plain_text_resume*.yaml (version 2)
+# The field names mirror src/resume_schemas/resume.py.
+
+professional_summary: {type: string, optional: true}
 
 personal_information:
   type: object
@@ -6,36 +9,47 @@ personal_information:
     full_name: {type: string}
     name: {type: string}
     surname: {type: string}
-    date_of_birth: {type: string, format: date}
+    date_of_birth: {type: string}
     country: {type: string}
-    zip_code: {type: string, pattern: "^[0-9]{5,10}$"}
+    zip_code: {type: string}
     city: {type: string}
     address: {type: string}
-    phone_prefix: {type: string, format: phone_prefix}
-    phone: {type: string, format: phone}
+    phone_prefix: {type: string}
+    phone: {type: string}
     email: {type: string, format: email}
-    github: {type: string, format: uri}
-    linkedin: {type: string, format: uri}
-  required: [name, surname, date_of_birth, country, city, address, zip_code, phone_prefix, phone, email]
+    github: {type: string}
+    linkedin: {type: string}
+    wechat: {type: string}
 
 education_details:
   type: array
   items:
     type: object
     properties:
-      degree: {type: string}
-      university: {type: string}
-      gpa: {type: string}
-      graduation_year: {type: string}
+      education_level: {type: string}
+      institution: {type: string}
       field_of_study: {type: string}
+      final_evaluation_grade: {type: string}
+      year_of_completion: {type: integer, nullable: true}
+      start_date: {type: string}
       research_direction: {type: string}
       research_topics:
         type: array
         items: {type: string}
-      exam:
+      additional_info:
         type: object
-        additionalProperties: {type: string}
-    required: [degree, university, gpa, graduation_year, field_of_study]
+        properties:
+          is_211: {type: boolean, nullable: true}
+          is_double_first_class: {type: boolean, nullable: true}
+          college: {type: string}
+          study_mode: {type: string}
+          honors: {type: string}
+          relevant_courses: {type: string}
+      exam:
+        description: Course-to-grade mappings; canonical location is the education entry.
+        oneOf:
+          - {type: object}
+          - {type: array}
 
 experience_details:
   type: array
@@ -48,12 +62,11 @@ experience_details:
       location: {type: string}
       industry: {type: string}
       key_responsibilities:
-        type: object
-        additionalProperties: {type: string}
+        type: array
+        items: {type: object}
       skills_acquired:
         type: array
         items: {type: string}
-    required: [position, company, employment_period, location, industry, key_responsibilities, skills_acquired]
 
 projects:
   type: array
@@ -62,8 +75,7 @@ projects:
     properties:
       name: {type: string}
       description: {type: string}
-      link: {type: string, format: uri}
-    required: [name, description]
+      link: {type: string}
 
 achievements:
   type: array
@@ -72,11 +84,14 @@ achievements:
     properties:
       name: {type: string}
       description: {type: string}
-    required: [name, description]
 
 certifications:
   type: array
-  items: {type: string}
+  items:
+    type: object
+    properties:
+      name: {type: string}
+      description: {type: string}
 
 languages:
   type: array
@@ -84,8 +99,7 @@ languages:
     type: object
     properties:
       language: {type: string}
-      proficiency: {type: string, enum: [Native, Fluent, Intermediate, Beginner]}
-    required: [language, proficiency]
+      proficiency: {type: string}
 
 interests:
   type: array
@@ -95,44 +109,47 @@ availability:
   type: object
   properties:
     notice_period: {type: string}
-  required: [notice_period]
 
 salary_expectations:
   type: object
   properties:
     salary_range_usd: {type: string}
-  required: [salary_range_usd]
 
 self_identification:
   type: object
   properties:
     gender: {type: string}
     pronouns: {type: string}
-    veteran: {type: string, enum: [Yes, No]}
-    disability: {type: string, enum: [Yes, No]}
+    veteran: {type: string}
+    disability: {type: string}
     ethnicity: {type: string}
-  required: [gender, pronouns, veteran, disability, ethnicity]
 
 legal_authorization:
   type: object
   properties:
-    eu_work_authorization: {type: string, enum: [Yes, No]}
-    us_work_authorization: {type: string, enum: [Yes, No]}
-    requires_us_visa: {type: string, enum: [Yes, No]}
-    requires_us_sponsorship: {type: string, enum: [Yes, No]}
-    requires_eu_visa: {type: string, enum: [Yes, No]}
-    legally_allowed_to_work_in_eu: {type: string, enum: [Yes, No]}
-    legally_allowed_to_work_in_us: {type: string, enum: [Yes, No]}
-    requires_eu_sponsorship: {type: string, enum: [Yes, No]}
-  required: [eu_work_authorization, us_work_authorization, requires_us_visa, requires_us_sponsorship, requires_eu_visa, legally_allowed_to_work_in_eu, legally_allowed_to_work_in_us, requires_eu_sponsorship]
+    eu_work_authorization: {type: string}
+    us_work_authorization: {type: string}
+    requires_us_visa: {type: string}
+    requires_us_sponsorship: {type: string}
+    requires_eu_visa: {type: string}
+    legally_allowed_to_work_in_eu: {type: string}
+    legally_allowed_to_work_in_us: {type: string}
+    requires_eu_sponsorship: {type: string}
+    canada_work_authorization: {type: string}
+    requires_canada_visa: {type: string}
+    legally_allowed_to_work_in_canada: {type: string}
+    requires_canada_sponsorship: {type: string}
+    uk_work_authorization: {type: string}
+    requires_uk_visa: {type: string}
+    legally_allowed_to_work_in_uk: {type: string}
+    requires_uk_sponsorship: {type: string}
 
 work_preferences:
   type: object
   properties:
-    remote_work: {type: string, enum: [Yes, No]}
-    in_person_work: {type: string, enum: [Yes, No]}
-    open_to_relocation: {type: string, enum: [Yes, No]}
-    willing_to_complete_assessments: {type: string, enum: [Yes, No]}
-    willing_to_undergo_drug_tests: {type: string, enum: [Yes, No]}
-    willing_to_undergo_background_checks: {type: string, enum: [Yes, No]}
-  required: [remote_work, in_person_work, open_to_relocation, willing_to_complete_assessments, willing_to_undergo_drug_tests, willing_to_undergo_background_checks]
+    remote_work: {type: string}
+    in_person_work: {type: string}
+    open_to_relocation: {type: string}
+    willing_to_complete_assessments: {type: string}
+    willing_to_undergo_drug_tests: {type: string}
+    willing_to_undergo_background_checks: {type: string}

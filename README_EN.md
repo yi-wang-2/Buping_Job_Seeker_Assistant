@@ -218,6 +218,7 @@ Before using this tool, you need to provide your resume data. Two methods are su
 Edit `data_folder/plain_text_resume.yaml` directly:
 
 ```yaml
+professional_summary: ""  # Optional professional summary
 personal_information:
   full_name: "Your Name"  # Recommended: rendered verbatim without AI reordering
   name: "Your"
@@ -233,6 +234,12 @@ education_details:
     research_direction: ""  # Optional; omit or leave empty when not applicable
     research_topics: []      # Optional; include only factual research topics
     year_of_completion: "2023"
+    additional_info:
+      college: "School of Engineering"
+      study_mode: "Full-time"
+      honors: ""
+      relevant_courses: ""
+    exam: {}  # Course grades live on the education entry, not additional_info
 experience_details:
   - position: "Senior Engineer"
     company: "Google"
@@ -245,6 +252,8 @@ projects:
 ```
 
 See [`assets/resume_schema.yaml`](assets/resume_schema.yaml) for the full schema.
+
+The canonical format is now **Resume YAML v2**. Document uploads, legacy YAML/JSON uploads, and content saved from Settings are normalized to v2. Legacy keys `degree/university/gpa/graduation_year` and `additional_info.exam` are migrated without losing existing data.
 
 #### Method B: Upload Document (Recommended)
 

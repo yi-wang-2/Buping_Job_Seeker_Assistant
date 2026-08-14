@@ -265,6 +265,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const handleSaveResume = async () => {
     try {
       const result = await saveResumeContent({ content: resumeContent, language: resumeLang });
+      if (result.content) setResumeContent(result.content);
       setResumeValidation(result.validation || null);
       setResumeStatus(st.resumeSaved);
       setUploadStatus("idle");

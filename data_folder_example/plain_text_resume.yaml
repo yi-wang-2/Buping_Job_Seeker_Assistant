@@ -1,3 +1,4 @@
+professional_summary: ""
 personal_information:
   full_name: "solid snake"
   name: "solid"
@@ -12,6 +13,7 @@ personal_information:
   email: "hi@gmail.com"
   github: "https://github.com/lol"
   linkedin: "https://www.linkedin.com/in/thezucc/"
+  wechat: ""
   
 
 education_details:
@@ -24,12 +26,18 @@ education_details:
     year_of_completion: "2023"
     start_date: "2022"
     additional_info:
-      exam:
-        Algorithms: "A"
-        Linear Algebra: "A"
-        Database Systems: "A"
-        Operating Systems: "A-"
-        Web Development: "A"
+      is_211: null
+      is_double_first_class: null
+      college: ""
+      study_mode: "Full-time"
+      honors: ""
+      relevant_courses: "Algorithms, Linear Algebra, Database Systems, Operating Systems, Web Development"
+    exam:
+      Algorithms: "A"
+      Linear Algebra: "A"
+      Database Systems: "A"
+      Operating Systems: "A-"
+      Web Development: "A"
 
 experience_details:
   - position: "X"

@@ -2,28 +2,44 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Union
 import re
 import yaml
-from pydantic import BaseModel, EmailStr, HttpUrl, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
+
+
+class ResumeModel(BaseModel):
+    """Base model for the canonical resume YAML.
+
+    Unknown fields are preserved for forward compatibility instead of being
+    silently discarded. All fields currently supported by the application are
+    nevertheless declared explicitly below.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
 
 
-class PersonalInformation(BaseModel):
+class PersonalInformation(ResumeModel):
     full_name: Optional[str] = None
-    name: Optional[str]
-    surname: Optional[str]
-    date_of_birth: Optional[str]
-    country: Optional[str]
-    city: Optional[str]
-    address: Optional[str]
+    name: Optional[str] = None
+    surname: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
+    address: Optional[str] = None
     zip_code: Optional[str] = None  # 中国不需要
-    phone_prefix: Optional[str]
-    phone: Optional[str]
-    email: Optional[EmailStr]
+    phone_prefix: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
     github: Optional[str] = None  # 改为 str 类型避免URL验证
     linkedin: Optional[str] = None  # 改为 str 类型避免URL验证
     wechat: Optional[str] = None  # 微信 - 中国求职市场必备
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_empty_email(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
 
-class EducationAdditionalInfo(BaseModel):
+
+class EducationAdditionalInfo(ResumeModel):
     is_211: Optional[bool] = None
     is_double_first_class: Optional[bool] = None
     college: Optional[str] = None
@@ -32,14 +48,15 @@ class EducationAdditionalInfo(BaseModel):
     relevant_courses: Optional[str] = None
 
 
-class EducationDetails(BaseModel):
-    education_level: Optional[str]
-    institution: Optional[str]
-    field_of_study: Optional[str]
-    final_evaluation_grade: Optional[str]
-    start_date: Optional[str]
-    year_of_completion: Optional[int]
+class EducationDetails(ResumeModel):
+    education_level: Optional[str] = None
+    institution: Optional[str] = None
+    field_of_study: Optional[str] = None
+    final_evaluation_grade: Optional[str] = None
+    start_date: Optional[str] = None
+    year_of_completion: Optional[int] = None
     research_direction: Optional[str] = None
+    research_topics: Optional[List[str]] = None
     additional_info: Optional[EducationAdditionalInfo] = None
     exam: Optional[Union[List[Dict[str, str]], Dict[str, str]]] = None
 
@@ -58,67 +75,84 @@ class EducationDetails(BaseModel):
         return value
 
 
-class ExperienceDetails(BaseModel):
-    position: Optional[str]
-    company: Optional[str]
-    employment_period: Optional[str]
-    location: Optional[str]
-    industry: Optional[str]
+class ExperienceDetails(ResumeModel):
+    position: Optional[str] = None
+    company: Optional[str] = None
+    employment_period: Optional[str] = None
+    location: Optional[str] = None
+    industry: Optional[str] = None
     key_responsibilities: Optional[List[Dict[str, str]]] = None
     skills_acquired: Optional[List[str]] = None
 
 
-class Project(BaseModel):
-    name: Optional[str]
-    description: Optional[str]
+class Project(ResumeModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
     link: Optional[str] = None  # 改为 str 类型避免URL验证
 
 
-class Achievement(BaseModel):
-    name: Optional[str]
-    description: Optional[str]
+class Achievement(ResumeModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 
-class Certifications(BaseModel):
-    name: Optional[str]
-    description: Optional[str]
+class Certifications(ResumeModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 
-class Language(BaseModel):
-    language: Optional[str]
-    proficiency: Optional[str]
+class Language(ResumeModel):
+    language: Optional[str] = None
+    proficiency: Optional[str] = None
 
 
-class Availability(BaseModel):
-    notice_period: Optional[str]
+class Availability(ResumeModel):
+    notice_period: Optional[str] = None
 
 
-class SalaryExpectations(BaseModel):
-    salary_range_usd: Optional[str]
+class SalaryExpectations(ResumeModel):
+    salary_range_usd: Optional[str] = None
 
 
-class SelfIdentification(BaseModel):
-    gender: Optional[str]
-    pronouns: Optional[str]
-    veteran: Optional[str]
-    disability: Optional[str]
-    ethnicity: Optional[str]
+class SelfIdentification(ResumeModel):
+    gender: Optional[str] = None
+    pronouns: Optional[str] = None
+    veteran: Optional[str] = None
+    disability: Optional[str] = None
+    ethnicity: Optional[str] = None
 
 
-class LegalAuthorization(BaseModel):
-    eu_work_authorization: Optional[str]
-    us_work_authorization: Optional[str]
-    requires_us_visa: Optional[str]
-    requires_us_sponsorship: Optional[str]
-    requires_eu_visa: Optional[str]
-    legally_allowed_to_work_in_eu: Optional[str]
-    legally_allowed_to_work_in_us: Optional[str]
-    requires_eu_sponsorship: Optional[str]
+class LegalAuthorization(ResumeModel):
+    eu_work_authorization: Optional[str] = None
+    us_work_authorization: Optional[str] = None
+    requires_us_visa: Optional[str] = None
+    requires_us_sponsorship: Optional[str] = None
+    requires_eu_visa: Optional[str] = None
+    legally_allowed_to_work_in_eu: Optional[str] = None
+    legally_allowed_to_work_in_us: Optional[str] = None
+    requires_eu_sponsorship: Optional[str] = None
+    canada_work_authorization: Optional[str] = None
+    requires_canada_visa: Optional[str] = None
+    legally_allowed_to_work_in_canada: Optional[str] = None
+    requires_canada_sponsorship: Optional[str] = None
+    uk_work_authorization: Optional[str] = None
+    requires_uk_visa: Optional[str] = None
+    legally_allowed_to_work_in_uk: Optional[str] = None
+    requires_uk_sponsorship: Optional[str] = None
 
 
-class Resume(BaseModel):
+class WorkPreferences(ResumeModel):
+    remote_work: Optional[str] = None
+    in_person_work: Optional[str] = None
+    open_to_relocation: Optional[str] = None
+    willing_to_complete_assessments: Optional[str] = None
+    willing_to_undergo_drug_tests: Optional[str] = None
+    willing_to_undergo_background_checks: Optional[str] = None
+
+
+class Resume(ResumeModel):
     professional_summary: Optional[str] = None
-    personal_information: Optional[PersonalInformation]
+    personal_information: Optional[PersonalInformation] = None
     education_details: Optional[List[EducationDetails]] = None
     experience_details: Optional[List[ExperienceDetails]] = None
     projects: Optional[List[Project]] = None
@@ -126,6 +160,11 @@ class Resume(BaseModel):
     certifications: Optional[List[Certifications]] = None
     languages: Optional[List[Language]] = None
     interests: Optional[List[str]] = None
+    availability: Optional[Availability] = None
+    salary_expectations: Optional[SalaryExpectations] = None
+    self_identification: Optional[SelfIdentification] = None
+    legal_authorization: Optional[LegalAuthorization] = None
+    work_preferences: Optional[WorkPreferences] = None
 
     @staticmethod
     def normalize_exam_format(exam):
@@ -140,6 +179,22 @@ class Resume(BaseModel):
 
             if 'education_details' in data:
                 for ed in data['education_details']:
+                    # Backward compatibility for the original public schema.
+                    aliases = {
+                        'degree': 'education_level',
+                        'university': 'institution',
+                        'gpa': 'final_evaluation_grade',
+                        'graduation_year': 'year_of_completion',
+                    }
+                    for old_key, new_key in aliases.items():
+                        if new_key not in ed and old_key in ed:
+                            ed[new_key] = ed.pop(old_key)
+                    # Some historical examples nested exam under
+                    # additional_info. The canonical location is directly on
+                    # the education entry.
+                    additional = ed.get('additional_info')
+                    if isinstance(additional, dict) and 'exam' in additional and 'exam' not in ed:
+                        ed['exam'] = additional.pop('exam')
                     if 'exam' in ed:
                         ed['exam'] = self.normalize_exam_format(ed['exam'])
 

@@ -75,10 +75,17 @@ def test_resume_save_versions_and_restore_through_api(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_MEMORY_DB", str(db_path))
     monkeypatch.setattr(config_service, "DATA_FOLDER", data_folder)
     client = TestClient(app)
-    first_content = "name: Alice\nskills:\n  - Python\n"
-    second_content = "name: Alice\nskills:\n  - Python\n  - FastAPI\n"
+    first_content = """personal_information:
+  full_name: Alice
+  email: alice@example.com
+projects:
+  - name: Resume API
+    description: Built with Python
+"""
+    second_content = first_content.replace("Built with Python", "Built with Python and FastAPI")
 
     assert client.put("/api/settings/resume-content", json={"content": first_content, "language": "zh"}).status_code == 200
+    normalized_first = client.get("/api/settings/resume-content", params={"language": "zh"}).json()["content"]
     assert client.put("/api/settings/resume-content", json={"content": first_content, "language": "zh"}).status_code == 200
     assert client.put("/api/settings/resume-content", json={"content": second_content, "language": "zh"}).status_code == 200
     versions = client.get("/api/resume/versions", params={"language": "zh"}).json()["items"]
@@ -88,7 +95,7 @@ def test_resume_save_versions_and_restore_through_api(tmp_path, monkeypatch):
     restored = client.post(f"/api/resume/versions/{older['id']}/restore")
     assert restored.status_code == 200
     current = client.get("/api/settings/resume-content", params={"language": "zh"}).json()
-    assert current["content"] == first_content
+    assert current["content"] == normalized_first
 
 
 def test_same_jd_twice_hits_cache_and_deduplicates_archive(tmp_path, monkeypatch):

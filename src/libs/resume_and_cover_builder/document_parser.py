@@ -179,13 +179,14 @@ def extract_text(filename: str, raw: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 def _empty_resume() -> dict:
-    """Return an empty resume skeleton."""
+    """Return the canonical empty resume YAML v2 skeleton."""
     return {
+        "professional_summary": "",
         "personal_information": {
-            "name": "", "surname": "", "date_of_birth": "",
+            "full_name": "", "name": "", "surname": "", "date_of_birth": "",
             "country": "", "zip_code": "", "city": "", "address": "",
             "phone_prefix": "+1", "phone": "", "email": "",
-            "github": "", "linkedin": "",
+            "github": "", "linkedin": "", "wechat": "",
         },
         "education_details": [],
         "experience_details": [],
@@ -194,7 +195,104 @@ def _empty_resume() -> dict:
         "certifications": [],
         "languages": [],
         "interests": [],
+        "availability": {"notice_period": ""},
+        "salary_expectations": {"salary_range_usd": ""},
+        "self_identification": {
+            "gender": "", "pronouns": "", "veteran": "",
+            "disability": "", "ethnicity": "",
+        },
+        "legal_authorization": {
+            "eu_work_authorization": "", "us_work_authorization": "",
+            "requires_us_visa": "", "requires_us_sponsorship": "",
+            "requires_eu_visa": "", "legally_allowed_to_work_in_eu": "",
+            "legally_allowed_to_work_in_us": "", "requires_eu_sponsorship": "",
+            "canada_work_authorization": "", "requires_canada_visa": "",
+            "legally_allowed_to_work_in_canada": "", "requires_canada_sponsorship": "",
+            "uk_work_authorization": "", "requires_uk_visa": "",
+            "legally_allowed_to_work_in_uk": "", "requires_uk_sponsorship": "",
+        },
+        "work_preferences": {
+            "remote_work": "", "in_person_work": "", "open_to_relocation": "",
+            "willing_to_complete_assessments": "",
+            "willing_to_undergo_drug_tests": "",
+            "willing_to_undergo_background_checks": "",
+        },
     }
+
+
+def normalize_resume_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate resume dictionaries to the canonical YAML v2 structure.
+
+    The migration is deliberately lossless: unknown future fields are kept,
+    while all currently supported fields receive a stable location/default.
+    """
+    if not isinstance(data, dict):
+        return _empty_resume()
+
+    result = {**_empty_resume(), **data}
+    personal = data.get("personal_information")
+    result["personal_information"] = {
+        **_empty_resume()["personal_information"],
+        **(personal if isinstance(personal, dict) else {}),
+    }
+
+    education_defaults = {
+        "education_level": "", "institution": "", "field_of_study": "",
+        "final_evaluation_grade": "", "year_of_completion": "", "start_date": "",
+        "research_direction": "", "research_topics": [], "additional_info": {}, "exam": [],
+    }
+    education_items = []
+    for raw_item in data.get("education_details") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        for old_key, new_key in {
+            "degree": "education_level", "university": "institution",
+            "gpa": "final_evaluation_grade", "graduation_year": "year_of_completion",
+        }.items():
+            if new_key not in item and old_key in item:
+                item[new_key] = item.pop(old_key)
+        additional = item.get("additional_info")
+        additional = dict(additional) if isinstance(additional, dict) else {}
+        if "exam" not in item and "exam" in additional:
+            item["exam"] = additional.pop("exam")
+        item["additional_info"] = {
+            "is_211": None, "is_double_first_class": None, "college": "",
+            "study_mode": "", "honors": "", "relevant_courses": "",
+            **additional,
+        }
+        education_items.append({**education_defaults, **item})
+    result["education_details"] = education_items
+
+    list_defaults = {
+        "experience_details": {
+            "position": "", "company": "", "employment_period": "", "location": "",
+            "industry": "", "key_responsibilities": [], "skills_acquired": [],
+        },
+        "projects": {"name": "", "description": "", "link": ""},
+        "achievements": {"name": "", "description": ""},
+        "certifications": {"name": "", "description": ""},
+        "languages": {"language": "", "proficiency": ""},
+    }
+    for key, defaults in list_defaults.items():
+        normalized_items = []
+        for raw_item in data.get(key) or []:
+            if isinstance(raw_item, dict):
+                normalized_items.append({**defaults, **raw_item})
+            elif key == "certifications":
+                normalized_items.append({**defaults, "name": str(raw_item)})
+            elif key == "languages":
+                normalized_items.append({**defaults, "language": str(raw_item)})
+        result[key] = normalized_items
+
+    for key in ("availability", "salary_expectations", "self_identification", "legal_authorization", "work_preferences"):
+        value = data.get(key)
+        result[key] = {
+            **_empty_resume()[key],
+            **(value if isinstance(value, dict) else {}),
+        }
+    result["interests"] = list(data.get("interests") or [])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +302,7 @@ def _empty_resume() -> dict:
 _PROMPT_TEMPLATE_ZH = """你是一个专业的简历解析助手。请从以下简历文本中提取信息，并严格按照以下 YAML 格式返回（不要添加任何说明文字，直接输出 YAML）：
 
 ```yaml
+professional_summary: "职业概述；原文没有则为空字符串"
 personal_information:
   full_name: "简历原文中的完整姓名，保持原顺序和原文字"
   name: "名字"
@@ -218,6 +317,7 @@ personal_information:
   email: "邮箱"
   github: "GitHub URL 或空字符串"
   linkedin: "LinkedIn URL 或空字符串"
+  wechat: "微信号或空字符串"
 education_details:
   - education_level: "学历，如 Bachelor's Degree"
     institution: "学校名称"
@@ -229,8 +329,14 @@ education_details:
     research_topics:
       - "原文明确写出的研究课题；没有则为空列表"
     additional_info:
+      is_211: null
+      is_double_first_class: null
+      college: "学院；原文没有则为空字符串"
+      study_mode: "学习形式；原文没有则为空字符串"
       relevant_courses: "原文明确写出的相关课程；没有则为空字符串"
       honors: "原文明确写出的在校荣誉；没有则为空字符串"
+    exam:
+      - "科目": "成绩"
 experience_details:
   - position: "职位名称"
     company: "公司名称"
@@ -256,6 +362,40 @@ languages:
     proficiency: "Native / Fluent / Intermediate / Beginner"
 interests:
   - "兴趣爱好"
+availability:
+  notice_period: "到岗时间或空字符串"
+salary_expectations:
+  salary_range_usd: "薪资期望或空字符串"
+self_identification:
+  gender: "性别或空字符串"
+  pronouns: "代词或空字符串"
+  veteran: "退伍军人状态或空字符串"
+  disability: "残障状态或空字符串"
+  ethnicity: "族裔或空字符串"
+legal_authorization:
+  eu_work_authorization: ""
+  us_work_authorization: ""
+  requires_us_visa: ""
+  requires_us_sponsorship: ""
+  requires_eu_visa: ""
+  legally_allowed_to_work_in_eu: ""
+  legally_allowed_to_work_in_us: ""
+  requires_eu_sponsorship: ""
+  canada_work_authorization: ""
+  requires_canada_visa: ""
+  legally_allowed_to_work_in_canada: ""
+  requires_canada_sponsorship: ""
+  uk_work_authorization: ""
+  requires_uk_visa: ""
+  legally_allowed_to_work_in_uk: ""
+  requires_uk_sponsorship: ""
+work_preferences:
+  remote_work: ""
+  in_person_work: ""
+  open_to_relocation: ""
+  willing_to_complete_assessments: ""
+  willing_to_undergo_drug_tests: ""
+  willing_to_undergo_background_checks: ""
 ```
 
 注意：
@@ -276,6 +416,7 @@ $resume_text
 _PROMPT_TEMPLATE_EN = """You are a professional resume parsing assistant. Extract information from the resume text below and return it strictly in the following YAML format (output YAML only, no explanatory text):
 
 ```yaml
+professional_summary: "Professional summary from the source, otherwise empty"
 personal_information:
   full_name: "Full name copied verbatim from the source"
   name: "First name"
@@ -290,6 +431,7 @@ personal_information:
   email: "Email"
   github: "GitHub URL or empty string"
   linkedin: "LinkedIn URL or empty string"
+  wechat: "WeChat ID or empty string"
 education_details:
   - education_level: "Degree, e.g. Bachelor's Degree"
     institution: "University name"
@@ -301,8 +443,14 @@ education_details:
     research_topics:
       - "Research topic explicitly stated in the source; empty list if absent"
     additional_info:
+      is_211: null
+      is_double_first_class: null
+      college: "College or school, otherwise empty"
+      study_mode: "Study mode, otherwise empty"
       relevant_courses: "Coursework explicitly stated in the source, otherwise empty"
       honors: "Honors explicitly stated in the source, otherwise empty"
+    exam:
+      - "Course": "Grade"
 experience_details:
   - position: "Job title"
     company: "Company name"
@@ -328,6 +476,40 @@ languages:
     proficiency: "Native / Fluent / Intermediate / Beginner"
 interests:
   - "Interest"
+availability:
+  notice_period: "Notice period or empty string"
+salary_expectations:
+  salary_range_usd: "Salary expectation or empty string"
+self_identification:
+  gender: ""
+  pronouns: ""
+  veteran: ""
+  disability: ""
+  ethnicity: ""
+legal_authorization:
+  eu_work_authorization: ""
+  us_work_authorization: ""
+  requires_us_visa: ""
+  requires_us_sponsorship: ""
+  requires_eu_visa: ""
+  legally_allowed_to_work_in_eu: ""
+  legally_allowed_to_work_in_us: ""
+  requires_eu_sponsorship: ""
+  canada_work_authorization: ""
+  requires_canada_visa: ""
+  legally_allowed_to_work_in_canada: ""
+  requires_canada_sponsorship: ""
+  uk_work_authorization: ""
+  requires_uk_visa: ""
+  legally_allowed_to_work_in_uk: ""
+  requires_uk_sponsorship: ""
+work_preferences:
+  remote_work: ""
+  in_person_work: ""
+  open_to_relocation: ""
+  willing_to_complete_assessments: ""
+  willing_to_undergo_drug_tests: ""
+  willing_to_undergo_background_checks: ""
 ```
 
 Notes:
@@ -677,7 +859,7 @@ def parse_document(
             text = raw.decode("utf-8", errors="replace")
             data = yaml.safe_load(text)
             if isinstance(data, dict):
-                return data
+                return normalize_resume_data(data)
         except Exception:
             pass  # Fall through to LLM
 
@@ -697,7 +879,7 @@ def parse_document(
         if diagnostics is not None:
             diagnostics["used_fallback"] = True
             diagnostics["fallback_reason"] = "missing_api_key"
-        return _heuristic_fallback_v2(plain_text)
+        return normalize_resume_data(_heuristic_fallback_v2(plain_text))
 
     # Tier 3: LLM structured extraction
     # Use string.Template instead of .format() so that curly braces in
@@ -741,8 +923,8 @@ def parse_document(
             len(parsed.get("experience_details") or []),
             len(parsed.get("projects") or []),
         )
-        return _heuristic_fallback_v2(plain_text)
-    return parsed
+        return normalize_resume_data(_heuristic_fallback_v2(plain_text))
+    return normalize_resume_data(parsed)
 
 
 # ---------------------------------------------------------------------------

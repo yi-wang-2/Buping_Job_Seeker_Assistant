@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from backend.services import config_service
 from backend.services import notification_service
-from backend.services.resume_validation import validate_resume_data, validate_resume_yaml
+from backend.services.resume_validation import validate_resume_data
 from src.libs.resume_and_cover_builder.document_parser import parse_document
 from src.logging import logger
 
@@ -145,9 +145,31 @@ def get_resume_content(language: str = "zh") -> dict:
 @router.put("/resume-content")
 def save_resume_content(req: ResumeContentRequest) -> dict:
     """Save resume YAML content."""
-    config_service.save_resume_content(req.content, req.language)
-    validation = validate_resume_yaml(req.content)
-    return {"status": "success", "message": "简历内容已保存！", "validation": validation}
+    import yaml
+    from src.libs.resume_and_cover_builder.document_parser import normalize_resume_data
+
+    try:
+        parsed = yaml.safe_load(req.content)
+    except yaml.YAMLError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid resume YAML: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=422, detail="Resume YAML must be an object")
+
+    normalized = normalize_resume_data(parsed)
+    normalized_content = yaml.safe_dump(
+        normalized,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+    config_service.save_resume_content(normalized_content, req.language)
+    validation = validate_resume_data(normalized)
+    return {
+        "status": "success",
+        "message": "简历内容已保存！",
+        "validation": validation,
+        "content": normalized_content,
+    }
 
 
 SUPPORTED_EXTENSIONS = {

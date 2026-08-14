@@ -615,7 +615,7 @@ export async function getResumeContent(language: string = "zh"): Promise<{ conte
 export async function saveResumeContent(params: {
   content: string;
   language: string;
-}): Promise<{ status: string; message: string; validation?: ResumeValidation }> {
+}): Promise<{ status: string; message: string; validation?: ResumeValidation; content?: string }> {
   if (IS_PUBLIC) {
     window.sessionStorage.setItem(publicResumeKey(params.language), params.content);
     return { status: "success", message: "Resume saved in this browser session only" };

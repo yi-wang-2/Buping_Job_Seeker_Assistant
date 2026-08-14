@@ -1,3 +1,4 @@
+professional_summary: ""
 personal_information:
   full_name: "示例姓名"
   name: "示例"
@@ -72,3 +73,42 @@ interests:
   - "写作"
   - "开源"
   - "示例兴趣"
+
+availability:
+  notice_period: ""
+
+salary_expectations:
+  salary_range_usd: ""
+
+self_identification:
+  gender: ""
+  pronouns: ""
+  veteran: ""
+  disability: ""
+  ethnicity: ""
+
+legal_authorization:
+  eu_work_authorization: ""
+  us_work_authorization: ""
+  requires_us_visa: ""
+  requires_us_sponsorship: ""
+  requires_eu_visa: ""
+  legally_allowed_to_work_in_eu: ""
+  legally_allowed_to_work_in_us: ""
+  requires_eu_sponsorship: ""
+  canada_work_authorization: ""
+  requires_canada_visa: ""
+  legally_allowed_to_work_in_canada: ""
+  requires_canada_sponsorship: ""
+  uk_work_authorization: ""
+  requires_uk_visa: ""
+  legally_allowed_to_work_in_uk: ""
+  requires_uk_sponsorship: ""
+
+work_preferences:
+  remote_work: ""
+  in_person_work: ""
+  open_to_relocation: ""
+  willing_to_complete_assessments: ""
+  willing_to_undergo_drug_tests: ""
+  willing_to_undergo_background_checks: ""

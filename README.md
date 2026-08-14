@@ -335,6 +335,7 @@ system_language: "zh"
 直接编辑 `data_folder/plain_text_resume.yaml`（中文简历用 `plain_text_resume_zh.yaml`）：
 
 ```yaml
+professional_summary: ""  # 可选：职业概述
 personal_information:
   full_name: "Your Name"  # 推荐：简历展示时逐字使用，不由 AI 重排
   name: "Your"
@@ -350,6 +351,12 @@ education_details:
     research_direction: ""  # 可选：必须按事实填写，留空时不会显示
     research_topics: []      # 可选：仅填写真实研究课题
     year_of_completion: "2023"
+    additional_info:
+      college: "School of Engineering"
+      study_mode: "Full-time"
+      honors: ""
+      relevant_courses: ""
+    exam: {}  # 课程成绩统一放在教育经历下，不放在 additional_info 中
 experience_details:
   - position: "Senior Engineer"
     company: "Google"
@@ -362,6 +369,8 @@ projects:
 ```
 
 完整字段说明见 [`assets/resume_schema.yaml`](assets/resume_schema.yaml)。
+
+当前统一格式为 **Resume YAML v2**。上传文档、上传旧版 YAML/JSON 以及在设置页保存内容时都会自动标准化为 v2；旧字段 `degree/university/gpa/graduation_year` 和旧位置 `additional_info.exam` 会自动迁移，不会丢失原有数据。
 
 #### 方式二：上传文档自动解析（推荐）
 
