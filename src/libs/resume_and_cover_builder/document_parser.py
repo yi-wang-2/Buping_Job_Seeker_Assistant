@@ -192,6 +192,7 @@ def _empty_resume() -> dict:
         "experience_details": [],
         "projects": [],
         "achievements": [],
+        "academic_achievements": [],
         "certifications": [],
         "languages": [],
         "interests": [],
@@ -271,12 +272,33 @@ def normalize_resume_data(data: dict[str, Any]) -> dict[str, Any]:
         },
         "projects": {"name": "", "description": "", "link": ""},
         "achievements": {"name": "", "description": ""},
+        "academic_achievements": {
+            "type": "", "title": "", "authors": "", "venue": "", "date": "",
+            "status": "", "description": "", "link": "",
+        },
         "certifications": {"name": "", "description": ""},
         "languages": {"language": "", "proficiency": ""},
     }
+    academic_sources = list(data.get("academic_achievements") or [])
+    for alias, achievement_type in (
+        ("publications", "论文"),
+        ("patents", "专利"),
+        ("software_copyrights", "软件著作权"),
+    ):
+        for raw_item in data.get(alias) or []:
+            if isinstance(raw_item, dict):
+                item = dict(raw_item)
+                item.setdefault("type", achievement_type)
+                if "title" not in item and "name" in item:
+                    item["title"] = item.pop("name")
+                academic_sources.append(item)
+            elif str(raw_item).strip():
+                academic_sources.append({"type": achievement_type, "title": str(raw_item)})
+
     for key, defaults in list_defaults.items():
         normalized_items = []
-        for raw_item in data.get(key) or []:
+        source_items = academic_sources if key == "academic_achievements" else (data.get(key) or [])
+        for raw_item in source_items:
             if isinstance(raw_item, dict):
                 normalized_items.append({**defaults, **raw_item})
             elif key == "certifications":
@@ -354,6 +376,15 @@ projects:
 achievements:
   - name: "成就名称"
     description: "描述"
+academic_achievements:
+  - type: "论文、专利、软件著作权或其他学术成果类型"
+    title: "成果标题，逐字忠实于原文"
+    authors: "作者/发明人，原文没有则为空字符串"
+    venue: "期刊、会议或授权机构，原文没有则为空字符串"
+    date: "发表、申请、授权或登记日期，原文没有则为空字符串"
+    status: "已发表、录用、在投、已授权、申请中、已登记等原文状态"
+    description: "原文明确写出的贡献或说明"
+    link: "URL、DOI、专利号、登记号或空字符串"
 certifications:
   - name: "证书名称"
     description: "描述"
@@ -468,6 +499,15 @@ projects:
 achievements:
   - name: "Achievement name"
     description: "Description"
+academic_achievements:
+  - type: "Paper, patent, software copyright, or other academic output type"
+    title: "Title copied faithfully from the source"
+    authors: "Authors or inventors, otherwise empty"
+    venue: "Journal, conference, or issuing authority, otherwise empty"
+    date: "Publication, filing, grant, or registration date, otherwise empty"
+    status: "Published, accepted, under review, granted, filed, registered, etc. from source"
+    description: "Contribution or details explicitly stated in the source"
+    link: "URL, DOI, patent number, registration number, or empty"
 certifications:
   - name: "Certification name"
     description: "Description"

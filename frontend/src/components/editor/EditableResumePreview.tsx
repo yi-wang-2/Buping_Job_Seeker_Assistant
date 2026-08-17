@@ -219,21 +219,23 @@ function EditableWYSIWYGEditor({
 
   const stripEditorState = (root: ParentNode) => {
     root
-      .querySelectorAll("[data-buping-entry-action], [data-buping-empty-placeholder]")
+      .querySelectorAll("[data-buping-entry-action], [data-buping-module-action], [data-buping-empty-placeholder]")
       .forEach((el) => el.remove());
     root
       .querySelectorAll<HTMLElement>(
-        "[data-buping-block], [data-buping-removable-entry], [contenteditable]",
+        "[data-buping-block], [data-buping-removable-entry], [data-buping-module], [contenteditable]",
       )
       .forEach((el) => {
         el.removeAttribute("data-buping-block");
         el.removeAttribute("data-buping-removable-entry");
+        el.removeAttribute("data-buping-module");
         el.removeAttribute("contenteditable");
       });
     const rootElement = root as HTMLElement;
     if (typeof rootElement.removeAttribute === "function") {
       rootElement.removeAttribute("data-buping-block");
       rootElement.removeAttribute("data-buping-removable-entry");
+      rootElement.removeAttribute("data-buping-module");
       rootElement.removeAttribute("contenteditable");
     }
   };
@@ -285,6 +287,31 @@ function EditableWYSIWYGEditor({
 
   const emitDocumentChange = (doc: Document) => {
     onChange(serializeDocument(doc));
+  };
+
+  const normalizeResumeLists = (doc: Document) => {
+    doc.querySelectorAll<HTMLElement>("section ul, section ol").forEach((list) => {
+      if (!["compact-list", "stack-list", "inline-list"].some((name) => list.classList.contains(name))) {
+        const section = list.closest("section");
+        const reference = section?.querySelector<HTMLElement>(
+          "ul.compact-list, ol.compact-list, ul.stack-list, ol.stack-list, ul.inline-list, ol.inline-list",
+        );
+        const layoutClasses = reference
+          ? Array.from(reference.classList).filter((name) =>
+              ["compact-list", "stack-list", "inline-list"].includes(name),
+            )
+          : ["compact-list"];
+        list.classList.add(...layoutClasses);
+      }
+
+      // execCommand can produce invalid <p><ul>...</ul></p> markup. Move the
+      // list beside that paragraph so browser/PDF layout stays deterministic.
+      const paragraph = list.parentElement;
+      if (paragraph?.tagName === "P" && paragraph.parentElement) {
+        paragraph.parentElement.insertBefore(list, paragraph.nextSibling);
+        if (!paragraph.textContent?.trim() && paragraph.children.length === 0) paragraph.remove();
+      }
+    });
   };
 
   const applyLayoutControls = (
@@ -549,6 +576,95 @@ function EditableWYSIWYGEditor({
       el.setAttribute("data-buping-block", "true");
       el.setAttribute("contenteditable", "false");
     });
+    decorateModuleActions(doc);
+  };
+
+  const movableModules = (doc: Document) => {
+    const main = doc.body.querySelector("main");
+    if (main) return Array.from(main.querySelectorAll<HTMLElement>(":scope > section"));
+    return Array.from(doc.body.querySelectorAll<HTMLElement>(":scope > section"));
+  };
+
+  const refreshModuleActionStates = (doc: Document) => {
+    const modules = movableModules(doc);
+    modules.forEach((module, index) => {
+      const up = module.querySelector<HTMLButtonElement>(':scope > [data-buping-module-action="group"] [data-action="move-up"]');
+      const down = module.querySelector<HTMLButtonElement>(':scope > [data-buping-module-action="group"] [data-action="move-down"]');
+      if (up) up.disabled = index === 0;
+      if (down) down.disabled = index === modules.length - 1;
+    });
+  };
+
+  const moveResumeModule = (module: HTMLElement, direction: -1 | 1) => {
+    const doc = module.ownerDocument;
+    const modules = movableModules(doc);
+    const index = modules.indexOf(module);
+    const target = modules[index + direction];
+    const parent = module.parentElement;
+    if (index < 0 || !target || !parent || parent !== target.parentElement) return;
+    if (direction < 0) parent.insertBefore(module, target);
+    else parent.insertBefore(target, module);
+    refreshModuleActionStates(doc);
+    emitDocumentChange(doc);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
+  };
+
+  const removeResumeModule = (module: HTMLElement) => {
+    const doc = module.ownerDocument;
+    module.remove();
+    refreshModuleActionStates(doc);
+    emitDocumentChange(doc);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
+  };
+
+  const addResumeModuleAfter = (module: HTMLElement) => {
+    const doc = module.ownerDocument;
+    const section = doc.createElement("section");
+    section.id = `custom-section-${Date.now()}`;
+    section.innerHTML = "<h2>新模块</h2><p>点击这里填写内容</p>";
+    module.insertAdjacentElement("afterend", section);
+    decorateEditableModules(doc);
+    refreshModuleActionStates(doc);
+    emitDocumentChange(doc);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
+  };
+
+  const decorateModuleActions = (doc: Document) => {
+    movableModules(doc).forEach((module) => {
+      module.setAttribute("data-buping-module", "true");
+      if (module.querySelector(':scope > [data-buping-module-action="group"]')) return;
+      const actions = doc.createElement("div");
+      actions.setAttribute("data-buping-module-action", "group");
+      actions.setAttribute("contenteditable", "false");
+      ([
+        { action: "move-up", text: "↑", title: "上移整个模块" },
+        { action: "move-down", text: "↓", title: "下移整个模块" },
+        { action: "add", text: "+ 添加", title: "在下方添加新模块" },
+        { action: "remove", text: "删除", title: "删除整个模块" },
+      ] as const).forEach(({ action, text, title }) => {
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.dataset.action = action;
+        button.title = title;
+        button.setAttribute("aria-label", title);
+        button.textContent = text;
+        button.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (action === "move-up") moveResumeModule(module, -1);
+          else if (action === "move-down") moveResumeModule(module, 1);
+          else if (action === "add") addResumeModuleAfter(module);
+          else removeResumeModule(module);
+        });
+        actions.appendChild(button);
+      });
+      module.appendChild(actions);
+    });
+    refreshModuleActionStates(doc);
   };
 
   const restoreLibraryEntry = (id: string) => {
@@ -732,6 +848,36 @@ function EditableWYSIWYGEditor({
         }
         [data-buping-entry-action="group"] > button:hover:not(:disabled) { background: #f3f4f6; }
         [data-buping-entry-action="group"] > button:last-child:hover { background: #fef2f2; }
+        [data-buping-module] { position: relative; }
+        [data-buping-module-action="group"] {
+          position: absolute;
+          top: 0;
+          right: 0;
+          transform: translateY(-100%);
+          z-index: 21;
+          display: flex;
+          gap: 2px;
+          opacity: 0;
+          transition: opacity 0.15s;
+        }
+        [data-buping-module]:hover > [data-buping-module-action="group"],
+        [data-buping-module-action="group"]:focus-within { opacity: 1; }
+        [data-buping-module-action="group"] button {
+          border: 1px solid rgba(20, 184, 166, 0.45);
+          border-radius: 5px;
+          background: rgba(240, 253, 250, 0.97);
+          color: #0f766e;
+          padding: 2px 6px;
+          font: 600 10px/1.5 system-ui, sans-serif;
+          cursor: pointer;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+        [data-buping-module-action="group"] button:disabled { cursor: not-allowed; opacity: 0.3; }
+        [data-buping-module-action="group"] button[data-action="remove"] {
+          border-color: rgba(220, 38, 38, 0.4);
+          background: rgba(254, 242, 242, 0.97);
+          color: #b91c1c;
+        }
         [data-buping-empty-placeholder] {
           margin: 8px 0;
           border: 1px dashed rgba(107, 114, 128, 0.45);
@@ -750,6 +896,7 @@ function EditableWYSIWYGEditor({
       if (hasSavedLayoutControls) {
         applyLayoutControls(doc, savedLineHeight, savedModuleSpacing);
       }
+      normalizeResumeLists(doc);
       installPrintLayoutEmulation(doc);
       window.requestAnimationFrame(() => paginateResumeDom(doc));
       void doc.fonts?.ready.then(() => paginateResumeDom(doc));
@@ -815,8 +962,12 @@ function EditableWYSIWYGEditor({
     const doc = iframe.contentDocument;
     if (!doc) return;
     doc.execCommand(command, false, value);
+    if (command === "insertUnorderedList" || command === "insertOrderedList") {
+      normalizeResumeLists(doc);
+    }
     // Trigger an input event so React state updates
     emitDocumentChange(doc);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
   };
 
   const restoreTextSelection = (doc: Document) => {

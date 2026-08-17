@@ -67,7 +67,27 @@ def test_selecting_parent_section_supersedes_child_entry_target():
     assert "保留公司 A" not in result and "保留公司 B" not in result
 
 
+def test_new_academic_section_is_inserted_inside_main_in_canonical_order():
+    base = BASE_HTML.replace("<body>", "<body><main>").replace("</body>", "</main></body>")
+    generated = GENERATED_HTML.replace(
+        '<section id="achievements"',
+        '<section id="academic-achievements"><h2>学术成果</h2></section><section id="achievements"',
+    )
+    if 'id="academic-achievements"' not in generated:
+        generated = generated.replace(
+            "</body>", '<section id="academic-achievements"><h2>学术成果</h2></section></body>',
+        )
+
+    result = merge_regenerated_resume_html(base, generated, ["section:academic-achievements"])
+    soup = BeautifulSoup(result, "html.parser")
+
+    academic = soup.find(id="academic-achievements")
+    assert academic is not None
+    assert academic.find_parent("main") is not None
+
+
 def test_partial_regeneration_requires_supported_nonempty_targets():
+    assert validate_regenerate_targets(["section:academic-achievements"]) == ["section:academic-achievements"]
     with pytest.raises(ValueError, match="at least one"):
         validate_regenerate_targets([])
     with pytest.raises(ValueError, match="Unsupported resume section"):

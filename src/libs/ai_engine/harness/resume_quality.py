@@ -45,7 +45,7 @@ GOLDEN_RESUME_WRITING_GUIDE = r"""
 4. 信息密度
 - 保留输入中的每段有效经历，但避免同一事实在工作经历、项目经历、荣誉和技能中反复扩写。
 - 奖项和证书用一行说明“名称 + 事实依据/价值”，不要编造评选标准、颁发机构或排名。
-- 技能按类别组织，熟练程度只有输入明确提供时才能写。
+- 技能按类别组织，并写成“能力层级 + 应用过程/场景 + 实践证据”的短句，禁止只堆砌技术名词。能力层级必须由经历证据校准：有明确实践可写“熟悉”或“具备实践经验”，只有接触证据时写“了解”；“精通”仅限输入明确表述且存在长期深入实践支撑的情况。
 """
 
 
@@ -584,6 +584,16 @@ def protect_hard_facts_in_place(
     result["projects"] = _patch_projects(result.get("projects", ""), data.get("projects") or [], violations)
     result["achievements"] = _patch_named_items(
         result.get("achievements", ""), data.get("achievements") or [], "achievements", violations
+    )
+    result["academic_achievements"] = _patch_named_items(
+        result.get("academic_achievements", ""),
+        [
+            {"name": item.get("title", ""), "description": item.get("description", "")}
+            for item in (data.get("academic_achievements") or [])
+            if isinstance(item, Mapping) and _present(item.get("title"))
+        ],
+        "academic_achievements",
+        violations,
     )
     language_names = [
         value for language_item in data.get("languages") or [] for value in _flatten(language_item)

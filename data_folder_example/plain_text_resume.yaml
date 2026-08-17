@@ -92,6 +92,8 @@ achievements:
   - name: "Hackathon Winner"
     description: "Won first place in a national hackathon competition."
 
+academic_achievements: []
+
 certifications:
   - name: "Certified Scrum Master"
     description: "Recognized certification for proficiency in Agile methodologies and Scrum framework."

@@ -354,6 +354,7 @@ class LLMResumer:
             (r'\[EDUCATION\]', r'\[/EDUCATION\]', 'education'),
             (r'\[WORK_EXPERIENCE\]', r'\[/WORK_EXPERIENCE\]', 'work_experience'),
             (r'\[PROJECTS\]', r'\[/PROJECTS\]', 'projects'),
+            (r'\[ACADEMIC_ACHIEVEMENTS\]', r'\[/ACADEMIC_ACHIEVEMENTS\]', 'academic_achievements'),
             (r'\[ACHIEVEMENTS\]', r'\[/ACHIEVEMENTS\]', 'achievements'),
             (r'\[CERTIFICATIONS\]', r'\[/CERTIFICATIONS\]', 'certifications'),
             (r'\[ADDITIONAL_SKILLS\]', r'\[/ADDITIONAL_SKILLS\]', 'additional_skills'),
@@ -390,6 +391,7 @@ class LLMResumer:
         full_resume += f"    {results.get('education', '')}\n"
         full_resume += f"    {results.get('work_experience', '')}\n"
         full_resume += f"    {results.get('projects', '')}\n"
+        full_resume += f"    {results.get('academic_achievements', '')}\n"
         full_resume += f"    {results.get('achievements', '')}\n"
         full_resume += f"    {results.get('certifications', '')}\n"
         full_resume += f"    {results.get('additional_skills', '')}\n"

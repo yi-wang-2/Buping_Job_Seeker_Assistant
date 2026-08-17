@@ -14,6 +14,7 @@ RESUME_PROMPT_TEMPLATE = r"""你是一位专业的HR专家和简历撰写顾问�
 [EDUCATION]...[/EDUCATION]
 [WORK_EXPERIENCE]...[/WORK_EXPERIENCE]
 [PROJECTS]...[/PROJECTS]
+[ACADEMIC_ACHIEVEMENTS]...[/ACADEMIC_ACHIEVEMENTS]
 [ACHIEVEMENTS]...[/ACHIEVEMENTS]
 [CERTIFICATIONS]...[/CERTIFICATIONS]
 [ADDITIONAL_SKILLS]...[/ADDITIONAL_SKILLS]
@@ -121,6 +122,15 @@ RESUME_PROMPT_TEMPLATE = r"""你是一位专业的HR专家和简历撰写顾问�
 </section>
 [/ACHIEVEMENTS]
 
+[ACADEMIC_ACHIEVEMENTS]
+<section id="academic-achievements">
+    <h2>学术成果</h2>
+    <ul class="compact-list">
+      <li><strong>[成果类型] · [成果标题]：</strong>[作者/本人贡献] | [期刊、会议或授权机构] | [日期与状态] | [DOI、专利号、软著登记号或链接]</li>
+    </ul>
+</section>
+[/ACADEMIC_ACHIEVEMENTS]
+
 [CERTIFICATIONS]
 <section id="certifications">
     <h2>证书资质</h2>
@@ -135,10 +145,10 @@ RESUME_PROMPT_TEMPLATE = r"""你是一位专业的HR专家和简历撰写顾问�
 <section id="technical-stack">
     <h2>技术栈</h2>
     <ul class="compact-list stack-list">
-        <li><strong>编程语言：</strong>[具体掌握的语言及熟练程度]</li>
-        <li><strong>图像处理/算法：</strong>[与岗位相关的算法、图像处理或ISP能力]</li>
-        <li><strong>嵌入式/硬件：</strong>[嵌入式开发、传感器、硬件调试等能力]</li>
-        <li><strong>平台与工具：</strong>[实际使用的平台、工具链和调试工具]</li>
+        <li><strong>编程与工程：</strong>[用“熟悉/掌握/了解 + 技术 + 使用过程或实践场景 + 可核验经验”描述，不得只列名词]</li>
+        <li><strong>图像处理/算法：</strong>[说明在算法设计、训练、调优、评测或交付的什么过程中使用了哪些能力]</li>
+        <li><strong>嵌入式/硬件：</strong>[说明在开发、联调、测试或问题定位过程中使用了哪些平台与工具]</li>
+        <li><strong>平台与工具：</strong>[说明实际用于什么任务、达到何种可由简历支撑的熟练程度]</li>
     </ul>
 </section>
 <section id="languages-other">
@@ -182,6 +192,9 @@ For 1 page, write concise high-value bullets and avoid repetition. For 2 pages, 
 【成就荣誉】
 {achievements}
 
+【学术成果】
+{academic_achievements}
+
 【证书资质】
 {certifications}
 
@@ -195,6 +208,9 @@ For 1 page, write concise high-value bullets and avoid repetition. For 2 pages, 
 2. 善用量化和具体数据支撑描述
 3. 突出与目标岗位最相关的经验和技能
 4. 使用专业HR认可的语言和表达方式
+5. 技能描述禁止写成“Python、Java、Git、Linux”式名词堆砌；必须写清能力层级、应用过程/场景和实践证据，例如“熟悉 Python，具备在 FastAPI 服务开发、数据处理和自动化测试中的实践经验”
+6. “精通”仅可在原始简历存在长期、深入且可核验的事实证据时使用；默认优先使用“熟悉”“掌握”“了解”“具备……实践经验”，不得夸大
+7. 仅当【学术成果】存在非空数据时生成 [ACADEMIC_ACHIEVEMENTS]，准确区分论文、专利、软件著作权及其状态；无数据必须完全省略该模块，严禁编造
 
 仅返回标记的模块内容，每个模块都要正确闭合。"""
 
@@ -227,6 +243,7 @@ def build_resume_generation_prompt(inputs: dict[str, Any]) -> str:
         "experience_details": _json(resume.get("experience_details") or []),
         "projects": _json(resume.get("projects") or []),
         "achievements": _json(resume.get("achievements") or []),
+        "academic_achievements": _json(resume.get("academic_achievements") or []),
         "certifications": _json(resume.get("certifications") or []),
         "languages": _json(resume.get("languages") or []),
         "interests": _json(resume.get("interests") or []),

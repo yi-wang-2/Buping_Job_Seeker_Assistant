@@ -34,6 +34,7 @@ FACT_POLICY: dict[str, FactPolicy] = {
     "projects.*.description": FactPolicy.GROUNDED_REWRITE,
     "achievements.*.name": FactPolicy.LOCKED,
     "achievements.*.description": FactPolicy.GROUNDED_REWRITE,
+    "academic_achievements.*.*": FactPolicy.LOCKED,
     "certifications.*.name": FactPolicy.LOCKED,
     "certifications.*.description": FactPolicy.GROUNDED_REWRITE,
     "languages.*.*": FactPolicy.LOCKED,
@@ -846,12 +847,27 @@ def protect_resume_sections(
     violations.extend(summary_violations)
 
     achievements_heading = "成就荣誉" if language != "en" else "Achievements"
+    academic_heading = "学术成果" if language != "en" else "Academic Output"
     certifications_heading = "证书资质" if language != "en" else "Certifications"
     achievements, achievement_violations = _patch_named_list_in_place(
         generated.get("achievements", ""),
         data.get("achievements"),
         section_id="achievements",
         heading=achievements_heading,
+    )
+    academic_achievements, academic_violations = _patch_named_list_in_place(
+        generated.get("academic_achievements", ""),
+        [
+            {"name": item.get("title", ""), "description": " | ".join(
+                str(item.get(field, "")).strip()
+                for field in ("type", "authors", "venue", "date", "status", "description", "link")
+                if str(item.get(field, "")).strip()
+            )}
+            for item in (data.get("academic_achievements") or [])
+            if isinstance(item, Mapping) and str(item.get("title", "")).strip()
+        ],
+        section_id="academic-achievements",
+        heading=academic_heading,
     )
     certifications, certification_violations = _patch_named_list_in_place(
         generated.get("certifications", ""),
@@ -865,6 +881,7 @@ def protect_resume_sections(
         language=language,
     )
     violations.extend(achievement_violations)
+    violations.extend(academic_violations)
     violations.extend(certification_violations)
     violations.extend(additional_violations)
     sections = {
@@ -875,6 +892,7 @@ def protect_resume_sections(
         "education": education,
         "work_experience": work,
         "projects": projects,
+        "academic_achievements": academic_achievements,
         "achievements": achievements,
         "certifications": certifications,
         "additional_skills": additional,

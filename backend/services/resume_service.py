@@ -360,6 +360,17 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html_content, "html.parser")
+    # Browser-native list commands create unclassified lists with the user
+    # agent's much wider default indentation. Generated resume lists use the
+    # template's compact-list spacing, so normalize edited and legacy saves to
+    # that same contract before preview/PDF persistence.
+    for list_element in soup.select("section ul:not(.compact-list):not(.stack-list):not(.inline-list), section ol:not(.compact-list):not(.stack-list):not(.inline-list)"):
+        list_element["class"] = [*(list_element.get("class") or []), "compact-list"]
+        parent = list_element.parent
+        if parent is not None and getattr(parent, "name", None) == "p":
+            parent.insert_after(list_element.extract())
+            if not parent.get_text(strip=True) and not parent.find(True):
+                parent.decompose()
     nested_documents = list(soup.body.find_all("html")) if soup.body is not None else []
     if nested_documents:
         soup = BeautifulSoup(str(nested_documents[-1]), "html.parser")
@@ -395,13 +406,14 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
         empty_section.attrs.pop("data-buping-all-entries-removed", None)
         empty_section.attrs["data-buping-library-empty-section"] = "true"
         empty_section.attrs["hidden"] = ""
-    for editor_only in soup.select("[data-buping-entry-action], [data-buping-empty-placeholder]"):
+    for editor_only in soup.select("[data-buping-entry-action], [data-buping-module-action], [data-buping-empty-placeholder]"):
         editor_only.decompose()
     for element in soup.select(
-        "[data-buping-block], [data-buping-removable-entry], [contenteditable]"
+        "[data-buping-block], [data-buping-removable-entry], [data-buping-module], [contenteditable]"
     ):
         element.attrs.pop("data-buping-block", None)
         element.attrs.pop("data-buping-removable-entry", None)
+        element.attrs.pop("data-buping-module", None)
         element.attrs.pop("data-buping-all-entries-removed", None)
         element.attrs.pop("contenteditable", None)
     for page_break in soup.select("[data-buping-page-break]"):
@@ -790,10 +802,14 @@ def fit_resume_to_target_pages(
 
 _REGENERATABLE_SECTION_IDS = {
     "header", "education", "work-experience", "side-projects", "achievements",
-    "certifications", "technical-stack", "languages-other", "skills-languages",
+    "academic-achievements", "certifications", "technical-stack", "languages-other", "skills-languages",
 }
 _REGENERATABLE_ENTRY_SECTION_IDS = {"education", "work-experience", "side-projects"}
 _REGENERATION_TARGET = re.compile(r"^(section|entry):([a-z][a-z0-9-]*)(?::(\d+))?$")
+_RESUME_SECTION_ORDER = (
+    "education", "work-experience", "side-projects", "academic-achievements",
+    "achievements", "certifications", "technical-stack", "languages-other", "skills-languages",
+)
 
 
 def validate_regenerate_targets(targets: list[str]) -> list[str]:
@@ -842,7 +858,20 @@ def merge_regenerated_resume_html(base_html: str, generated_html: str, targets: 
         if old_node is not None:
             old_node.replace_with(replacement)
         elif base_soup.body is not None:
-            base_soup.body.append(replacement)
+            container = base_soup.body.find("main") or base_soup.body
+            section_index = _RESUME_SECTION_ORDER.index(section_id)
+            next_node = next(
+                (
+                    container.find(id=candidate, recursive=False)
+                    for candidate in _RESUME_SECTION_ORDER[section_index + 1:]
+                    if container.find(id=candidate, recursive=False) is not None
+                ),
+                None,
+            )
+            if next_node is not None:
+                next_node.insert_before(replacement)
+            else:
+                container.append(replacement)
         else:
             raise ValueError("Base resume HTML has no body for inserting selected section.")
 

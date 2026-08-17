@@ -1,3 +1,5 @@
+from bs4 import BeautifulSoup
+
 from backend.services.resume_service import _sanitize_edited_resume_html
 
 
@@ -10,7 +12,10 @@ def test_saved_resume_removes_editor_highlight_and_attributes():
     <style id="buping-print-layout-emulation">html { width: 698px; }</style>
     <style id="buping-viewport-fit">body { transform: scale(.8); }</style>
     </head><body contenteditable="false">
-    <section data-buping-block="true" contenteditable="true"><p>项目一</p><p>项目二</p></section>
+    <section data-buping-block="true" data-buping-module="true" contenteditable="true">
+      <div data-buping-module-action="group"><button>模块 ↑</button></div>
+      <p>项目一</p><p>项目二</p>
+    </section>
     <section id="work-experience">
       <div class="entry" data-buping-removable-entry="true">
         <p>保留的工作经历</p>
@@ -44,6 +49,9 @@ def test_saved_resume_removes_editor_highlight_and_attributes():
     assert "保留的工作经历" in cleaned
     assert "data-buping-removable-entry" not in cleaned
     assert "data-buping-entry-action" not in cleaned
+    assert "data-buping-module-action" not in cleaned
+    assert "data-buping-module" not in cleaned
+    assert "模块 ↑" not in cleaned
     assert "撤下" not in cleaned
     assert "data-buping-empty-placeholder" not in cleaned
     assert "该模块中的经历已全部撤下" not in cleaned
@@ -51,3 +59,17 @@ def test_saved_resume_removes_editor_highlight_and_attributes():
     assert "data-buping-library-empty-section" in cleaned
     assert "buping-experience-library-store" in cleaned
     assert "已归档的教育经历" in cleaned
+
+
+def test_saved_resume_normalizes_native_editor_lists():
+    source = """<!doctype html><html><body><main><section id="custom">
+    <h2>测试模块</h2><p><ul><li>测试项目</li><li>测试项目</li></ul></p>
+    </section></main></body></html>"""
+
+    cleaned = _sanitize_edited_resume_html(source)
+
+    soup = BeautifulSoup(cleaned, "html.parser")
+    edited_list = soup.select_one("#custom > ul.compact-list")
+    assert edited_list is not None
+    assert [item.get_text(strip=True) for item in edited_list.select("li")] == ["测试项目", "测试项目"]
+    assert soup.select_one("#custom > p > ul") is None

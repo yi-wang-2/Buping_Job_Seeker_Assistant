@@ -58,6 +58,8 @@ achievements:
   - name: "示例获奖 / 荣誉"
     description: "简短说明评选机构与时间"
 
+academic_achievements: []
+
 certifications:
   - name: "示例证书"
     description: ""

@@ -106,6 +106,7 @@ const REGENERATION_SECTIONS = [
   { id: "education", zh: "教育经历", en: "Education", selector: "#education", entries: true },
   { id: "work-experience", zh: "工作经历", en: "Work Experience", selector: "#work-experience", entries: true },
   { id: "side-projects", zh: "项目经历", en: "Projects", selector: "#side-projects", entries: true },
+  { id: "academic-achievements", zh: "学术成果", en: "Academic Output", selector: "#academic-achievements", entries: false },
   { id: "achievements", zh: "成就荣誉", en: "Achievements", selector: "#achievements", entries: false },
   { id: "certifications", zh: "证书", en: "Certifications", selector: "#certifications", entries: false },
   { id: "technical-stack", zh: "技能", en: "Skills", selector: "#technical-stack", entries: false },

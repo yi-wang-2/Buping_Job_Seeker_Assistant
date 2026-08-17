@@ -96,6 +96,17 @@ class Achievement(ResumeModel):
     description: Optional[str] = None
 
 
+class AcademicAchievement(ResumeModel):
+    type: Optional[str] = None
+    title: Optional[str] = None
+    authors: Optional[Union[str, List[str]]] = None
+    venue: Optional[str] = None
+    date: Optional[str] = None
+    status: Optional[str] = None
+    description: Optional[str] = None
+    link: Optional[str] = None
+
+
 class Certifications(ResumeModel):
     name: Optional[str] = None
     description: Optional[str] = None
@@ -157,6 +168,7 @@ class Resume(ResumeModel):
     experience_details: Optional[List[ExperienceDetails]] = None
     projects: Optional[List[Project]] = None
     achievements: Optional[List[Achievement]] = None
+    academic_achievements: Optional[List[AcademicAchievement]] = None
     certifications: Optional[List[Certifications]] = None
     languages: Optional[List[Language]] = None
     interests: Optional[List[str]] = None
