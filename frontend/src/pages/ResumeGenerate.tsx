@@ -377,7 +377,9 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         stylesLoaded = true;
         setStyles(s);
         const keys = Object.keys(s);
-        if (keys.length > 0 && !styleNameRef.current) {
+        if (styleNameRef.current === "简墨 · Clean Ink" && s["简墨"]) {
+          setStyleName("简墨");
+        } else if (keys.length > 0 && !s[styleNameRef.current]) {
           setStyleName(keys[0]);
         }
       })
