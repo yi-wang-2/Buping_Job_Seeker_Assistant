@@ -953,6 +953,9 @@ def build_preserved_resume_context(base_html: str, targets: list[str], max_chars
 def convert_html_to_pdf(
     html_content: str,
     filename_base: str = "edited",
+    *,
+    overwrite_pdf_filename: str = "",
+    overwrite_html_filename: str = "",
 ) -> dict[str, Any]:
     """Convert an arbitrary full HTML document to PDF and save it.
 
@@ -977,15 +980,22 @@ def convert_html_to_pdf(
     html_content = _sanitize_edited_resume_html(html_content)
 
     from backend.services.config_service import PUBLIC_DEMO_MODE
-    if PUBLIC_DEMO_MODE:
+    if overwrite_pdf_filename and overwrite_html_filename and not PUBLIC_DEMO_MODE:
+        pdf_filename = Path(overwrite_pdf_filename).name
+        html_filename = Path(overwrite_html_filename).name
+        if not pdf_filename.lower().endswith(".pdf") or not html_filename.lower().endswith(".html"):
+            raise ValueError("Overwrite targets must be a PDF/HTML pair")
+    elif PUBLIC_DEMO_MODE:
         cleanup_public_artifacts()
         token = uuid.uuid4().hex
         pdf_filename = f"public_{token}.pdf"
         html_filename = f"public_{token}.html"
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pdf_filename = f"{filename_base}_{timestamp}.pdf"
-        html_filename = f"{filename_base}_{timestamp}.html"
+        safe_base = re.sub(r"[^\w\-.\u4e00-\u9fff]+", "_", filename_base, flags=re.UNICODE).strip("._")
+        safe_base = safe_base[:80] or "resume_edited"
+        pdf_filename = f"{safe_base}_{timestamp}.pdf"
+        html_filename = f"{safe_base}_{timestamp}.html"
 
     pdf_path = OUTPUT_FOLDER / pdf_filename
     html_path = OUTPUT_FOLDER / html_filename
@@ -1005,6 +1015,28 @@ def convert_html_to_pdf(
         "html_path": str(html_path),
         "pdf_size": len(pdf_bytes),
     }
+
+
+def rename_saved_resume(pdf_filename: str, html_filename: str, new_name: str) -> dict[str, str]:
+    """Rename an existing saved PDF/HTML pair without leaving an orphan file."""
+    source_pdf = OUTPUT_FOLDER / Path(pdf_filename).name
+    source_html = OUTPUT_FOLDER / Path(html_filename).name
+    if not source_pdf.is_file() or not source_html.is_file():
+        raise FileNotFoundError("Current resume PDF/HTML pair was not found")
+    safe_name = re.sub(r"[^\w\-.\u4e00-\u9fff]+", "_", new_name, flags=re.UNICODE).strip("._")[:80]
+    if not safe_name:
+        raise ValueError("Resume name cannot be empty")
+    target_pdf = OUTPUT_FOLDER / f"{safe_name}.pdf"
+    target_html = OUTPUT_FOLDER / f"{safe_name}.html"
+    if (target_pdf.exists() and target_pdf != source_pdf) or (target_html.exists() and target_html != source_html):
+        raise FileExistsError(f'A resume named "{safe_name}" already exists')
+    source_pdf.replace(target_pdf)
+    try:
+        source_html.replace(target_html)
+    except Exception:
+        target_pdf.replace(source_pdf)
+        raise
+    return {"pdf_filename": target_pdf.name, "html_filename": target_html.name}
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import { installPrintLayoutEmulation, paginateResumeDom } from "./domPagination"
 interface EditableResumePreviewProps {
   initialHtml: string;
   onSave?: (html: string) => void;
+  onSaveAs?: (html: string) => void;
   onChange?: (html: string) => void;
   onSelectionChange?: (text: string) => void;
   onReset?: () => void;
@@ -47,6 +48,7 @@ interface EditableResumePreviewProps {
 export default function EditableResumePreview({
   initialHtml,
   onSave,
+  onSaveAs,
   onChange,
   onSelectionChange,
   onReset,
@@ -159,15 +161,28 @@ export default function EditableResumePreview({
             </button>
           )}
           {showSaveButton && onSave && (
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={!isDirty || saving}
-              className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-              title="保存修改"
-            >
-              {saving ? "⏳ 保存中..." : "💾 保存"}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!isDirty || saving}
+                className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                title="覆盖保存到当前简历"
+              >
+                {saving ? "⏳ 保存中..." : "💾 保存"}
+              </button>
+              {onSaveAs && (
+                <button
+                  type="button"
+                  onClick={() => onSaveAs(currentHtml)}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1 rounded-lg border border-brand-300 bg-white px-3 py-1 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-gray-800"
+                  title="以当前名称创建新的简历文件"
+                >
+                  另存为
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1055,6 +1070,17 @@ function EditableWYSIWYGEditor({
     window.requestAnimationFrame(() => paginateResumeDom(doc));
   };
 
+  const deleteLibraryEntry = (id: string) => {
+    const index = removedEntriesRef.current.findIndex((record) => record.id === id);
+    const removed = index >= 0 ? removedEntriesRef.current[index] : undefined;
+    if (!removed) return;
+    if (!window.confirm(`确定永久删除经历“${removed.title}”吗？删除后无法从经历库恢复。`)) return;
+    removedEntriesRef.current.splice(index, 1);
+    syncLibraryItems();
+    const doc = removed.parent.ownerDocument;
+    emitDocumentChange(doc);
+  };
+
   const restoreTextSelection = (doc: Document) => {
     const range = lastSelectionRangeRef.current;
     const selection = doc.getSelection();
@@ -1283,7 +1309,11 @@ function EditableWYSIWYGEditor({
         }}
       />
       {libraryPortalTarget && createPortal(
-        <ExperienceLibraryPanel items={libraryItems} onRestore={restoreLibraryEntry} />,
+        <ExperienceLibraryPanel
+          items={libraryItems}
+          onRestore={restoreLibraryEntry}
+          onDelete={deleteLibraryEntry}
+        />,
         libraryPortalTarget,
       )}
       {!isReady && (
@@ -1336,9 +1366,11 @@ const FONT_SIZE_OPTIONS = [9, 10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32] as con
 function ExperienceLibraryPanel({
   items,
   onRestore,
+  onDelete,
 }: {
   items: ExperienceLibraryItem[];
   onRestore: (id: string) => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <aside className="w-full rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
@@ -1372,13 +1404,23 @@ function ExperienceLibraryPanel({
                   {item.summary}
                 </p>
               )}
-              <button
-                type="button"
-                onClick={() => onRestore(item.id)}
-                className="w-full rounded-md bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700"
-              >
-                加入当前简历
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => onRestore(item.id)}
+                  className="min-w-0 flex-1 rounded-md bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700"
+                >
+                  加入当前简历
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(item.id)}
+                  className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+                  title="从经历库永久删除"
+                >
+                  删除
+                </button>
+              </div>
             </div>
           ))}
         </div>

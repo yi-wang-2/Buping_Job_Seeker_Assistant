@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Edit3, Save, RotateCcw, Check, History as HistoryIcon, Sparkle } from "lucide-react";
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
-import { getStyles, generateResume, getResumeGenerationProgress, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume } from "../api/client";
+import { getStyles, generateResume, getResumeGenerationProgress, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume, renameSavedResume } from "../api/client";
 import { installPrintLayoutEmulation, paginateResumeDom } from "../components/editor/domPagination";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
@@ -269,6 +269,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [status, setStatus] = useSessionState("buping_resume_status", "");
   const [downloadFile, setDownloadFile] = useSessionState("buping_resume_download_pdf", "");
   const [downloadHtmlFile, setDownloadHtmlFile] = useSessionState<string>("buping_resume_download_html", ""); // e.g. "resume_20250615_103045.html"
+  const [resumeDocumentName, setResumeDocumentName] = useSessionState<string>("buping_resume_document_name", "我的简历");
   // Generation progress state (0-100, -1 = idle, stage label)
   const [genProgress, setGenProgress] = useState<number>(-1);
   const [genStage, setGenStage] = useState<string>("");
@@ -575,7 +576,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
     window.open(getPreviewPageUrl(styleName, resumeLang), "_blank");
   };
 
-  const handleEditSave = async (html: string) => {
+  const persistEditedResume = async (html: string, mode: "overwrite" | "save_as") => {
     setEditedHtml(html);
     setSavedOk(true);
     setStatus(
@@ -592,7 +593,12 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
     // from the latest saved HTML).
     setSaving(true);
     try {
-      const result = await saveEditedResume(html, "resume_edited");
+      const canOverwrite = mode === "overwrite" && Boolean(downloadFile && downloadHtmlFile);
+      const result = await saveEditedResume(html, resumeDocumentName.trim() || "我的简历", {
+        saveMode: canOverwrite ? "overwrite" : "save_as",
+        currentPdfFilename: canOverwrite ? downloadFile : "",
+        currentHtmlFilename: canOverwrite ? downloadHtmlFile : "",
+      });
       if (result.status === "success") {
         setPreviewHtml(html);
         setPreviewKey((k) => k + 1);
@@ -610,6 +616,29 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
           ? `⚠️ 后端保存失败：${err?.response?.data?.detail || err?.message || "未知错误"}`
           : `⚠️ Backend save failed: ${err?.response?.data?.detail || err?.message || "Unknown error"}`,
       );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditSave = (html: string) => persistEditedResume(html, "overwrite");
+  const handleEditSaveAs = (html: string) => persistEditedResume(html, "save_as");
+
+  const handleRenameResume = async () => {
+    const nextName = resumeDocumentName.trim();
+    if (!nextName || !downloadFile || !downloadHtmlFile) {
+      setStatus(resumeLang === "zh" ? "⚠️ 请先生成或保存简历，并填写名称" : "⚠️ Save the resume and enter a name first");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await renameSavedResume(downloadFile, downloadHtmlFile, nextName);
+      setDownloadFile(result.pdf_filename);
+      setDownloadHtmlFile(result.html_filename);
+      setStatus(resumeLang === "zh" ? `✓ 已重命名为：${nextName}` : `✓ Renamed to: ${nextName}`);
+      if (historyOpen) await loadHistory();
+    } catch (err: any) {
+      setStatus(`${resumeLang === "zh" ? "⚠️ 重命名失败" : "⚠️ Rename failed"}：${err?.response?.data?.detail || err?.message || "未知错误"}`);
     } finally {
       setSaving(false);
     }
@@ -723,6 +752,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
       setPreviewKey((k) => k + 1);
       setDownloadFile(pdfFile.name);
       setDownloadHtmlFile(htmlFilename);
+      setResumeDocumentName(pdfFile.name.replace(/\.pdf$/i, ""));
       setStatus(
         (resumeLang === "zh"
           ? `✓ 已加载历史简历: ${pdfFile.name}`
@@ -971,6 +1001,25 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
 
             {/* Mode toggle buttons + history picker */}
             <div className="flex flex-wrap items-center justify-end gap-2 px-5 pt-2">
+              <div className="flex min-w-[220px] items-center rounded-lg border border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-700">
+                <input
+                  value={resumeDocumentName}
+                  onChange={(event) => setResumeDocumentName(event.target.value)}
+                  maxLength={80}
+                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1 text-xs text-gray-800 outline-none dark:text-gray-100"
+                  aria-label="简历名称"
+                  title="简历名称"
+                />
+                <button
+                  type="button"
+                  onClick={handleRenameResume}
+                  disabled={!downloadFile || !downloadHtmlFile || saving || !resumeDocumentName.trim()}
+                  className="border-l border-gray-200 px-2 py-1 text-xs font-medium text-brand-600 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600"
+                  title="重命名当前简历 PDF 和 HTML"
+                >
+                  重命名
+                </button>
+              </div>
               {/* History picker */}
               <div className="relative">
                 <button
@@ -1127,6 +1176,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                       key={`editor-${previewKey}`}
                       initialHtml={previewHtml}
                       onSave={handleEditSave}
+                      onSaveAs={handleEditSaveAs}
                       onChange={(html) => setEditedHtml(html)}
                       onSelectionChange={(text) => setLastSelection(text)}
                       onIframeReady={setEditorIframe}

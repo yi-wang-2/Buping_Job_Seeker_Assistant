@@ -317,6 +317,9 @@ async def preview_saved_resume(html_filename: str) -> dict:
 class SaveEditedRequest(BaseModel):
     html: str  # Full HTML document from the iframe
     filename_base: str = "resume_edited"
+    save_mode: Literal["overwrite", "save_as"] = "save_as"
+    current_pdf_filename: str = ""
+    current_html_filename: str = ""
 
 
 class SaveEditedResponse(BaseModel):
@@ -346,6 +349,8 @@ async def save_edited(req: SaveEditedRequest) -> SaveEditedResponse:
             resume_service.convert_html_to_pdf,
             html_content=req.html,
             filename_base=req.filename_base or "resume_edited",
+            overwrite_pdf_filename=req.current_pdf_filename if req.save_mode == "overwrite" else "",
+            overwrite_html_filename=req.current_html_filename if req.save_mode == "overwrite" else "",
         )
         return SaveEditedResponse(
             status="success",
@@ -356,6 +361,30 @@ async def save_edited(req: SaveEditedRequest) -> SaveEditedResponse:
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+
+
+class RenameSavedResumeRequest(BaseModel):
+    pdf_filename: str
+    html_filename: str
+    new_name: str = Field(min_length=1, max_length=80)
+
+
+@router.post("/rename-saved")
+async def rename_saved_resume(req: RenameSavedResumeRequest) -> dict:
+    try:
+        result = await asyncio.to_thread(
+            resume_service.rename_saved_resume,
+            req.pdf_filename,
+            req.html_filename,
+            req.new_name,
+        )
+        return {"status": "success", **result}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

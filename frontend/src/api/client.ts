@@ -234,10 +234,18 @@ export interface SaveEditedResponse {
 export async function saveEditedResume(
   html: string,
   filenameBase: string = "resume_edited",
+  options: {
+    saveMode?: "overwrite" | "save_as";
+    currentPdfFilename?: string;
+    currentHtmlFilename?: string;
+  } = {},
 ): Promise<SaveEditedResponse> {
   const { data } = await api.post("/resume/save-edited", {
     html,
     filename_base: filenameBase,
+    save_mode: options.saveMode || "save_as",
+    current_pdf_filename: options.currentPdfFilename || "",
+    current_html_filename: options.currentHtmlFilename || "",
   }, {
     timeout: 120000, // 2 min for Chrome PDF rendering
   });
@@ -544,6 +552,19 @@ export async function saveSettings(params: {
     return { status: "success", message: "Settings saved in this browser session only" };
   }
   const { data } = await api.put("/settings", cloudSettings);
+  return data;
+}
+
+export async function renameSavedResume(
+  pdfFilename: string,
+  htmlFilename: string,
+  newName: string,
+): Promise<{ status: string; pdf_filename: string; html_filename: string }> {
+  const { data } = await api.post("/resume/rename-saved", {
+    pdf_filename: pdfFilename,
+    html_filename: htmlFilename,
+    new_name: newName,
+  });
   return data;
 }
 
