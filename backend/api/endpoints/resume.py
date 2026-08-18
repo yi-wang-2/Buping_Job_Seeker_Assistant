@@ -55,6 +55,11 @@ class PreviewResumeRequest(BaseModel):
     resume_content: str = ""
 
 
+class SwitchTemplateRequest(BaseModel):
+    html: str
+    style_name: str
+
+
 class PreviewResumeResponse(BaseModel):
     html: str
     style: str
@@ -249,6 +254,15 @@ async def preview_resume(req: PreviewResumeRequest) -> PreviewResumeResponse:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/switch-template")
+async def switch_template(req: SwitchTemplateRequest) -> dict:
+    """Switch only the visual template; never regenerate resume content."""
+    try:
+        return await asyncio.to_thread(resume_service.switch_resume_template, req.html, req.style_name)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/preview/render", response_class=HTMLResponse)

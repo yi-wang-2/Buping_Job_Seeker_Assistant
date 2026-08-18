@@ -355,6 +355,57 @@ def get_available_styles() -> dict[str, dict[str, str]]:
     return styles
 
 
+def switch_resume_template(html_content: str, style_name: str) -> dict[str, str]:
+    """Apply another resume stylesheet while preserving the current body DOM."""
+    from bs4 import BeautifulSoup
+    from src.libs.resume_and_cover_builder import StyleManager
+
+    if not html_content.strip():
+        raise ValueError("Resume HTML cannot be empty")
+    style_manager = StyleManager()
+    available_styles = style_manager.get_styles()
+    if style_name not in available_styles:
+        raise ValueError(f"Unknown resume style: {style_name}")
+    style_manager.set_selected_style(style_name)
+    style_path = style_manager.get_style_path()
+    if style_path is None or not style_path.is_file():
+        raise FileNotFoundError(f"Style file not found for: {style_name}")
+    style_css = style_path.read_text(encoding="utf-8")
+
+    soup = BeautifulSoup(_sanitize_edited_resume_html(html_content), "html.parser")
+    if soup.head is None:
+        html = soup.find("html") or soup.new_tag("html")
+        if html.parent is None:
+            html.extend(list(soup.contents))
+            soup.append(html)
+        head = soup.new_tag("head")
+        html.insert(0, head)
+    else:
+        head = soup.head
+
+    template_style = head.find("style", id="resume-template-style")
+    if template_style is None:
+        protected_ids = {
+            "resume-photo-style", "buping-layout-controls", "buping-target-page-layout",
+            "buping-editor-style", "buping-page-guide-style", "buping-print-layout-emulation",
+            "buping-viewport-fit",
+        }
+        template_style = next(
+            (node for node in head.find_all("style", recursive=False) if node.get("id") not in protected_ids),
+            None,
+        )
+    if template_style is None:
+        template_style = soup.new_tag("style")
+        head.append(template_style)
+    template_style["id"] = "resume-template-style"
+    template_style["data-resume-style"] = style_name
+    template_style.string = style_css
+    for link in head.find_all("link", href=True):
+        if "resume_style" in str(link.get("href")):
+            link.decompose()
+    return {"html": str(soup), "style": style_name}
+
+
 def _sanitize_edited_resume_html(html_content: str) -> str:
     """Remove transient WYSIWYG state while preserving resume styling."""
     from bs4 import BeautifulSoup

@@ -555,6 +555,14 @@ export async function saveSettings(params: {
   return data;
 }
 
+export async function switchResumeTemplate(
+  html: string,
+  styleName: string,
+): Promise<{ html: string; style: string }> {
+  const { data } = await api.post("/resume/switch-template", { html, style_name: styleName });
+  return data;
+}
+
 export async function renameSavedResume(
   pdfFilename: string,
   htmlFilename: string,

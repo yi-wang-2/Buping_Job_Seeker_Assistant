@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Download, Sparkles, Palette, Eye, ExternalLink, RefreshCw, FileText, Edit3, Save, RotateCcw, Check, History as HistoryIcon, Sparkle } from "lucide-react";
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
-import { getStyles, generateResume, getResumeGenerationProgress, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume, renameSavedResume } from "../api/client";
+import { getStyles, generateResume, getResumeGenerationProgress, getDownloadUrl, previewResume, getPreviewPageUrl, getHistory, previewSavedResume, getSettings, saveSettings, saveEditedResume, renameSavedResume, switchResumeTemplate } from "../api/client";
 import { installPrintLayoutEmulation, paginateResumeDom } from "../components/editor/domPagination";
 import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
@@ -281,6 +281,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [previewHtml, setPreviewHtml] = useSessionState<string>("buping_resume_preview_html", "");
   const [previewKey, setPreviewKey] = useState<number>(0);
   const skipRestoredPreviewRef = useRef(Boolean(previewHtml));
+  const previewLanguageRef = useRef(resumeLang);
   const previewRef = useRef<HTMLIFrameElement | null>(null);
 
   // History picker
@@ -426,15 +427,42 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   }, [loadStylesAndSettings]);
 
   useEffect(() => {
+    const languageChanged = previewLanguageRef.current !== resumeLang;
+    previewLanguageRef.current = resumeLang;
     if (skipRestoredPreviewRef.current) {
       skipRestoredPreviewRef.current = false;
       return;
     }
     if (styleName && resumeLang) {
-      handlePreview();
+      if (baseVersionHtml.trim() && !languageChanged) handleSwitchTemplate(styleName);
+      else handlePreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleName, resumeLang]);
+
+  const handleSwitchTemplate = async (nextStyle: string) => {
+    const currentHtml = editMode && editedHtml ? editedHtml : previewHtml;
+    if (!currentHtml.trim() || !nextStyle) return;
+    setPreviewing(true);
+    try {
+      const result = await switchResumeTemplate(currentHtml, nextStyle);
+      setPreviewHtml(result.html);
+      setEditedHtml(result.html);
+      setPreviewKey((key) => key + 1);
+      setSavedOk(false);
+      setStatus(
+        resumeLang === "zh"
+          ? `✓ 已切换为“${nextStyle}”，简历内容保持不变；请保存以写入当前文件`
+          : `✓ Switched to “${nextStyle}” without changing content; save to update the current file`,
+      );
+    } catch (err: any) {
+      setStatus(
+        `${resumeLang === "zh" ? "⚠️ 模板切换失败" : "⚠️ Template switch failed"}：${err?.response?.data?.detail || err?.message || "未知错误"}`,
+      );
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   const handleSaveLlmConfig = async () => {
     try {
@@ -947,6 +975,11 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                     </button>
                   )}
                 </div>
+              )}
+              {previewHtml && (
+                <p className="rounded-lg bg-brand-50 px-3 py-2 text-[11px] leading-4 text-brand-700 dark:bg-brand-900/20 dark:text-brand-300">
+                  点击模板即可一键换肤，只替换样式，保留当前内容、模块顺序和编辑结果。
+                </p>
               )}
             </div>
           </div>
