@@ -223,12 +223,13 @@ function EditableWYSIWYGEditor({
       .forEach((el) => el.remove());
     root
       .querySelectorAll<HTMLElement>(
-        "[data-buping-block], [data-buping-removable-entry], [data-buping-module], [contenteditable]",
+        "[data-buping-block], [data-buping-removable-entry], [data-buping-module], [data-buping-empty-field], [contenteditable]",
       )
       .forEach((el) => {
         el.removeAttribute("data-buping-block");
         el.removeAttribute("data-buping-removable-entry");
         el.removeAttribute("data-buping-module");
+        el.removeAttribute("data-buping-empty-field");
         el.removeAttribute("contenteditable");
       });
     const rootElement = root as HTMLElement;
@@ -629,6 +630,68 @@ function EditableWYSIWYGEditor({
     window.requestAnimationFrame(() => paginateResumeDom(doc));
   };
 
+  type ManualExperienceType = "education" | "work" | "internship" | "project";
+
+  const addManualExperience = (section: HTMLElement, type: ManualExperienceType) => {
+    const doc = section.ownerDocument;
+    const entry = doc.createElement("div");
+    entry.className = "entry";
+
+    if (type === "education") {
+      entry.innerHTML = `
+        <div class="entry-header">
+          <span class="entry-name">学校名称</span>
+          <span class="entry-location">城市</span>
+        </div>
+        <div class="entry-details">
+          <span class="entry-title">学历 · 专业</span>
+          <span class="entry-year" data-buping-empty-field="时间段（选填）"></span>
+        </div>
+        <ul class="compact-list"><li>补充课程、研究方向、荣誉或其他教育信息</li></ul>`;
+    } else if (type === "project") {
+      entry.innerHTML = `
+        <div class="entry-header">
+          <span class="entry-name">项目名称</span>
+          <span class="entry-tech">技术栈 / 项目角色</span>
+        </div>
+        <div class="entry-details">
+          <span class="entry-title">项目经历</span>
+          <span class="entry-year" data-buping-empty-field="时间段（选填）"></span>
+        </div>
+        <ul class="compact-list">
+          <li><strong>项目背景：</strong>填写项目目标与背景</li>
+          <li><strong>个人职责：</strong>填写你负责的工作与成果</li>
+        </ul>`;
+    } else {
+      const isInternship = type === "internship";
+      entry.innerHTML = `
+        <div class="entry-header">
+          <span class="entry-name">公司或组织名称</span>
+          <span class="entry-location">城市</span>
+        </div>
+        <div class="entry-details">
+          <span class="entry-title">${isInternship ? "实习岗位" : "工作岗位"}</span>
+          <span class="entry-year" data-buping-empty-field="时间段（选填）"></span>
+        </div>
+        <ul class="compact-list">
+          <li><strong>核心职责：</strong>填写工作内容、行动与结果</li>
+          <li><strong>实践成果：</strong>填写可核验或可量化的成果</li>
+        </ul>`;
+    }
+
+    section.removeAttribute("hidden");
+    section.removeAttribute("data-buping-library-empty-section");
+    section.querySelectorAll("[data-buping-empty-placeholder]").forEach((element) => element.remove());
+    const moduleActions = section.querySelector(':scope > [data-buping-module-action="group"]');
+    if (moduleActions) section.insertBefore(entry, moduleActions);
+    else section.appendChild(entry);
+    decorateRemovableEntries(doc);
+    refreshSectionEmptyState(section);
+    section.setAttribute("contenteditable", "true");
+    emitDocumentChange(doc);
+    window.requestAnimationFrame(() => paginateResumeDom(doc));
+  };
+
   const decorateModuleActions = (doc: Document) => {
     movableModules(doc).forEach((module) => {
       module.setAttribute("data-buping-module", "true");
@@ -636,12 +699,25 @@ function EditableWYSIWYGEditor({
       const actions = doc.createElement("div");
       actions.setAttribute("data-buping-module-action", "group");
       actions.setAttribute("contenteditable", "false");
-      ([
+      const definitions: Array<{ action: string; text: string; title: string }> = [
         { action: "move-up", text: "↑", title: "上移整个模块" },
         { action: "move-down", text: "↓", title: "下移整个模块" },
-        { action: "add", text: "+ 添加", title: "在下方添加新模块" },
+      ];
+      if (module.id === "education") {
+        definitions.push({ action: "add-education", text: "+ 教育", title: "添加一段教育经历（含时间段）" });
+      } else if (module.id === "work-experience") {
+        definitions.push(
+          { action: "add-work", text: "+ 工作", title: "添加一段工作经历（含时间段）" },
+          { action: "add-internship", text: "+ 实习", title: "添加一段实习经历（含时间段）" },
+        );
+      } else if (module.id === "side-projects" || module.id === "projects") {
+        definitions.push({ action: "add-project", text: "+ 项目", title: "添加一段项目经历（含时间段）" });
+      }
+      definitions.push(
+        { action: "add", text: "+ 模块", title: "在下方添加新模块" },
         { action: "remove", text: "删除", title: "删除整个模块" },
-      ] as const).forEach(({ action, text, title }) => {
+      );
+      definitions.forEach(({ action, text, title }) => {
         const button = doc.createElement("button");
         button.type = "button";
         button.dataset.action = action;
@@ -657,6 +733,10 @@ function EditableWYSIWYGEditor({
           event.stopPropagation();
           if (action === "move-up") moveResumeModule(module, -1);
           else if (action === "move-down") moveResumeModule(module, 1);
+          else if (action === "add-education") addManualExperience(module, "education");
+          else if (action === "add-work") addManualExperience(module, "work");
+          else if (action === "add-internship") addManualExperience(module, "internship");
+          else if (action === "add-project") addManualExperience(module, "project");
           else if (action === "add") addResumeModuleAfter(module);
           else removeResumeModule(module);
         });
@@ -877,6 +957,11 @@ function EditableWYSIWYGEditor({
           border-color: rgba(220, 38, 38, 0.4);
           background: rgba(254, 242, 242, 0.97);
           color: #b91c1c;
+        }
+        [data-buping-empty-field]:empty::before {
+          content: attr(data-buping-empty-field);
+          color: #9ca3af;
+          font-style: italic;
         }
         [data-buping-empty-placeholder] {
           margin: 8px 0;

@@ -89,6 +89,7 @@ class Project(ResumeModel):
     name: Optional[str] = None
     description: Optional[str] = None
     link: Optional[str] = None  # 改为 str 类型避免URL验证
+    time_period: Optional[str] = None
 
 
 class Achievement(ResumeModel):

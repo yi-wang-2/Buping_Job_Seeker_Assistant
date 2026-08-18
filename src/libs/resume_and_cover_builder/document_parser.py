@@ -270,7 +270,7 @@ def normalize_resume_data(data: dict[str, Any]) -> dict[str, Any]:
             "position": "", "company": "", "employment_period": "", "location": "",
             "industry": "", "key_responsibilities": [], "skills_acquired": [],
         },
-        "projects": {"name": "", "description": "", "link": ""},
+        "projects": {"name": "", "description": "", "link": "", "time_period": ""},
         "achievements": {"name": "", "description": ""},
         "academic_achievements": {
             "type": "", "title": "", "authors": "", "venue": "", "date": "",
@@ -373,6 +373,7 @@ projects:
   - name: "项目名称"
     description: "项目描述"
     link: "URL 或空字符串"
+    time_period: "项目起止时间或空字符串"
 achievements:
   - name: "成就名称"
     description: "描述"
@@ -496,6 +497,7 @@ projects:
   - name: "Project name"
     description: "Project description"
     link: "URL or empty string"
+    time_period: "Project start/end period or empty string"
 achievements:
   - name: "Achievement name"
     description: "Description"

@@ -83,6 +83,7 @@ projects:
   - name: "X"
     description: "Y blah blah blah "
     link: "https://github.com/haveagoodday"
+    time_period: "01/2024 - 06/2024"
 
 
 

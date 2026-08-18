@@ -409,11 +409,12 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
     for editor_only in soup.select("[data-buping-entry-action], [data-buping-module-action], [data-buping-empty-placeholder]"):
         editor_only.decompose()
     for element in soup.select(
-        "[data-buping-block], [data-buping-removable-entry], [data-buping-module], [contenteditable]"
+        "[data-buping-block], [data-buping-removable-entry], [data-buping-module], [data-buping-empty-field], [contenteditable]"
     ):
         element.attrs.pop("data-buping-block", None)
         element.attrs.pop("data-buping-removable-entry", None)
         element.attrs.pop("data-buping-module", None)
+        element.attrs.pop("data-buping-empty-field", None)
         element.attrs.pop("data-buping-all-entries-removed", None)
         element.attrs.pop("contenteditable", None)
     for page_break in soup.select("[data-buping-page-break]"):

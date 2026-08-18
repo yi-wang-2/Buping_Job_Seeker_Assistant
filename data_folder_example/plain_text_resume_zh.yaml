@@ -50,9 +50,11 @@ projects:
   - name: "示例项目 A"
     description: "项目简介：你做了什么、用了什么技术、带来什么结果。尽量包含量化指标。"
     link: ""
+    time_period: "2024-03 - 2024-06"
   - name: "示例项目 B"
     description: "个人项目：主导设计与开发。技术栈与亮点一句话概括。"
     link: "https://github.com/your-name/your-repo"
+    time_period: ""
 
 achievements:
   - name: "示例获奖 / 荣誉"

@@ -73,3 +73,17 @@ def test_saved_resume_normalizes_native_editor_lists():
     assert edited_list is not None
     assert [item.get_text(strip=True) for item in edited_list.select("li")] == ["测试项目", "测试项目"]
     assert soup.select_one("#custom > p > ul") is None
+
+
+def test_saved_resume_removes_empty_field_editor_hint_but_keeps_time_slot():
+    source = """<html><body><section id="side-projects"><div class="entry">
+    <span class="entry-year" data-buping-empty-field="时间段（选填）"></span>
+    </div></section></body></html>"""
+
+    cleaned = _sanitize_edited_resume_html(source)
+
+    soup = BeautifulSoup(cleaned, "html.parser")
+    year = soup.select_one(".entry-year")
+    assert year is not None
+    assert year.get_text(strip=True) == ""
+    assert "data-buping-empty-field" not in year.attrs

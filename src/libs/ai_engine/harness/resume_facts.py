@@ -31,6 +31,7 @@ FACT_POLICY: dict[str, FactPolicy] = {
     "experience_details.*.key_responsibilities": FactPolicy.GROUNDED_REWRITE,
     "projects.*.name": FactPolicy.LOCKED,
     "projects.*.link": FactPolicy.LOCKED,
+    "projects.*.time_period": FactPolicy.LOCKED,
     "projects.*.description": FactPolicy.GROUNDED_REWRITE,
     "achievements.*.name": FactPolicy.LOCKED,
     "achievements.*.description": FactPolicy.GROUNDED_REWRITE,
@@ -380,7 +381,8 @@ def _render_projects(projects: Iterable[Any] | None, generated: str, language: s
         entries.append(
             '<div class="entry"><div class="entry-header">'
             f'<span class="entry-name">{name_html}</span><span class="entry-tech"></span>'
-            f'</div>{list_html}</div>'
+            '</div><div class="entry-details"><span class="entry-title"></span>'
+            f'<span class="entry-year">{_text(project.get("time_period"))}</span></div>{list_html}</div>'
         )
     if not entries:
         return "", violations
@@ -716,6 +718,19 @@ def _patch_projects_in_place(generated: str, projects: Iterable[Any] | None, *, 
                 name_target.attrs.pop("href", None)
         elif name_container is not None:
             _replace_node_text(name_container, source.get("name"))
+        details = entry.select_one(".entry-details")
+        if details is None:
+            details = soup.new_tag("div", attrs={"class": "entry-details"})
+            header = entry.select_one(".entry-header")
+            if header is not None:
+                header.insert_after(details)
+            else:
+                entry.insert(0, details)
+        year = details.select_one(".entry-year")
+        if year is None:
+            year = soup.new_tag("span", attrs={"class": "entry-year"})
+            details.append(year)
+        _replace_node_text(year, source.get("time_period"))
         evidence = "\n".join(_flatten_facts(source))
         violations.extend(_filter_entry_claims(entry, evidence, path=f"projects.{index}.description"))
         if not entry.select("li") and _present(source.get("description")):

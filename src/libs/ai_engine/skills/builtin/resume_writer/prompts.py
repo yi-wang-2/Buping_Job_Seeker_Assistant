@@ -103,6 +103,10 @@ RESUME_PROMPT_TEMPLATE = r"""你是一位专业的HR专家和简历撰写顾问�
           <span class="entry-name"><i class="fab fa-github"></i> <a href="[项目链接]">[项目名称]</a></span>
           <span class="entry-tech">[技术栈1 / 技术栈2 / 技术栈3]</span>
       </div>
+      <div class="entry-details">
+          <span class="entry-title">项目经历</span>
+          <span class="entry-year">[项目时间段；原始资料没有则留空，但必须保留此 span]</span>
+      </div>
       <ul class="compact-list">
           <li>[项目描述：简述项目背景、目标和你解决的核心问题]</li>
           <li>[技术贡献：详细说明你使用的技术方案、遇到的挑战及解决方案]</li>

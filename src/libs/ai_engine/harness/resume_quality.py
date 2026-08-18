@@ -506,6 +506,19 @@ def _patch_projects(html: str, projects: Iterable[Any], violations: list[str]) -
                 anchor.attrs.pop("href", None)
         elif container is not None:
             _replace_text(container, source.get("name"))
+        details = entry.select_one(".entry-details")
+        if details is None:
+            details = soup.new_tag("div", attrs={"class": "entry-details"})
+            header = entry.select_one(".entry-header")
+            if header is not None:
+                header.insert_after(details)
+            else:
+                entry.insert(0, details)
+        year = details.select_one(".entry-year")
+        if year is None:
+            year = soup.new_tag("span", attrs={"class": "entry-year"})
+            details.append(year)
+        _replace_text(year, source.get("time_period"))
         _filter_claims(entry, "\n".join(_flatten(source)), f"projects.{index}", violations)
     return str(soup)
 
