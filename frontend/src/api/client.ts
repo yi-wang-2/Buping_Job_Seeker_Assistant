@@ -836,6 +836,7 @@ export interface JobRecommendation {
   first_seen_at: string;
   last_seen_at: string;
   updated_at: string;
+  source_updated_at: string;
   score: number;
   reasons: string[];
   matched_skills: string[];

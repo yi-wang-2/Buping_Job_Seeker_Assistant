@@ -37,6 +37,7 @@ _HEADER_ALIASES = {
     "link": ("链接", "岗位链接", "招聘链接", "投递链接", "网申链接", "官网链接", "内推链接", "申请链接"),
     "referral": ("内推", "内推码", "内推信息", "推荐码"),
     "deadline": ("截止时间", "截止日期", "网申截止", "截止"),
+    "source_updated_at": ("更新时间", "更新日期", "最后更新", "最后更新时间", "信息更新时间"),
     "description": ("岗位描述", "职位描述", "jd", "要求", "岗位要求", "备注"),
 }
 
@@ -75,6 +76,7 @@ def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
             deadline TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
             raw_json TEXT NOT NULL DEFAULT '{}',
+            source_updated_at TEXT NOT NULL DEFAULT '',
             first_seen_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -108,6 +110,7 @@ def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
         );
         """
     )
+    _migrate_job_postings(db)
     return db
 
 
@@ -126,6 +129,38 @@ def _header_field(value: Any) -> str | None:
     if matches:
         return max(matches, key=lambda item: len(_normalize_header(item[1])))[0]
     return None
+
+
+def _source_updated_at_from_raw(raw_json: str) -> str:
+    """Recover the source sheet timestamp from a previously stored raw row."""
+    try:
+        value = json.loads(raw_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(value, dict):
+        return ""
+    for key, cell in value.items():
+        if _header_field(key) == "source_updated_at" and str(cell or "").strip():
+            return str(cell).strip()
+    return ""
+
+
+def _migrate_job_postings(db: sqlite3.Connection) -> None:
+    """Add source timestamps to existing local databases without rewriting them."""
+    columns = {row[1] for row in db.execute("PRAGMA table_info(job_postings)").fetchall()}
+    if "source_updated_at" in columns:
+        return
+    db.execute("ALTER TABLE job_postings ADD COLUMN source_updated_at TEXT NOT NULL DEFAULT ''")
+    rows = db.execute(
+        "SELECT id, raw_json FROM job_postings WHERE source_updated_at=''"
+    ).fetchall()
+    for row in rows:
+        source_updated_at = _source_updated_at_from_raw(row["raw_json"])
+        if source_updated_at:
+            db.execute(
+                "UPDATE job_postings SET source_updated_at=? WHERE id=?",
+                (source_updated_at, row["id"]),
+            )
 
 
 def _decode_csv(raw: bytes) -> list[list[str]]:
@@ -360,7 +395,7 @@ def parse_tencent_sheet_responses(response_texts: Iterable[str]) -> list[dict[st
     exact_mapping = {
         "企业名称": "company", "行业类型": "industry", "招聘类型": "recruitment_type",
         "工作地点": "location", "内推码(区分大小写)": "referral", "内推链接": "link",
-        "整体文案": "description",
+        "整体文案": "description", "更新时间": "source_updated_at",
     }
     parsed: list[dict[str, str]] = []
     for row_id, row in rows.items():
@@ -453,17 +488,21 @@ def sync_tencent_sheet(source_url: str, db_path: Path = DB_PATH) -> dict[str, An
             fingerprint = _fingerprint(record)
             seen_fingerprints.add(fingerprint)
             content_hash = hashlib.sha256(json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-            existing = db.execute("SELECT id, content_hash, updated_at FROM job_postings WHERE fingerprint=?", (fingerprint,)).fetchone()
+            existing = db.execute(
+                "SELECT id, content_hash, updated_at, source_updated_at FROM job_postings WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
             if existing:
                 changed = existing["content_hash"] != content_hash
+                source_updated_at = record.get("source_updated_at", "") or existing["source_updated_at"]
                 db.execute(
                     """UPDATE job_postings SET content_hash=?, source_name=?, source_url=?, company=?, role=?, location=?,
                        industry=?, recruitment_type=?, link=?, referral=?, deadline=?, description=?, raw_json=?,
-                       last_seen_at=?, updated_at=?, status='active' WHERE fingerprint=?""",
+                       source_updated_at=?, last_seen_at=?, updated_at=?, status='active' WHERE fingerprint=?""",
                     (content_hash, "腾讯文档岗位表", source_url, record.get("company", ""), record.get("role", ""),
                      record.get("location", ""), record.get("industry", ""), record.get("recruitment_type", ""),
                      record.get("link", ""), record.get("referral", ""), record.get("deadline", ""),
-                     record.get("description", ""), record.get("raw_json", "{}"), timestamp,
+                     record.get("description", ""), record.get("raw_json", "{}"), source_updated_at, timestamp,
                      timestamp if changed else existing["updated_at"], fingerprint),
                 )
                 stats["updated" if changed else "unchanged"] += 1
@@ -471,13 +510,14 @@ def sync_tencent_sheet(source_url: str, db_path: Path = DB_PATH) -> dict[str, An
                 job_id = hashlib.sha256(f"{fingerprint}|{timestamp}".encode()).hexdigest()[:24]
                 db.execute(
                     """INSERT INTO job_postings(id,fingerprint,content_hash,source_name,source_url,company,role,location,
-                       industry,recruitment_type,link,referral,deadline,description,raw_json,first_seen_at,last_seen_at,updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       industry,recruitment_type,link,referral,deadline,description,raw_json,source_updated_at,
+                       first_seen_at,last_seen_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (job_id, fingerprint, content_hash, "腾讯文档岗位表", source_url, record.get("company", ""),
                      record.get("role", ""), record.get("location", ""), record.get("industry", ""),
                      record.get("recruitment_type", ""), record.get("link", ""), record.get("referral", ""),
                      record.get("deadline", ""), record.get("description", ""), record.get("raw_json", "{}"),
-                     timestamp, timestamp, timestamp),
+                     record.get("source_updated_at", ""), timestamp, timestamp, timestamp),
                 )
                 stats["created"] += 1
         stats["deactivated"] = _deactivate_missing(db, source_url, seen_fingerprints)
@@ -516,18 +556,22 @@ def import_file(filename: str, raw: bytes, source_url: str = "", source_name: st
             fingerprint = _fingerprint(record)
             seen_fingerprints.add(fingerprint)
             content_hash = hashlib.sha256(json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-            existing = db.execute("SELECT id, content_hash FROM job_postings WHERE fingerprint=?", (fingerprint,)).fetchone()
+            existing = db.execute(
+                "SELECT id, content_hash, updated_at, source_updated_at FROM job_postings WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
             if existing:
                 changed = existing["content_hash"] != content_hash
+                source_updated_at = record.get("source_updated_at", "") or existing["source_updated_at"]
                 db.execute(
                     """UPDATE job_postings SET content_hash=?, source_name=?, source_url=?, company=?, role=?, location=?,
                        industry=?, recruitment_type=?, link=?, referral=?, deadline=?, description=?, raw_json=?,
-                       last_seen_at=?, updated_at=?, status='active' WHERE fingerprint=?""",
+                       source_updated_at=?, last_seen_at=?, updated_at=?, status='active' WHERE fingerprint=?""",
                     (content_hash, source_name, source_url, record.get("company", ""), record.get("role", ""),
                      record.get("location", ""), record.get("industry", ""), record.get("recruitment_type", ""),
                      record.get("link", ""), record.get("referral", ""), record.get("deadline", ""),
-                     record.get("description", ""), record.get("raw_json", "{}"), timestamp,
-                     timestamp if changed else db.execute("SELECT updated_at FROM job_postings WHERE fingerprint=?", (fingerprint,)).fetchone()[0],
+                     record.get("description", ""), record.get("raw_json", "{}"), source_updated_at, timestamp,
+                     timestamp if changed else existing["updated_at"],
                      fingerprint),
                 )
                 stats["updated" if changed else "unchanged"] += 1
@@ -535,13 +579,14 @@ def import_file(filename: str, raw: bytes, source_url: str = "", source_name: st
                 job_id = hashlib.sha256(f"{fingerprint}|{timestamp}".encode()).hexdigest()[:24]
                 db.execute(
                     """INSERT INTO job_postings(id,fingerprint,content_hash,source_name,source_url,company,role,location,
-                       industry,recruitment_type,link,referral,deadline,description,raw_json,first_seen_at,last_seen_at,updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       industry,recruitment_type,link,referral,deadline,description,raw_json,source_updated_at,
+                       first_seen_at,last_seen_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (job_id, fingerprint, content_hash, source_name, source_url, record.get("company", ""),
                      record.get("role", ""), record.get("location", ""), record.get("industry", ""),
                      record.get("recruitment_type", ""), record.get("link", ""), record.get("referral", ""),
                      record.get("deadline", ""), record.get("description", ""), record.get("raw_json", "{}"),
-                     timestamp, timestamp, timestamp),
+                     record.get("source_updated_at", ""), timestamp, timestamp, timestamp),
                 )
                 stats["created"] += 1
         stats["deactivated"] = _deactivate_missing(db, source_url, seen_fingerprints)

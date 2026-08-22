@@ -1,6 +1,7 @@
 import base64
 import json
 from pathlib import Path
+import sqlite3
 import zlib
 
 from backend.services import job_radar_service as radar
@@ -33,6 +34,15 @@ def test_parse_copied_tencent_table_inherits_merged_company_fields():
     assert rows[1]["recruitment_type"] == "27届提前批"
 
 
+def test_parse_copied_table_reads_source_updated_at():
+    rows = radar.parse_copied_table(
+        "公司名称\t岗位名称\t更新时间\t投递链接\n"
+        "腾讯\t后端工程师\t2026-08-20 18:30\thttps://example.com/job\n"
+    )
+
+    assert rows[0]["source_updated_at"] == "2026-08-20 18:30"
+
+
 def test_compound_link_header_is_not_misread_as_company_or_role():
     rows = radar.parse_copied_table("公司名称\t岗位名称\t公司招聘链接\n腾讯\t后端工程师\thttps://example.com/job\n")
     assert rows[0]["company"] == "腾讯"
@@ -53,6 +63,68 @@ def test_import_deduplicates_and_detects_updates(tmp_path):
     assert third["created"] == 1
     assert third["deactivated"] == 1
     assert radar.get_stats(db)["total"] == 3
+
+
+def test_sync_keeps_source_update_time_separate_from_local_sync_time(tmp_path, monkeypatch):
+    db = tmp_path / "radar.sqlite3"
+    timestamps = iter((
+        "2026-08-20T00:00:00+00:00",
+        "2026-08-21T00:00:00+00:00",
+        "2026-08-22T00:00:00+00:00",
+    ))
+    monkeypatch.setattr(radar, "_now", lambda: next(timestamps))
+    original = (
+        "公司名称\t岗位名称\t更新时间\t投递链接\n"
+        "腾讯\t后端工程师\t2026-08-18 09:00\thttps://example.com/job\n"
+    ).encode()
+
+    radar.import_file("jobs.csv", original, db_path=db)
+    radar.import_file("jobs.csv", original, db_path=db)
+    with radar._connect(db) as connection:
+        unchanged = dict(connection.execute("SELECT * FROM job_postings").fetchone())
+
+    assert unchanged["source_updated_at"] == "2026-08-18 09:00"
+    assert unchanged["first_seen_at"] == "2026-08-20T00:00:00+00:00"
+    assert unchanged["last_seen_at"] == "2026-08-21T00:00:00+00:00"
+    assert unchanged["updated_at"] == "2026-08-20T00:00:00+00:00"
+
+    source_changed = original.replace(b"2026-08-18 09:00", b"2026-08-22 10:00")
+    radar.import_file("jobs.csv", source_changed, db_path=db)
+    with radar._connect(db) as connection:
+        changed = dict(connection.execute("SELECT * FROM job_postings").fetchone())
+
+    assert changed["source_updated_at"] == "2026-08-22 10:00"
+    assert changed["last_seen_at"] == "2026-08-22T00:00:00+00:00"
+
+
+def test_existing_database_backfills_source_updated_at_from_raw_row(tmp_path):
+    db = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            """CREATE TABLE job_postings (
+                id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, content_hash TEXT NOT NULL,
+                source_name TEXT NOT NULL, source_url TEXT NOT NULL DEFAULT '', company TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '', industry TEXT NOT NULL DEFAULT '',
+                recruitment_type TEXT NOT NULL DEFAULT '', link TEXT NOT NULL DEFAULT '', referral TEXT NOT NULL DEFAULT '',
+                deadline TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', raw_json TEXT NOT NULL DEFAULT '{}',
+                first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active')"""
+        )
+        connection.execute(
+            "INSERT INTO job_postings VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("job-1", "fingerprint", "hash", "腾讯文档岗位表", "", "腾讯", "后端工程师", "", "", "",
+             "", "", "", "", json.dumps({"更新时间": "2026-07-28"}, ensure_ascii=False),
+             "local-first", "local-last", "local-updated", "active"),
+        )
+
+    with radar._connect(db) as connection:
+        row = connection.execute(
+            "SELECT source_updated_at, first_seen_at, last_seen_at FROM job_postings"
+        ).fetchone()
+
+    assert row["source_updated_at"] == "2026-07-28"
+    assert row["first_seen_at"] == "local-first"
+    assert row["last_seen_at"] == "local-last"
 
 
 def test_recommendations_use_resume_and_preferences_without_llm(tmp_path):
@@ -85,6 +157,7 @@ def test_parse_tencent_read_only_response_uses_field_titles_and_options():
                 "industry_field": {"k30": "行业类型", "k9": {"k3": [{"k1": "option_ai", "k2": "人工智能"}]}},
                 "link_field": {"k30": "内推链接"},
                 "copy_field": {"k30": "整体文案"},
+                "updated_field": {"k30": "更新时间"},
             }}},
         },
         {
@@ -94,6 +167,7 @@ def test_parse_tencent_read_only_response_uses_field_titles_and_options():
                 "industry_field": {"k9": ["option_ai"]},
                 "link_field": {"k8": [{"k1": "url", "k2": "内推入口", "k3": "https://example.com/jobs"}]},
                 "copy_field": {"k1": [{"k1": "text", "k2": "2027 届校园招聘"}]},
+                "updated_field": {"k1": [{"k1": "text", "k2": "2026-08-19 12:00"}]},
             }}}}},
         },
     ]]
@@ -107,6 +181,7 @@ def test_parse_tencent_read_only_response_uses_field_titles_and_options():
     assert rows[0]["industry"] == "人工智能"
     assert rows[0]["link"] == "https://example.com/jobs"
     assert rows[0]["description"] == "2027 届校园招聘"
+    assert rows[0]["source_updated_at"] == "2026-08-19 12:00"
 
 
 def test_actions_persist_and_remove_company_from_daily_recommendations(tmp_path):
