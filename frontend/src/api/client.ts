@@ -849,6 +849,10 @@ export interface JobRecommendation {
   favorite: boolean;
   not_interested: boolean;
   applied: boolean;
+  linked_jobs: LinkedJobRecommendation[];
+  linked_job_count: number;
+  linked_excluded_count: number;
+  linked_crawled_at: string;
 }
 
 export interface JobRadarStats {
@@ -863,6 +867,19 @@ export interface JobRadarStats {
     unchanged: number;
     created_at: string;
   };
+}
+
+export interface LinkedJobRecommendation {
+  role: string;
+  description: string;
+  link: string;
+  location: string;
+  score: number;
+  reasons: string[];
+  matched_skills: string[];
+  missing_skills: string[];
+  hard_risks: string[];
+  breakdown: Record<string, number>;
 }
 
 export interface JobPreferences {
@@ -938,6 +955,22 @@ export async function trackRecommendedJob(jobId: string, confirmed?: {
 
 export async function getDailyJobRecommendations(): Promise<{ items: JobRecommendation[]; count: number; date: string }> {
   const { data } = await api.get("/job-radar/daily");
+  return data;
+}
+
+export async function getLinkedJobRecommendations(jobId: string): Promise<{
+  status: "ok" | "partial" | "failed" | "busy";
+  items: LinkedJobRecommendation[]; count: number; source_url: string;
+  diagnostics: { stage: string; entry_attempts: string[]; pages_scanned: number; candidates_seen: number; details_failed: number; reloaded: boolean; reason: string; ai_used: boolean; ai_calls: number; ai_usage: Record<string, number>; ai_error: string };
+}> {
+  const { data } = await api.post(`/job-radar/${encodeURIComponent(jobId)}/linked-recommendations`, {}, { timeout: 180000 });
+  return data;
+}
+
+export async function getCachedLinkedJobs(jobId: string, limit = 500): Promise<{
+  status: "cached"; items: LinkedJobRecommendation[]; count: number; excluded_count: number; crawled_at: string;
+}> {
+  const { data } = await api.get(`/job-radar/${encodeURIComponent(jobId)}/linked-jobs`, { params: { limit } });
   return data;
 }
 

@@ -35,6 +35,7 @@ chrome_profile/*
 data_folder/output/*
 output/
 docs/competition/*.docx
+docs/competition/pic/*.png
 answers.json
 # PyInstaller
 # Usually these files are written by a python script from a template

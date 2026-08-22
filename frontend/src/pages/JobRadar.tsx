@@ -5,9 +5,9 @@ import {
 } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
-  getDailyJobRecommendations, getJobPreferences, getJobRadarRecommendations, getJobRadarStats,
+  getCachedLinkedJobs, getDailyJobRecommendations, getJobPreferences, getJobRadarRecommendations, getJobRadarStats, getLinkedJobRecommendations,
   importJobRadarFile, saveJobPreferences, syncJobRadarUrl, trackRecommendedJob, updateJobRadarAction,
-  type JobPreferences, type JobRadarStats, type JobRecommendation,
+  type JobPreferences, type JobRadarStats, type JobRecommendation, type LinkedJobRecommendation,
 } from "../api/client";
 
 const DEFAULT_SOURCE = "https://docs.qq.com/smartsheet/DZkdPVGtGb1ZvaG5R?tab=t00i2h";
@@ -40,6 +40,11 @@ export default function JobRadarPage({ t }: { t: Strings }) {
   const [trackingJob, setTrackingJob] = useState<JobRecommendation | null>(null);
   const [trackDraft, setTrackDraft] = useState({ company: "", role: "", base: "", recruitment_type: "", link: "", notes: "" });
   const [savingTrack, setSavingTrack] = useState(false);
+  const [linkedJobs, setLinkedJobs] = useState<Record<string, LinkedJobRecommendation[]>>({});
+  const [loadingLinkedJobs, setLoadingLinkedJobs] = useState<Record<string, boolean>>({});
+  const [linkedJobErrors, setLinkedJobErrors] = useState<Record<string, string>>({});
+  const [linkedJobCounts, setLinkedJobCounts] = useState<Record<string, number>>({});
+  const [showingAllLinkedJobs, setShowingAllLinkedJobs] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,6 +55,9 @@ export default function JobRadarPage({ t }: { t: Strings }) {
       ]);
       setItems(recommendations.items);
       setDailyItems(daily.items);
+      const loadedJobs = [...recommendations.items, ...daily.items];
+      setLinkedJobs(Object.fromEntries(loadedJobs.filter((job) => job.linked_jobs?.length).map((job) => [job.id, job.linked_jobs])));
+      setLinkedJobCounts(Object.fromEntries(loadedJobs.map((job) => [job.id, job.linked_job_count || 0])));
       setProfile(recommendations.profile);
       setStats(radarStats);
     } catch (error: any) {
@@ -171,6 +179,45 @@ export default function JobRadarPage({ t }: { t: Strings }) {
 
   const highMatches = useMemo(() => items.filter((item) => item.score >= 70).length, [items]);
 
+  const loadLinkedJobs = async (job: JobRecommendation) => {
+    setLoadingLinkedJobs((current) => ({ ...current, [job.id]: true }));
+    setLinkedJobErrors((current) => ({ ...current, [job.id]: "" }));
+    try {
+      const result = await getLinkedJobRecommendations(job.id);
+      setLinkedJobs((current) => ({ ...current, [job.id]: result.items }));
+      setLinkedJobCounts((current) => ({ ...current, [job.id]: result.count }));
+      setShowingAllLinkedJobs((current) => ({ ...current, [job.id]: false }));
+      if (!result.items.length) {
+        setLinkedJobErrors((current) => ({ ...current, [job.id]: result.diagnostics?.reason || (english ? "No concrete job descriptions were found on this page." : "该页面暂未识别到具体岗位与 JD。") }));
+      } else if (result.status === "busy") {
+        setLinkedJobErrors((current) => ({ ...current, [job.id]: result.diagnostics?.reason || "后台正在刷新其他企业，当前显示本地缓存。" }));
+      } else if (result.status === "partial") {
+        setLinkedJobErrors((current) => ({ ...current, [job.id]: result.diagnostics?.reason || "仅提取到部分岗位，已按现有结果排序。" }));
+      }
+    } catch (error: any) {
+      setLinkedJobErrors((current) => ({
+        ...current,
+        [job.id]: error?.response?.data?.detail || error?.message || (english ? "Failed to read job details" : "岗位详情读取失败"),
+      }));
+    } finally {
+      setLoadingLinkedJobs((current) => ({ ...current, [job.id]: false }));
+    }
+  };
+
+  const loadAllLinkedJobs = async (job: JobRecommendation) => {
+    setLoadingLinkedJobs((current) => ({ ...current, [job.id]: true }));
+    try {
+      const result = await getCachedLinkedJobs(job.id);
+      setLinkedJobs((current) => ({ ...current, [job.id]: result.items }));
+      setLinkedJobCounts((current) => ({ ...current, [job.id]: result.count }));
+      setShowingAllLinkedJobs((current) => ({ ...current, [job.id]: true }));
+    } catch (error: any) {
+      setLinkedJobErrors((current) => ({ ...current, [job.id]: error?.response?.data?.detail || error?.message || "本地岗位读取失败" }));
+    } finally {
+      setLoadingLinkedJobs((current) => ({ ...current, [job.id]: false }));
+    }
+  };
+
   const renderJobCard = (job: JobRecommendation, featured = false) => (
     <article key={job.id} className={`rounded-2xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-gray-800 ${featured ? "border-amber-300 dark:border-amber-700" : "border-gray-200 dark:border-gray-700"}`}>
       <div className="flex items-start justify-between gap-4">
@@ -184,6 +231,22 @@ export default function JobRadarPage({ t }: { t: Strings }) {
       <div className="mt-4 space-y-2">{job.reasons.map((reason) => <div key={reason} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />{reason}</div>)}{job.hard_risks.map((risk) => <div key={risk} className="text-sm text-red-600">⚠ {risk}</div>)}</div>
       {job.referral && <div className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-700 dark:bg-brand-950/30 dark:text-brand-300"><span className="font-medium">内推码：</span>{job.referral}</div>}
       {job.description && <details className="mt-3 rounded-lg border border-gray-100 px-3 py-2 text-sm dark:border-gray-700"><summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-200">查看招聘原文</summary><div className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-gray-600 dark:text-gray-300">{job.description}</div></details>}
+      {job.link && <div className="mt-3">
+        <button type="button" onClick={() => void loadLinkedJobs(job)} disabled={loadingLinkedJobs[job.id]} className="inline-flex items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-brand-100 disabled:opacity-60 dark:border-brand-800 dark:bg-brand-950/30 dark:text-brand-300">
+          {loadingLinkedJobs[job.id] ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Target className="h-3.5 w-3.5" />}
+          {loadingLinkedJobs[job.id] ? (english ? "Refreshing jobs..." : "正在刷新岗位……") : (linkedJobs[job.id]?.length ? (english ? "Refresh jobs" : "刷新岗位") : (english ? "Crawl jobs" : "抓取岗位到本地"))}
+        </button>
+        {linkedJobErrors[job.id] && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{linkedJobErrors[job.id]}</p>}
+        {linkedJobs[job.id]?.length > 0 && <div className="mt-3 space-y-3">
+          <div className="flex items-center justify-between gap-2"><div className="text-xs font-semibold text-gray-500">{showingAllLinkedJobs[job.id] ? `全部匹配岗位（${linkedJobCounts[job.id] || linkedJobs[job.id].length}）` : (english ? "Top 3 jobs stored locally" : "本地岗位库中最匹配的 3 个岗位")}</div>{!showingAllLinkedJobs[job.id] && (linkedJobCounts[job.id] || 0) > 3 && <button type="button" onClick={() => void loadAllLinkedJobs(job)} className="text-xs font-medium text-brand-600 hover:underline">查看全部 {linkedJobCounts[job.id]} 个岗位</button>}{showingAllLinkedJobs[job.id] && <button type="button" onClick={() => { setLinkedJobs((current) => ({ ...current, [job.id]: current[job.id].slice(0, 3) })); setShowingAllLinkedJobs((current) => ({ ...current, [job.id]: false })); }} className="text-xs font-medium text-brand-600 hover:underline">仅看 Top 3</button>}</div>
+          {linkedJobs[job.id].map((linked, index) => <div key={`${linked.link}-${linked.role}`} className="rounded-xl border border-brand-100 bg-brand-50/40 p-3 dark:border-brand-900 dark:bg-brand-950/20">
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-sm font-semibold text-gray-800 dark:text-gray-100"><span className="mr-2 text-brand-600">#{index + 1}</span>{linked.role}</div>{linked.location && <div className="mt-1 text-xs text-gray-500">{linked.location}</div>}</div><span className="rounded-lg bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">{linked.score}</span></div>
+            <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">{linked.reasons.slice(0, 2).join(" · ")}</div>
+            <details className="mt-2 text-xs"><summary className="cursor-pointer font-medium text-brand-700 dark:text-brand-300">{english ? "View JD" : "查看 JD"}</summary><div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-gray-600 dark:text-gray-300">{linked.description}</div></details>
+            <a href={linked.link} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"><ExternalLink className="h-3 w-3" />{english ? "Open job" : "打开岗位详情"}</a>
+          </div>)}
+        </div>}
+      </div>}
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4 dark:border-gray-700"><div className="text-[11px] text-gray-400">{english ? "Source updated" : "更新时间"} {job.source_updated_at || (english ? "Not provided" : "原表未提供")}</div><div className="flex flex-wrap gap-2"><button onClick={() => updateAction(job, "favorite")} className={`inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs ${job.favorite ? "border-rose-300 bg-rose-50 text-rose-600" : "border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-300"}`}><Heart className={`h-3.5 w-3.5 ${job.favorite ? "fill-current" : ""}`} />{job.favorite ? "已收藏" : "收藏"}</button><button onClick={() => updateAction(job, "not_interested")} className={`inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs ${job.not_interested ? "border-gray-400 bg-gray-100 text-gray-700" : "border-gray-200 text-gray-600 dark:border-gray-600 dark:text-gray-300"}`}><ThumbsDown className="h-3.5 w-3.5" />{job.not_interested ? "已标记" : "不感兴趣"}</button>{job.link && <a href={job.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"><ExternalLink className="h-3.5 w-3.5" />查看</a>}<button onClick={() => track(job)} disabled={tracked[job.id] || job.applied} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:bg-emerald-600">{tracked[job.id] || job.applied ? <Check className="h-3.5 w-3.5" /> : <WandSparkles className="h-3.5 w-3.5" />}{tracked[job.id] || job.applied ? "已投递/记录" : "加入求职记录"}</button></div></div>
     </article>
   );

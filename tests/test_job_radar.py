@@ -15,7 +15,7 @@ def _profile_dir(tmp_path: Path) -> Path:
     data = tmp_path / "data"
     data.mkdir()
     (data / "plain_text_resume_zh.yaml").write_text(
-        """personal_information:\n  full_name: 测试用户\nexperience_details:\n  - position: 后台开发工程师\n    skills_acquired: [Python, Linux, Redis]\nprojects:\n  - name: AI项目\n    description: 使用 Python 开发大模型求职助手\n""",
+        """personal_information:\n  full_name: 测试用户\neducation_details:\n  - education_level: 硕士\nexperience_details:\n  - position: 后台开发工程师\n    skills_acquired: [Python, Linux, Redis]\nprojects:\n  - name: AI项目\n    description: 使用 Python 开发大模型求职助手\n""",
         encoding="utf-8",
     )
     (data / "work_preferences_zh.yaml").write_text(
@@ -264,3 +264,210 @@ def test_track_confirmation_uses_edited_role_and_base(monkeypatch):
     assert saved[0]["role"] == "算法工程师"
     assert saved[0]["base"] == "北京"
     assert saved[0]["remark"] == "提前批 / 岗位雷达"
+
+
+def test_extract_jobs_from_html_reads_jobposting_and_detail_links():
+    html = """
+    <html><body>
+      <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"JobPosting","title":"Python 后端工程师",
+       "description":"<p>负责平台服务开发，要求熟悉 Python、Linux 与 Redis。</p>",
+       "url":"/jobs/python","jobLocation":{"address":{"addressRegion":"广东省","addressLocality":"深圳市"}}}
+      </script>
+      <a href="/jobs/algorithm">算法工程师</a><a href="/about">关于我们</a>
+    </body></html>
+    """
+
+    jobs, links = radar.extract_jobs_from_html(html, "https://careers.example.com/list")
+
+    assert jobs == [{
+        "role": "Python 后端工程师",
+        "description": "负责平台服务开发，要求熟悉 Python、Linux 与 Redis。",
+        "link": "https://careers.example.com/jobs/python",
+        "location": "广东省 深圳市",
+    }]
+    assert links == ["https://careers.example.com/jobs/algorithm"]
+
+
+def test_extract_jobs_from_html_falls_back_to_rendered_detail_content():
+    html = """<html><body><main><h1>算法工程师</h1><section class="job-detail">
+    <h1>算法工程师</h1><p>负责推荐算法研发、模型训练和线上效果优化。</p>
+    <p>要求熟悉 Python、PyTorch，有扎实的数据结构和机器学习基础，并具备良好沟通能力。</p>
+    </section></main></body></html>"""
+
+    jobs, _ = radar.extract_jobs_from_html(html, "https://careers.example.com/jobs/1")
+
+    assert jobs[0]["role"] == "算法工程师"
+    assert "PyTorch" in jobs[0]["description"]
+
+
+def test_extract_jobs_from_html_reads_framework_embedded_state():
+    description = "负责 Python 后端服务开发，参与系统设计、测试、上线和日常维护；要求熟悉 Linux、SQL 和常用数据结构。" * 3
+    html = f'''<script id="__NEXT_DATA__" type="application/json">{{
+      "props": {{"jobs": [{{"jobTitle": "Python 后端工程师", "jobDescription": {json.dumps(description)},
+      "detailUrl": "/jobs/42", "city": "深圳"}}]}}
+    }}</script>'''
+
+    jobs, _ = radar.extract_jobs_from_html(html, "https://careers.example.com/list")
+
+    assert jobs[0]["role"] == "Python 后端工程师"
+    assert jobs[0]["link"] == "https://careers.example.com/jobs/42"
+    assert jobs[0]["location"] == "深圳"
+
+
+def test_harness_filters_navigation_actions_from_job_candidates(monkeypatch):
+    monkeypatch.setattr(radar, "_interactive_job_candidates", lambda _driver: [
+        {"role": "查看更多", "summary": "查看更多 大模型算法工程师"},
+        {"role": "应届生招聘", "summary": "校园招聘入口"},
+        {"role": "CVTE2027届秋季校园招聘", "summary": "你的主场"},
+        {"role": "广东省·深圳市,湖南省·长沙市", "summary": "工作地点"},
+        {"role": "大模型算法工程师", "summary": "北京 算法类"},
+    ])
+
+    assert radar._usable_job_candidates(object()) == [
+        {"role": "大模型算法工程师", "summary": "北京 算法类"},
+    ]
+
+
+def test_ai_navigation_fallback_uses_context_and_validates_candidate_index(monkeypatch):
+    from backend.services import ai_skill_service
+    from src.libs.ai_engine.models import LLMResponse, TokenUsage
+    from src.libs.ai_engine.providers import LLMGateway
+
+    captured = {}
+    monkeypatch.setattr(ai_skill_service, "_resolve_config", lambda *_args: {
+        "api_key": "test", "base_url": "", "provider": "openai", "model": "test-model",
+    })
+
+    def fake_invoke(_self, request):
+        captured["prompt"] = request.messages[0].content
+        return LLMResponse(
+            content='{"action":"click","index":1,"reason":"进入职位中心"}',
+            model="test-model", provider="openai", usage=TokenUsage(100, 20, 120),
+        )
+
+    monkeypatch.setattr(LLMGateway, "invoke", fake_invoke)
+
+    class FakeDriver:
+        current_url = "https://example.com/campus"
+        title = "校园招聘介绍"
+
+        @staticmethod
+        def execute_script(_script):
+            return "当前是校园招聘介绍页"
+
+    choice, usage = radar._ai_choose_navigation(
+        FakeDriver(), ["了解公司", "查看全部职位"], step=2, attempted=["校园招聘"],
+    )
+
+    assert choice == "查看全部职位"
+    assert usage["total_tokens"] == 120
+    assert "当前进度：第 2 层导航" in captured["prompt"]
+    assert "已经尝试过" in captured["prompt"]
+    assert "只能返回一行 JSON" in captured["prompt"]
+
+
+def test_doctorate_only_job_is_excluded_for_masters_profile(tmp_path):
+    db = tmp_path / "radar.sqlite3"
+    data = _profile_dir(tmp_path)
+    radar.import_file("jobs.csv", "公司名称\t投递链接\n示例公司\thttps://example.com/jobs\n".encode(), db_path=db)
+    parent = radar.list_recommendations(db_path=db, data_dir=data)["items"][0]
+    radar._save_linked_jobs(parent["id"], [
+        {"role": "大模型算法工程师（博士）", "description": "要求博士学历，负责模型训练", "link": "https://example.com/phd", "location": "北京"},
+        {"role": "Python 开发工程师", "description": "硕士及以上，负责后端开发", "link": "https://example.com/master", "location": "北京"},
+    ], db)
+
+    cached = radar.list_linked_jobs(parent["id"], db_path=db, data_dir=data)
+
+    assert [item["role"] for item in cached["items"]] == ["Python 开发工程师"]
+    assert cached["excluded_count"] == 1
+
+
+def test_refresh_uses_http_results_without_starting_browser(monkeypatch, tmp_path):
+    db = tmp_path / "radar.sqlite3"
+    data = _profile_dir(tmp_path)
+    radar.import_file("jobs.csv", "公司名称\t投递链接\n示例公司\thttps://example.com/jobs\n".encode(), db_path=db)
+    parent = radar.list_recommendations(db_path=db, data_dir=data)["items"][0]
+    jobs = [
+        {"role": f"Python开发工程师{i}", "description": "负责 Python 后端开发、测试与维护，要求熟悉 Linux 和 SQL。" * 3,
+         "link": f"https://example.com/jobs/{i}", "location": "深圳"}
+        for i in range(3)
+    ]
+    monkeypatch.setattr(radar, "_public_job_url", lambda value: value)
+    monkeypatch.setattr(radar, "_crawl_jobs_over_http", lambda _url: (
+        jobs, {"transport": "http", "pages_scanned": 4, "request_failures": 0,
+               "detail_links_seen": 3, "reason": ""},
+    ))
+
+    result = radar._recommend_linked_jobs_impl(parent["id"], db_path=db, data_dir=data)
+
+    assert result["status"] == "ok"
+    assert result["count"] == 3
+    assert result["diagnostics"]["browser_used"] is False
+    assert radar.list_linked_jobs(parent["id"], db_path=db, data_dir=data)["count"] == 3
+
+
+def test_company_score_is_average_of_cached_top_three_jobs(tmp_path):
+    db = tmp_path / "radar.sqlite3"
+    data = _profile_dir(tmp_path)
+    radar.import_file("jobs.csv", "公司名称\t投递链接\n示例公司\thttps://example.com/jobs\n".encode(), db_path=db)
+    parent = radar.list_recommendations(db_path=db, data_dir=data)["items"][0]
+    radar._save_linked_jobs(parent["id"], [
+        {"role": role, "description": description, "link": f"https://example.com/{index}", "location": "深圳"}
+        for index, (role, description) in enumerate([
+            ("Python 后台开发工程师", "Python Linux Redis 后端开发"),
+            ("算法工程师", "Python 大模型算法研发"),
+            ("测试工程师", "Python 自动化测试"),
+            ("销售专员", "门店销售"),
+        ])
+    ], db)
+
+    result = radar.list_recommendations(db_path=db, data_dir=data)["items"][0]
+    expected = round(sum(item["score"] for item in result["linked_jobs"]) / 3, 1)
+
+    assert result["linked_job_count"] == 4
+    assert len(result["linked_jobs"]) == 3
+    assert result["score"] == expected
+    assert result["reasons"][0] == "企业评分为最相关 3 个岗位的平均分"
+
+
+def test_auto_match_only_processes_linked_company_below_three_and_respects_cooldown(monkeypatch, tmp_path):
+    db = tmp_path / "radar.sqlite3"
+    table = "公司名称\t投递链接\n有链接公司\thttps://example.com/jobs\n无链接公司\t备注中没有岗位入口\n"
+    radar.import_file("jobs.csv", table.encode(), db_path=db)
+    calls = []
+
+    def fake_refresh(job_id, limit=3, db_path=None, data_dir=None):
+        calls.append(job_id)
+        return {"status": "ok", "count": 3, "items": []}
+
+    monkeypatch.setattr(radar, "recommend_linked_jobs", fake_refresh)
+
+    first = radar.auto_fill_linked_jobs(max_companies=5, cooldown_hours=24, db_path=db, data_dir=tmp_path)
+    second = radar.auto_fill_linked_jobs(max_companies=5, cooldown_hours=24, db_path=db, data_dir=tmp_path)
+
+    assert first["processed"] == 1
+    assert first["results"][0]["status"] == "complete"
+    assert len(calls) == 1
+    assert second["processed"] == 0
+
+
+def test_manual_refresh_returns_cached_jobs_quickly_when_crawler_is_busy(tmp_path):
+    db = tmp_path / "radar.sqlite3"
+    data = _profile_dir(tmp_path)
+    radar.import_file("jobs.csv", "公司名称\t投递链接\n示例公司\thttps://example.com/jobs\n".encode(), db_path=db)
+    parent = radar.list_recommendations(db_path=db, data_dir=data)["items"][0]
+    radar._save_linked_jobs(parent["id"], [
+        {"role": "Python工程师", "description": "Python 后端开发", "link": "https://example.com/1", "location": "深圳"},
+    ], db)
+    assert radar._DETAIL_CRAWL_LOCK.acquire(timeout=0)
+    try:
+        started = __import__("time").monotonic()
+        result = radar.recommend_linked_jobs(parent["id"], db_path=db, data_dir=data)
+        elapsed = __import__("time").monotonic() - started
+    finally:
+        radar._DETAIL_CRAWL_LOCK.release()
+
+    assert result["status"] == "busy"
+    assert result["items"][0]["role"] == "Python工程师"
+    assert elapsed < 2.5

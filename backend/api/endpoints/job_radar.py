@@ -93,6 +93,25 @@ def daily_recommendations() -> dict:
     return job_radar_service.daily_recommendations(limit=3)
 
 
+@router.post("/{job_id}/linked-recommendations")
+async def linked_recommendations(job_id: str) -> dict:
+    try:
+        return await asyncio.to_thread(job_radar_service.recommend_linked_jobs, job_id, 3)
+    except (ValueError, LookupError) as exc:
+        status = 404 if isinstance(exc, LookupError) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"岗位详情读取失败：{exc}") from exc
+
+
+@router.get("/{job_id}/linked-jobs")
+def cached_linked_jobs(job_id: str, limit: int = Query(default=500, ge=1, le=1000)) -> dict:
+    try:
+        return job_radar_service.list_linked_jobs(job_id, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/stats")
 def stats() -> dict:
     return job_radar_service.get_stats()

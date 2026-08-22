@@ -110,6 +110,7 @@ AI 求职助手是一个基于大语言模型 (LLM) 的智能求职辅助工具�
   - 每日推荐 3 家尚未收藏、忽略或投递的高匹配企业，并支持按公司类型、匹配度和招聘类型筛选
   - 可在页面填写目标岗位、地点、行业、招聘/公司类型、关键词与排除项，并自定义各评分维度权重；偏好仅保存在本地 SQLite
   - 应用运行期间每天本地时间 06:00 自动同步最近使用的腾讯文档源；设置 `BUPING_JOB_RADAR_AUTO_SYNC=0` 可关闭
+  - 后台默认每 30 分钟检查本地岗位不足 3 个且存在详情链接的企业，每轮自动补齐 1 家；可用 `BUPING_JOB_RADAR_AUTO_MATCH=0` 关闭，或通过 `BUPING_JOB_RADAR_MATCH_INTERVAL_SECONDS`、`BUPING_JOB_RADAR_MATCH_BATCH` 调整
   - 腾讯智能表格采用 Canvas 渲染且可能禁止导出；直接同步会在本地 Chrome 中读取页面渲染时已获授权的只读数据，不依赖导出或系统剪贴板
 
 - **🧠 AI Runtime / Skills / Memory**

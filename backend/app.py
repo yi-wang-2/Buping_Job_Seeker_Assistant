@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     public_demo = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
     cleanup_task = None
     radar_sync_task = None
+    radar_match_task = None
     followup_check_task = None
     if public_demo:
         # Public mode must not write prompts, resumes, provider replies, or browser payloads to logs.
@@ -81,8 +82,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from src.libs.ai_engine.memory import SQLiteMemoryRepository
         SQLiteMemoryRepository(ROOT / "data_folder" / "ai_memory.sqlite3")
         radar_auto_enabled = os.getenv("BUPING_JOB_RADAR_AUTO_SYNC", "1").lower() not in {"0", "false", "no"}
+        radar_match_enabled = os.getenv("BUPING_JOB_RADAR_AUTO_MATCH", "1").lower() not in {"0", "false", "no"}
+        radar_match_interval = max(300, int(os.getenv("BUPING_JOB_RADAR_MATCH_INTERVAL_SECONDS", "1800")))
+        radar_match_batch = max(1, min(5, int(os.getenv("BUPING_JOB_RADAR_MATCH_BATCH", "1"))))
         followup_auto_enabled = os.getenv("BUPING_JOB_FOLLOWUP_AUTO_CHECK", "1").lower() not in {"0", "false", "no"}
-        if radar_auto_enabled or followup_auto_enabled:
+        if radar_auto_enabled or radar_match_enabled or followup_auto_enabled:
             from backend.api.endpoints import job_tracker
             from backend.services import job_radar_service
 
@@ -141,8 +145,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         await asyncio.to_thread(job_tracker.record_followup_run, due_slot, None, str(exc))
                         logger.exception("Job follow-up automatic check failed")
 
+            async def radar_match_loop() -> None:
+                # Let API startup settle before launching the first browser crawl.
+                await asyncio.sleep(15)
+                while True:
+                    try:
+                        result = await asyncio.to_thread(
+                            job_radar_service.auto_fill_linked_jobs,
+                            radar_match_batch,
+                        )
+                        if result["processed"]:
+                            logger.info(
+                                "Job Radar automatic matching processed %s companies: %s",
+                                result["processed"], result["results"],
+                            )
+                    except Exception:
+                        logger.exception("Job Radar automatic matching failed")
+                    await asyncio.sleep(radar_match_interval)
+
             if radar_auto_enabled:
                 radar_sync_task = asyncio.create_task(radar_sync_loop())
+            if radar_match_enabled:
+                radar_match_task = asyncio.create_task(radar_match_loop())
             if followup_auto_enabled:
                 followup_check_task = asyncio.create_task(followup_check_loop())
     try:
@@ -156,6 +180,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             radar_sync_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await radar_sync_task
+        if radar_match_task:
+            radar_match_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await radar_match_task
         if followup_check_task:
             followup_check_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
