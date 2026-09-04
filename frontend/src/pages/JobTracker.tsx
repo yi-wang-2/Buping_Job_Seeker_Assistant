@@ -33,6 +33,7 @@ import {
   connectJobFollowup,
   getJobFollowupSchedule,
   saveJobFollowupSchedule,
+  subscribeJobTrackerStatusChanges,
   type JobEntry,
 } from "../api/client";
 
@@ -105,14 +106,21 @@ const DEFAULT_ENTRIES: JobEntry[] = [
   },
 ];
 
-const INITIAL_FORM = {
-  company: "",
-  role: "",
-  base: "",
-  remark: "",
-  link: "",
-  status: "简历筛选",
-};
+function createInitialForm() {
+  const now = new Date();
+  const localNow = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+  return {
+    company: "",
+    role: "",
+    base: "",
+    remark: "",
+    applied_at: localNow,
+    link: "",
+    status: "简历筛选",
+  };
+}
 
 /* ─── Helpers ───────────────────────────────────────────── */
 
@@ -144,6 +152,7 @@ function detectPresetIcon(company: string): string {
 function migrateIconPaths(records: JobEntry[]): JobEntry[] {
   return records.map((r) => ({
     ...r,
+    followup_enabled: r.status.includes("挂") ? false : r.followup_enabled,
     icon: r.icon ? r.icon.replace("/company-icons/", "/api/job-tracker/icon/") : "",
   }));
 }
@@ -159,7 +168,8 @@ export default function JobTracker({ t }: Props) {
 
   /* ---- state ---- */
   const [entries, setEntries] = useState<JobEntry[]>([]);
-  const [form, setForm] = useState({ ...INITIAL_FORM });
+  const [form, setForm] = useState(createInitialForm);
+  const [formFeedback, setFormFeedback] = useState<{ type: "error" | "success"; message: string } | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentEntry, setCurrentEntry] = useState<JobEntry | null>(null);
   const [tempNotes, setTempNotes] = useState("");
@@ -178,6 +188,8 @@ export default function JobTracker({ t }: Props) {
   const entryToUploadRef = useRef<JobEntry | null>(null);
   const loadedRef = useRef(false);
   const apiSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextApiSaveRef = useRef(false);
+  const syncStatusRef = useRef(syncStatus);
 
   /* ---- computed ---- */
   const countOffers = useMemo(
@@ -190,6 +202,10 @@ export default function JobTracker({ t }: Props) {
   );
 
   /* ---- effects ---- */
+
+  useEffect(() => {
+    syncStatusRef.current = syncStatus;
+  }, [syncStatus]);
 
   // Initial load: API first, fallback to localStorage
   useEffect(() => {
@@ -236,6 +252,14 @@ export default function JobTracker({ t }: Props) {
     // Always write to localStorage immediately
     trackerStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 
+    // Records pulled from the server are already persisted. Avoid writing them
+    // straight back and racing with the background follow-up scheduler.
+    if (skipNextApiSaveRef.current) {
+      skipNextApiSaveRef.current = false;
+      setSyncStatus("synced");
+      return;
+    }
+
     // Debounce API save (1s after last change)
     if (apiSaveTimerRef.current) clearTimeout(apiSaveTimerRef.current);
     setSyncStatus("unsaved");
@@ -253,6 +277,49 @@ export default function JobTracker({ t }: Props) {
     };
   }, [entries]);
 
+  // Status changes are pushed after manual or scheduled checks. This avoids
+  // polling and merges only follow-up fields, preserving local form edits.
+  useEffect(() => {
+    return subscribeJobTrackerStatusChanges((updates) => {
+      const byId = new Map(updates.map((record) => [record.id, record]));
+      setEntries((current) => {
+        let changed = false;
+        const merged = current.map((entry) => {
+          const update = byId.get(entry.id);
+          if (!update || (
+            entry.status === update.status
+            && entry.last_checked_at === update.last_checked_at
+            && entry.followup_enabled === update.followup_enabled
+          )) return entry;
+          changed = true;
+          return {
+            ...entry,
+            status: update.status,
+            followup_enabled: update.followup_enabled,
+            followup_state: update.followup_state,
+            last_checked_at: update.last_checked_at,
+            last_raw_status: update.last_raw_status,
+            last_check_message: update.last_check_message,
+            last_parser: update.last_parser,
+            last_llm_confidence: update.last_llm_confidence,
+            last_llm_tokens: update.last_llm_tokens,
+            last_llm_candidate_status: update.last_llm_candidate_status,
+            last_llm_candidate_evidence: update.last_llm_candidate_evidence,
+            last_llm_application_confidence: update.last_llm_application_confidence,
+            last_llm_status_confidence: update.last_llm_status_confidence,
+            last_llm_evidence_excerpt: update.last_llm_evidence_excerpt,
+            last_application_statuses: update.last_application_statuses,
+            last_notification: update.last_notification,
+            status_history: update.status_history,
+          };
+        });
+        if (!changed) return current;
+        if (syncStatusRef.current === "synced") skipNextApiSaveRef.current = true;
+        return merged;
+      });
+    });
+  }, []);
+
   // Prevent body scroll when modal is open
   useEffect(() => {
     document.body.style.overflow = isModalOpen ? "hidden" : "";
@@ -266,23 +333,46 @@ export default function JobTracker({ t }: Props) {
   const handleFormChange = useCallback(
     (field: string, value: string) => {
       setForm((prev) => ({ ...prev, [field]: value }));
+      setFormFeedback(null);
     },
     [],
   );
 
   const addEntry = useCallback(() => {
-    const icon = detectPresetIcon(form.company);
+    const company = form.company.trim();
+    const role = form.role.trim();
+    if (!company || !role) {
+      setFormFeedback({ type: "error", message: jt.formRequired });
+      return;
+    }
+
+    const link = form.link.trim();
+    const normalizedLink = link && !/^https?:\/\//i.test(link) ? `https://${link}` : link;
+    const normalizedForm = {
+      ...form,
+      company,
+      role,
+      base: form.base.trim(),
+      remark: form.remark.trim(),
+      applied_at: form.applied_at,
+      link: normalizedLink,
+    };
+    const icon = detectPresetIcon(company);
     setEntries((prev) => [
       ...prev,
-      { id: Date.now(), ...form, icon, notes: "" },
+      { id: Date.now(), ...normalizedForm, icon, notes: "" },
     ]);
-    setForm({ ...INITIAL_FORM });
-  }, [form]);
+    setForm(createInitialForm());
+    setFormFeedback({ type: "success", message: jt.recordAdded });
+  }, [form, jt.formRequired, jt.recordAdded]);
 
   const updateEntry = useCallback(
     (id: number, field: keyof JobEntry, value: string) => {
       setEntries((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
+        prev.map((e) => (e.id === id ? {
+          ...e, [field]: value,
+          ...(field === "status" && value.includes("挂") ? { followup_enabled: false } : {}),
+        } : e)),
       );
     },
     [],
@@ -302,16 +392,17 @@ export default function JobTracker({ t }: Props) {
 
   const openFollowup = useCallback((entry: JobEntry) => {
     const host = (() => { try { return new URL(entry.followup_url || entry.link).hostname; } catch { return ""; } })();
-    const detected = host.includes("mokahr.com") ? "moka" : host.includes("jobs.feishu.cn") ? "feishu" : host.includes("zhiye.com") ? "zhiye" : "generic";
+    const detected = host.includes("job.byd.com") ? "byd" : host.includes("cmbnt.cmbchina.com") ? "cmb" : host.includes("mokahr.com") ? "moka" : host.includes("jobs.feishu.cn") ? "feishu" : host.includes("zhiye.com") ? "zhiye" : "generic";
+    const platform = entry.followup_platform && !(entry.followup_platform === "generic" && detected !== "generic") ? entry.followup_platform : detected;
     setFollowupEntry(entry);
-    setFollowupDraft({ enabled: entry.followup_enabled ?? false, aiEnabled: entry.followup_ai_enabled ?? true, platform: entry.followup_platform || detected, url: entry.followup_url || entry.link });
+    setFollowupDraft({ enabled: entry.followup_enabled ?? false, aiEnabled: entry.followup_ai_enabled ?? true, platform, url: entry.followup_url || entry.link });
     setFollowupMessage("");
   }, []);
 
   const persistFollowupDraft = useCallback(async () => {
     if (!followupEntry) return [] as JobEntry[];
     const updated = entries.map((entry) => entry.id === followupEntry.id ? {
-      ...entry, followup_enabled: followupDraft.enabled, followup_ai_enabled: followupDraft.aiEnabled, followup_platform: followupDraft.platform,
+      ...entry, followup_enabled: followupDraft.enabled && !entry.status.includes("挂"), followup_ai_enabled: followupDraft.aiEnabled, followup_platform: followupDraft.platform,
       followup_url: followupDraft.url,
     } : entry);
     setEntries(updated);
@@ -636,11 +727,12 @@ export default function JobTracker({ t }: Props) {
           {jt.addRecord}
         </h2>
         <form
+          noValidate
           onSubmit={(e) => {
             e.preventDefault();
             addEntry();
           }}
-          className="grid grid-cols-1 md:grid-cols-7 gap-4 items-end"
+          className="grid grid-cols-1 md:grid-cols-8 gap-4 items-end"
         >
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -649,7 +741,8 @@ export default function JobTracker({ t }: Props) {
             <input
               value={form.company}
               onChange={(e) => handleFormChange("company", e.target.value)}
-              required
+              aria-required="true"
+              aria-invalid={formFeedback?.type === "error" && !form.company.trim()}
               type="text"
               placeholder={jt.formCompanyPlaceholder}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm"
@@ -662,7 +755,8 @@ export default function JobTracker({ t }: Props) {
             <input
               value={form.role}
               onChange={(e) => handleFormChange("role", e.target.value)}
-              required
+              aria-required="true"
+              aria-invalid={formFeedback?.type === "error" && !form.role.trim()}
               type="text"
               placeholder={jt.formRolePlaceholder}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm"
@@ -675,7 +769,6 @@ export default function JobTracker({ t }: Props) {
             <input
               value={form.base}
               onChange={(e) => handleFormChange("base", e.target.value)}
-              required
               type="text"
               placeholder={jt.formBasePlaceholder}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm"
@@ -695,12 +788,24 @@ export default function JobTracker({ t }: Props) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {jt.formAppliedAt}
+            </label>
+            <input
+              value={form.applied_at}
+              onChange={(e) => handleFormChange("applied_at", e.target.value)}
+              type="datetime-local"
+              className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {jt.formLink}
             </label>
             <input
               value={form.link}
               onChange={(e) => handleFormChange("link", e.target.value)}
-              type="url"
+              type="text"
+              inputMode="url"
               placeholder={jt.formLinkPlaceholder}
               className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white p-2.5 focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm"
             />
@@ -730,6 +835,18 @@ export default function JobTracker({ t }: Props) {
               {jt.saveRecord}
             </button>
           </div>
+          {formFeedback && (
+            <p
+              role={formFeedback.type === "error" ? "alert" : "status"}
+              className={`md:col-span-8 text-sm ${
+                formFeedback.type === "error"
+                  ? "text-red-600 dark:text-red-400"
+                  : "text-green-600 dark:text-green-400"
+              }`}
+            >
+              {formFeedback.message}
+            </p>
+          )}
         </form>
       </div>
 
@@ -742,6 +859,9 @@ export default function JobTracker({ t }: Props) {
           >
             <thead>
               <tr className="bg-gray-50/50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
+                <th className="w-12 px-2 py-4 text-center text-sm font-semibold text-gray-600 dark:text-gray-300">
+                  {jt.colSequence}
+                </th>
                 <th className="py-4 px-6 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-2/12">
                   {jt.colCompany}
                   <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
@@ -752,6 +872,10 @@ export default function JobTracker({ t }: Props) {
                 </th>
                 <th data-min-width="80" className="py-4 px-4 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-1/12">
                   {jt.colRemark}
+                  <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
+                </th>
+                <th data-min-width="150" className="py-4 px-4 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-2/12">
+                  {jt.colAppliedAt}
                   <div className="absolute right-0 top-0 h-full w-[6px] cursor-col-resize z-10 hover:bg-blue-400/50" />
                 </th>
                 <th className="py-4 px-6 font-semibold text-gray-600 dark:text-gray-300 text-sm relative select-none w-2/12">
@@ -772,11 +896,14 @@ export default function JobTracker({ t }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {entries.map((entry) => (
+              {entries.map((entry, index) => (
                 <tr
                   key={entry.id}
                   className="hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-colors group"
                 >
+                  <td className="px-2 py-4 text-center text-sm font-semibold tabular-nums text-gray-500 dark:text-gray-400">
+                    {index + 1}
+                  </td>
                   {/* Company */}
                   <td className="py-4 px-6 truncate">
                     <div className="flex items-center gap-3 overflow-hidden">
@@ -861,6 +988,19 @@ export default function JobTracker({ t }: Props) {
                     </div>
                   </td>
 
+                  {/* Applied at */}
+                  <td className="py-4 px-4">
+                    <input
+                      value={entry.applied_at || ""}
+                      onChange={(e) =>
+                        updateEntry(entry.id, "applied_at", e.target.value)
+                      }
+                      type="datetime-local"
+                      className="w-full min-w-0 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 outline-none transition-all text-xs text-gray-600 dark:text-gray-300"
+                      aria-label={jt.colAppliedAt}
+                    />
+                  </td>
+
                   {/* Link */}
                   <td className="py-4 px-6 truncate">
                     <div className="flex items-center gap-2 overflow-hidden">
@@ -943,7 +1083,7 @@ export default function JobTracker({ t }: Props) {
               {entries.length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={9}
                     className="py-12 text-center text-gray-400 dark:text-gray-500"
                   >
                     <FolderOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
@@ -976,9 +1116,9 @@ export default function JobTracker({ t }: Props) {
       {followupEntry && <div className="fixed inset-0 z-50 flex items-center justify-center p-4"><div className="absolute inset-0 bg-slate-900/45 backdrop-blur-sm" onClick={() => setFollowupEntry(null)} /><div className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-gray-800">
         <div className="flex items-start justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700"><div><h3 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white"><ShieldCheck className="h-5 w-5 text-emerald-500" />自动跟进 · {followupEntry.company}</h3><p className="mt-1 text-xs text-gray-500">使用本地独立 Chrome 会话；不保存密码，不绕过验证码。</p></div><button onClick={() => setFollowupEntry(null)} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"><X className="h-5 w-5" /></button></div>
         <div className="space-y-4 p-5">
-          <label className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">启用定时自动跟进</span><span className="text-xs text-gray-500">按求职记录页顶部选择的间隔检查；默认每 8 小时（04:00、12:00、20:00）</span></span><input type="checkbox" checked={followupDraft.enabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, enabled: event.target.checked }))} className="h-4 w-4" /></label>
+          <label className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">启用定时自动跟进</span><span className="text-xs text-gray-500">{followupEntry.status.includes("挂") ? "已淘汰，自动跟进已关闭；如需恢复，请先修改当前状态。" : "按求职记录页顶部选择的间隔检查；默认每 8 小时（04:00、12:00、20:00）"}</span></span><input type="checkbox" checked={followupDraft.enabled && !followupEntry.status.includes("挂")} disabled={followupEntry.status.includes("挂")} onChange={(event) => setFollowupDraft((current) => ({ ...current, enabled: event.target.checked }))} className="h-4 w-4 disabled:opacity-50" /></label>
           <label className="flex items-center justify-between rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 dark:border-indigo-900 dark:bg-indigo-950/20"><span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">使用 AI 语义识别岗位与状态</span><span className="text-xs text-gray-500">AI 直接判断页面中有几个岗位、岗位名称和各自状态；本地仅保留明确规则、原文核验与安全兜底，相同页面优先走缓存</span></span><input type="checkbox" checked={followupDraft.aiEnabled} onChange={(event) => setFollowupDraft((current) => ({ ...current, aiEnabled: event.target.checked }))} className="h-4 w-4" /></label>
-          <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-gray-600 dark:text-gray-300"><span className="mb-1 block font-medium">招聘平台</span><select value={followupDraft.platform} onChange={(event) => setFollowupDraft((current) => ({ ...current, platform: event.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="moka">Moka</option><option value="feishu">飞书招聘</option><option value="zhiye">zhiye.com</option><option value="generic">其他网站</option></select></label><label className="text-xs text-gray-600 dark:text-gray-300 sm:col-span-2"><span className="mb-1 block font-medium">投递中心/个人中心链接</span><input value={followupDraft.url} onChange={(event) => setFollowupDraft((current) => ({ ...current, url: event.target.value }))} placeholder="请填写能看到投递状态的个人中心链接" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></label></div>
+          <div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-gray-600 dark:text-gray-300"><span className="mb-1 block font-medium">招聘平台</span><select value={followupDraft.platform} onChange={(event) => setFollowupDraft((current) => ({ ...current, platform: event.target.value }))} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="byd">比亚迪招聘</option><option value="cmb">招商银行招聘</option><option value="moka">Moka</option><option value="feishu">飞书招聘</option><option value="zhiye">zhiye.com</option><option value="generic">其他网站</option></select></label><label className="text-xs text-gray-600 dark:text-gray-300 sm:col-span-2"><span className="mb-1 block font-medium">投递中心/个人中心链接</span><input value={followupDraft.url} onChange={(event) => setFollowupDraft((current) => ({ ...current, url: event.target.value }))} placeholder="请填写能看到投递状态的个人中心链接" className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></label></div>
           <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">连接状态：{followupEntry.followup_state || "not_connected"}</span>{followupEntry.last_checked_at && <span className="text-xs text-gray-500">上次检查：{new Date(followupEntry.last_checked_at).toLocaleString()}</span>}{followupEntry.last_raw_status && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">网站原文：{followupEntry.last_raw_status}</span>}{followupEntry.last_parser && <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs text-violet-700 dark:bg-violet-950/30 dark:text-violet-300">识别方式：{followupEntry.last_parser === "llm" ? "AI 兜底" : followupEntry.last_parser === "local" ? "本地规则" : "未识别"}</span>}{followupEntry.last_llm_candidate_status && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">AI 候选：{followupEntry.last_llm_candidate_status} · {followupEntry.last_llm_candidate_evidence || "无证据"}</span>}{followupEntry.last_llm_confidence != null && <span className="text-xs text-gray-500">综合 {Math.round(followupEntry.last_llm_confidence * 100)}% · 岗位 {Math.round((followupEntry.last_llm_application_confidence || 0) * 100)}% · 状态 {Math.round((followupEntry.last_llm_status_confidence || 0) * 100)}% · 本次 {followupEntry.last_llm_tokens || 0} tokens</span>}</div>
           {followupEntry.last_llm_evidence_excerpt && <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"><span className="font-semibold">AI 复核片段：</span>{followupEntry.last_llm_evidence_excerpt}</div>}
           {(followupEntry.last_application_statuses || []).length > 0 && <div className="space-y-2 rounded-lg border border-gray-100 p-3 dark:border-gray-700"><div className="text-xs font-semibold text-gray-700 dark:text-gray-200">并行投递明细</div>{(followupEntry.last_application_statuses || []).map((application, index) => <div key={`${application.role}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs dark:bg-gray-900"><div><span className="font-medium text-gray-800 dark:text-gray-100">{application.role}</span><span className="ml-2 text-gray-500">原文：{application.raw_status || "未识别"}</span></div><div className="flex items-center gap-2"><span className={`rounded-full px-2 py-0.5 ${application.accepted ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"}`}>{application.status === "unknown" ? "待核实" : application.status}</span><span className="text-gray-500">岗位 {Math.round(application.application_match_confidence * 100)}% · {application.status_inferred_by_rule ? "投递记录规则确认" : `状态 ${Math.round(application.status_confidence * 100)}%`}</span></div></div>)}</div>}

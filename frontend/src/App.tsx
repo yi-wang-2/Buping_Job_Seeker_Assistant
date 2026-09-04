@@ -9,6 +9,7 @@ import JobTracker from "./pages/JobTracker";
 import JobRadar from "./pages/JobRadar";
 import SettingsPage from "./pages/Settings";
 import AIMonitoring from "./pages/AIMonitoring";
+import AICodingPractice from "./pages/AICodingPractice";
 import { getStrings, useLang } from "./i18n";
 
 const SIDEBAR_OPEN_KEY = "buping_sidebar_open";
@@ -58,6 +59,7 @@ export default function App() {
             <Route path="/resume" element={<ResumeGenerate t={t} />} />
             <Route path="/interview-prep" element={<InterviewPrep t={t} />} />
             <Route path="/mock-interview" element={<MockInterview t={t} />} />
+            <Route path="/ai-coding" element={<AICodingPractice t={t} />} />
             <Route path="/history" element={<History t={t} />} />
             <Route path="/job-tracker" element={<JobTracker t={t} />} />
             <Route path="/job-radar" element={<JobRadar t={t} />} />

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
+from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.services import job_followup_service
@@ -20,6 +24,8 @@ DATA_FILE = DATA_DIR / "records.json"
 FOLLOWUP_SETTINGS_FILE = DATA_DIR / "followup_settings.json"
 FOLLOWUP_RUNTIME_FILE = DATA_DIR / "followup_runtime.json"
 ALLOWED_FOLLOWUP_INTERVALS = {4, 6, 8, 12, 24}
+_STATUS_EVENT_SUBSCRIBERS: set[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = set()
+_STATUS_EVENT_LOCK = Lock()
 
 
 # ---- Pydantic models ----
@@ -38,6 +44,7 @@ class JobEntry(BaseModel):
     role: str
     base: str
     remark: str
+    applied_at: str = ""
     link: str
     status: str
     icon: str
@@ -86,6 +93,13 @@ def _ensure_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _stop_rejected_followup(record: dict) -> bool:
+    if "挂" in str(record.get("status") or "") and record.get("followup_enabled"):
+        record["followup_enabled"] = False
+        return True
+    return False
+
+
 def _load_records() -> list[dict]:
     _ensure_dir()
     if not DATA_FILE.exists():
@@ -93,17 +107,19 @@ def _load_records() -> list[dict]:
     try:
         raw = DATA_FILE.read_text("utf-8")
         data = json.loads(raw)
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict) and "records" in data:
-            return data["records"]
-        return []
     except (json.JSONDecodeError, OSError):
         return []
+    records = data if isinstance(data, list) else data.get("records", []) if isinstance(data, dict) else []
+    stopped = [_stop_rejected_followup(record) for record in records]
+    if any(stopped):
+        _save_records(records)
+    return records
 
 
 def _save_records(records: list[dict]) -> None:
     _ensure_dir()
+    for record in records:
+        _stop_rejected_followup(record)
     DATA_FILE.write_text(
         json.dumps(records, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -170,7 +186,7 @@ def save_followup_schedule(interval_hours: int) -> dict:
     return get_followup_schedule()
 
 
-def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) -> None:
+def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) -> bool:
     old_status = str(record.get("status") or "")
     record["last_checked_at"] = result.get("checked_at", "")
     record["followup_state"] = result.get("connection_state", record.get("followup_state", ""))
@@ -197,6 +213,7 @@ def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) 
             "evidence_url": result.get("evidence_url", ""),
             "source": "website",
         })
+    _stop_rejected_followup(record)
     notification = None
     company = str(record.get("company") or "未知企业")
     role = str(record.get("role") or "未知岗位")
@@ -216,6 +233,34 @@ def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) 
         )
     if notification:
         record["last_notification"] = notification
+    return status_changed
+
+
+def _enqueue_status_event(queue: asyncio.Queue[str], payload: str) -> None:
+    if queue.full():
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+    queue.put_nowait(payload)
+
+
+def _publish_status_changes(records: list[dict]) -> None:
+    if not records:
+        return
+    payload = json.dumps({"records": records}, ensure_ascii=False)
+    with _STATUS_EVENT_LOCK:
+        subscribers = list(_STATUS_EVENT_SUBSCRIBERS)
+    stale: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = []
+    for loop, queue in subscribers:
+        try:
+            loop.call_soon_threadsafe(_enqueue_status_event, queue, payload)
+        except RuntimeError:
+            stale.append((loop, queue))
+    if stale:
+        with _STATUS_EVENT_LOCK:
+            for subscriber in stale:
+                _STATUS_EVENT_SUBSCRIBERS.discard(subscriber)
 
 
 def _safe_notify(title: str, body: str, **kwargs: object) -> dict:
@@ -228,6 +273,7 @@ def _safe_notify(title: str, body: str, **kwargs: object) -> dict:
 def run_followup_all() -> dict:
     records = _load_records()
     results = []
+    changed_records = []
     for record in records:
         if not record.get("followup_enabled"):
             continue
@@ -235,10 +281,12 @@ def run_followup_all() -> dict:
             result = job_followup_service.check_application(record)
         except Exception as exc:
             result = {"result": "error", "connection_state": "error", "message": str(exc), "checked_at": ""}
-        _apply_followup_result(record, result, notify=True)
+        if _apply_followup_result(record, result, notify=True):
+            changed_records.append(record.copy())
         results.append({"id": record.get("id"), **result})
     if results:
         _save_records(records)
+    _publish_status_changes(changed_records)
     return {"status": "ok", "checked": len(results), "results": results}
 
 
@@ -286,6 +334,33 @@ def check_all_followups() -> dict:
     return run_followup_all()
 
 
+@router.get("/followup/events")
+async def followup_status_events() -> StreamingResponse:
+    async def event_stream() -> AsyncIterator[str]:
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=10)
+        subscriber = (loop, queue)
+        with _STATUS_EVENT_LOCK:
+            _STATUS_EVENT_SUBSCRIBERS.add(subscriber)
+        try:
+            yield "retry: 3000\n\n"
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=25)
+                    yield f"event: status-changed\ndata: {payload}\n\n"
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            with _STATUS_EVENT_LOCK:
+                _STATUS_EVENT_SUBSCRIBERS.discard(subscriber)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/followup/schedule")
 def get_followup_schedule_endpoint() -> dict:
     return get_followup_schedule()
@@ -309,8 +384,10 @@ def check_followup(entry_id: int) -> dict:
         result = job_followup_service.check_application(record, headless=False)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _apply_followup_result(record, result, notify=True)
+    status_changed = _apply_followup_result(record, result, notify=True)
     _save_records(records)
+    if status_changed:
+        _publish_status_changes([record.copy()])
     return {"status": "ok", "record": record, **result}
 
 

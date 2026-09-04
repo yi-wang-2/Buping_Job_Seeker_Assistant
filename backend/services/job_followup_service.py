@@ -28,13 +28,15 @@ PLATFORM_HOSTS = {
     "moka": ("mokahr.com",),
     "feishu": ("jobs.feishu.cn",),
     "zhiye": ("zhiye.com",),
+    "byd": ("job.byd.com",),
+    "cmb": ("cmbnt.cmbchina.com",),
     "generic": (),
 }
 
 LOGIN_MARKERS = ("请登录", "立即登录", "登录后查看", "手机号登录", "扫码登录", "账号登录", "账号密码", "sign in", "log in")
-VERIFY_MARKERS = ("人机验证", "安全验证", "滑动验证", "验证码", "captcha", "verify you are human")
+VERIFY_MARKERS = ("人机验证", "安全验证", "滑动验证", "图形验证", "captcha", "verify you are human")
 STATUS_RULES = (
-    ("Offer", ("已录用", "录用通知", "offer")),
+    ("Offer", ("已录用", "录用通知", "已发放offer", "已发送offer", "offer已发放", "offer已发送", "收到offer")),
     ("HR面", ("hr面试", "hr 面试", "人力面试")),
     ("主管面", ("主管面试", "终面", "业务面试")),
     ("技术面", ("技术面试", "专业面试", "面试中", "进入面试")),
@@ -89,6 +91,7 @@ def open_login_browser(platform: str, portal_url: str) -> dict[str, Any]:
             chrome_binary,
             f"--user-data-dir={_profile_dir(platform)}",
             "--profile-directory=Default",
+            "--restore-last-session",
             "--no-first-run",
             "--no-default-browser-check",
             "--new-window",
@@ -110,8 +113,24 @@ def complete_login(platform: str) -> dict[str, Any]:
         return {"status": "connected", "platform": platform, "message": "Chrome 登录会话已保存，可点击“立即检查”验证"}
 
 
+def _activate_restored_portal_tab(driver: Any, portal_url: str) -> None:
+    """Prefer the restored site tab so tab-scoped sessionStorage remains usable."""
+    target_host = (urlparse(portal_url).hostname or "").lower()
+    if not target_host:
+        return
+    for handle in driver.window_handles:
+        try:
+            driver.switch_to.window(handle)
+            current_host = (urlparse(driver.current_url).hostname or "").lower()
+            if current_host == target_host:
+                return
+        except Exception:
+            continue
+
+
 def extract_status(page_text: str) -> tuple[str | None, str]:
     normalized = re.sub(r"\s+", " ", page_text).lower()
+    normalized_compact = re.sub(r"\s+", "", page_text).lower()
     progress = re.search(r"(?:当前进度|当前状态|申请状态|流程状态|应聘状态)\s*[:：]\s*([^\n]{1,60})", page_text, re.IGNORECASE)
     if progress:
         raw = progress.group(1).strip()
@@ -129,7 +148,8 @@ def extract_status(page_text: str) -> tuple[str | None, str]:
             if any(marker.lower() in raw_lower for marker in markers):
                 return status, raw
     for status, markers in STATUS_RULES:
-        matched = next((marker for marker in markers if marker.lower() in normalized), None)
+        searchable = normalized_compact if status == "Offer" else normalized
+        matched = next((marker for marker in markers if marker.lower() in searchable), None)
         if matched:
             return status, matched
     return None, ""
@@ -232,6 +252,22 @@ def _effective_status_confidence(payload: dict[str, Any], context: str) -> float
     return _confidence(payload, "status_confidence")
 
 
+def _has_explicit_offer_evidence(context: str, status: str, evidence: str) -> bool:
+    if status != "Offer":
+        return True
+    evidence_lower = re.sub(r"\s+", "", evidence).lower()
+    strong_markers = ("已录用", "录用通知", "已发放offer", "已发送offer", "offer已发放", "offer已发送", "收到offer")
+    if any(marker in evidence_lower for marker in strong_markers):
+        return True
+    # A bare `Offer` is acceptable only when the page explicitly labels it as
+    # the current status. Navigation items and process-step names are not state.
+    return bool(re.search(
+        r"(?:当前进度|当前状态|申请状态|流程状态|应聘状态)\s*[:：]\s*offer\b",
+        context,
+        re.IGNORECASE,
+    ))
+
+
 def _validated_llm_result(
     payload: dict[str, Any], context: str, current_status: str = "",
 ) -> dict[str, Any] | None:
@@ -251,6 +287,8 @@ def _validated_llm_result(
         return None
     if not evidence or evidence.lower() not in context.lower():
         return None
+    if not _has_explicit_offer_evidence(context, status, evidence):
+        return None
     return {"status": status, "raw_status": evidence, "confidence": confidence}
 
 
@@ -266,6 +304,8 @@ def _llm_rejection_reason(payload: dict[str, Any], context: str, current_status:
         return "AI 没有在页面中找到明确的投递状态"
     if not evidence or evidence.lower() not in context.lower():
         return "AI 给出的状态证据无法在页面原文中复核"
+    if not _has_explicit_offer_evidence(context, status, evidence):
+        return "页面只有孤立的 Offer 栏目或流程节点，没有明确的录用状态证据"
     threshold = (
         UNCHANGED_CONFIRMATION_CONFIDENCE
         if current_status and status == current_status
@@ -523,6 +563,7 @@ def check_application(record: dict[str, Any], headless: bool = True) -> dict[str
             from selenium.webdriver.support.ui import WebDriverWait
 
             driver.set_page_load_timeout(90)
+            _activate_restored_portal_tab(driver, portal_url)
             driver.get(portal_url)
             WebDriverWait(driver, 30).until(lambda current: current.find_element("tag name", "body"))
             page_text = ""

@@ -11,6 +11,7 @@ import {
   ClipboardList,
   ChartNoAxesCombined,
   Radar,
+  Code2,
 } from "lucide-react";
 import type { Lang, Strings } from "../i18n";
 
@@ -26,6 +27,7 @@ const navItems = [
   { to: "/resume", icon: FileText, key: "resume" as const },
   { to: "/interview-prep", icon: BookOpen, key: "interviewPrep" as const },
   { to: "/mock-interview", icon: Bot, key: "mockInterview" as const },
+  { to: "/ai-coding", icon: Code2, key: "aiCoding" as const },
   { to: "/history", icon: Clock, key: "history" as const },
   { to: "/job-tracker", icon: ClipboardList, key: "jobTracker" as const },
   { to: "/job-radar", icon: Radar, key: "jobRadar" as const },

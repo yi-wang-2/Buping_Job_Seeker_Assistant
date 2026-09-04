@@ -1,4 +1,5 @@
 import base64
+import gzip
 import json
 from pathlib import Path
 import sqlite3
@@ -184,6 +185,77 @@ def test_parse_tencent_read_only_response_uses_field_titles_and_options():
     assert rows[0]["source_updated_at"] == "2026-08-19 12:00"
 
 
+def test_parse_feishu_clientvars_maps_fields_options_and_scenes():
+    table = {
+        "fieldMap": {
+            "company": {"name": "公司名称", "type": 1},
+            "role": {"name": "招聘岗位", "type": 1},
+            "nature": {"name": "企业性质", "type": 3, "property": {"options": [
+                {"id": "state", "name": "央国企"}, {"id": "private", "name": "民企"},
+            ]}},
+            "batch": {"name": "批次", "type": 4, "property": {"options": [
+                {"id": "autumn", "name": "秋招专场"},
+            ]}},
+            "location": {"name": "招聘地区", "type": 1},
+            "link": {"name": "投递链接", "type": 1},
+            "updated": {"name": "更新时间", "type": 5},
+        },
+        "recordMap": {
+            "rec-state": {
+                "company": {"value": [{"text": "中国测试集团", "type": "text"}]},
+                "role": {"value": [{"text": "AI工程师", "type": "text"}]},
+                "nature": {"value": "state"}, "batch": {"value": ["autumn"]},
+                "location": {"value": [{"text": "北京", "type": "text"}]},
+                "link": {"value": [{"link": "https://example.com/state", "type": "url"}]},
+                "updated": {"value": 1787068800000},
+            },
+            "rec-private": {
+                "company": {"value": [{"text": "示例科技", "type": "text"}]},
+                "role": {"value": [{"text": "后端工程师", "type": "text"}]},
+                "nature": {"value": "private"},
+                "link": {"value": [{"link": "https://example.com/private", "type": "url"}]},
+            },
+        },
+    }
+    packed = base64.b64encode(gzip.compress(json.dumps(table, ensure_ascii=False).encode())).decode()
+    rows = radar.parse_feishu_clientvars(json.dumps({"code": 0, "data": {"table": packed}}))
+
+    assert len(rows) == 2
+    state = next(row for row in rows if row["company"] == "中国测试集团")
+    assert state["role"] == "AI工程师"
+    assert state["location"] == "北京"
+    assert state["recruitment_type"] == "秋招专场"
+    assert state["source_updated_at"] == "2026-08-18"
+    assert state["scene"] == "state_owned"
+    assert next(row for row in rows if row["company"] == "示例科技")["scene"] == "general"
+
+
+def test_cross_source_duplicates_merge_and_scene_filters_stay_separate(tmp_path):
+    db = tmp_path / "radar.sqlite3"
+    data = _profile_dir(tmp_path)
+    tencent = "公司名称\t岗位名称\t工作地点\t投递链接\n中国测试集团\tAI工程师\t北京\thttps://qq.example/job\n"
+    feishu = "公司名称\t岗位名称\t工作地点\t企业性质\t投递链接\n中国测试集团\tAI工程师\t北京\t央国企\thttps://feishu.example/job\n"
+
+    radar.import_file("tencent.csv", tencent.encode(), "https://docs.qq.com/smartsheet/test", "腾讯文档岗位表", db)
+    result = radar.import_file("feishu.csv", feishu.encode(), "https://example.feishu.cn/base/test", "飞书岗位表", db)
+
+    assert result["created"] == 0
+    assert radar.get_stats(db)["total"] == 1
+    assert radar.list_recommendations(scene="general", db_path=db, data_dir=data)["count"] == 0
+    state_jobs = radar.list_recommendations(scene="state_owned", db_path=db, data_dir=data)
+    assert state_jobs["count"] == 1
+    assert state_jobs["items"][0]["source_name"] == "飞书岗位表"
+    assert radar.list_recommendations(scene="civil_service", db_path=db, data_dir=data)["items"] == []
+
+
+def test_sync_job_source_dispatches_by_provider(monkeypatch, tmp_path):
+    monkeypatch.setattr(radar, "sync_tencent_sheet", lambda url, db: {"provider": "tencent", "url": url})
+    monkeypatch.setattr(radar, "sync_feishu_bitable", lambda url, db: {"provider": "feishu", "url": url})
+
+    assert radar.sync_job_source("https://docs.qq.com/smartsheet/example", tmp_path / "db")["provider"] == "tencent"
+    assert radar.sync_job_source("https://demo.feishu.cn/base/example", tmp_path / "db")["provider"] == "feishu"
+
+
 def test_actions_persist_and_remove_company_from_daily_recommendations(tmp_path):
     db = tmp_path / "radar.sqlite3"
     data = _profile_dir(tmp_path)
@@ -264,6 +336,7 @@ def test_track_confirmation_uses_edited_role_and_base(monkeypatch):
     assert saved[0]["role"] == "算法工程师"
     assert saved[0]["base"] == "北京"
     assert saved[0]["remark"] == "提前批 / 岗位雷达"
+    assert len(saved[0]["applied_at"]) == 16
 
 
 def test_extract_jobs_from_html_reads_jobposting_and_detail_links():

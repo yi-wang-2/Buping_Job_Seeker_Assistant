@@ -80,6 +80,7 @@ data_folder/ai_memory.sqlite3-wal
 data_folder/job_radar.sqlite3
 data_folder/job_radar.sqlite3-shm
 data_folder/job_radar.sqlite3-wal
+data_folder/ai_coding/sessions/
 artifacts/
 tmp/
 

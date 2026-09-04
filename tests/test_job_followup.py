@@ -1,3 +1,5 @@
+import json
+
 from backend.api.endpoints import job_tracker
 from backend.services import job_followup_service as followup
 
@@ -6,6 +8,8 @@ def test_detect_supported_recruitment_platforms():
     assert followup.detect_platform("https://app.mokahr.com/candidate") == "moka"
     assert followup.detect_platform("https://example.jobs.feishu.cn/candidate") == "feishu"
     assert followup.detect_platform("https://company.zhiye.com/personal") == "zhiye"
+    assert followup.detect_platform("https://job.byd.com/portal/pc/#/personalCenter/myApply") == "byd"
+    assert followup.detect_platform("https://cmbnt.cmbchina.com/center/history") == "cmb"
     assert followup.detect_platform("https://careers.example.com") == "generic"
 
 
@@ -16,6 +20,9 @@ def test_extract_status_requires_explicit_status_marker():
     assert followup.extract_status("AI Agent 开发\nHR初筛\n查看职位") == ("简历筛选", "hr初筛")
     assert followup.extract_status("当前状态：待处理") == ("简历筛选", "待处理")
     assert followup.extract_status("欢迎查看公司招聘岗位") == (None, "")
+    assert followup.extract_status("AI应用开发\n申请流程：投递 简历筛选 面试 Offer")[0] == "简历筛选"
+    assert followup.extract_status("当前状态：Offer") == ("Offer", "Offer")
+    assert followup.extract_status("恭喜，Offer 已发放") == ("Offer", "offer已发放")
 
 
 def test_application_context_does_not_use_another_jobs_status():
@@ -37,6 +44,27 @@ def test_followup_result_updates_status_and_appends_timeline():
     assert record["status_history"][0]["status"] == "技术面"
 
 
+def test_scheduled_followup_publishes_only_confirmed_status_changes(monkeypatch):
+    records = [{
+        "id": 1, "company": "示例公司", "role": "算法工程师", "status": "简历筛选",
+        "followup_enabled": True, "status_history": [],
+    }]
+    published = []
+    monkeypatch.setattr(job_tracker, "_load_records", lambda: records)
+    monkeypatch.setattr(job_tracker, "_save_records", lambda _records: None)
+    monkeypatch.setattr(job_tracker, "_publish_status_changes", lambda changed: published.extend(changed))
+    monkeypatch.setattr(job_tracker.job_followup_service, "check_application", lambda _record: {
+        "status": "技术面", "raw_status": "进入面试", "checked_at": "2026-08-24T12:00:00+08:00",
+        "connection_state": "connected",
+    })
+
+    result = job_tracker.run_followup_all()
+
+    assert result["checked"] == 1
+    assert records[0]["status"] == "技术面"
+    assert published[0]["status"] == "技术面"
+
+
 def test_legacy_job_entry_gets_safe_followup_defaults():
     entry = job_tracker.JobEntry(
         id=1, company="示例公司", role="工程师", base="北京", remark="秋招",
@@ -46,6 +74,46 @@ def test_legacy_job_entry_gets_safe_followup_defaults():
     assert entry.followup_ai_enabled is True
     assert entry.followup_state == "not_connected"
     assert entry.status_history == []
+
+
+def test_rejection_stops_followup_but_still_notifies(monkeypatch):
+    events = []
+    monkeypatch.setattr(job_tracker, "_safe_notify", lambda *args, **kwargs: events.append(args) or {"sent": 1})
+    for status in ("简历挂", "技术面挂", "主管面挂"):
+        record = {"id": 1, "status": "简历筛选", "followup_enabled": True}
+        assert job_tracker._apply_followup_result(record, {"status": status}, notify=True)
+        assert record["followup_enabled"] is False
+        assert record["status_history"][-1]["status"] == status
+        assert record["last_notification"]["sent"] == 1
+    assert len(events) == 3
+
+
+def test_partial_rejection_does_not_stop_other_applications():
+    record = {"id": 1, "status": "简历筛选", "followup_enabled": True}
+    job_tracker._apply_followup_result(record, {
+        "status": None,
+        "application_statuses": [{"role": "岗位甲", "status": "简历挂"}, {"role": "岗位乙", "status": "简历筛选"}],
+    })
+    assert record["followup_enabled"] is True
+
+
+def test_existing_rejected_record_is_disabled_and_skipped(monkeypatch, tmp_path):
+    path = tmp_path / "records.json"
+    path.write_text(json.dumps([{"id": 1, "status": "简历挂", "followup_enabled": True}]), encoding="utf-8")
+    monkeypatch.setattr(job_tracker, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(job_tracker, "DATA_FILE", path)
+    monkeypatch.setattr(followup, "check_application", lambda _: (_ for _ in ()).throw(AssertionError("must not query rejected records")))
+    result = job_tracker.run_followup_all()
+    assert result["checked"] == 0
+    assert json.loads(path.read_text("utf-8"))[0]["followup_enabled"] is False
+
+
+def test_save_cannot_reenable_rejected_record(monkeypatch, tmp_path):
+    path = tmp_path / "records.json"
+    monkeypatch.setattr(job_tracker, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(job_tracker, "DATA_FILE", path)
+    job_tracker._save_records([{"id": 1, "status": "技术面挂", "followup_enabled": True}])
+    assert json.loads(path.read_text("utf-8"))[0]["followup_enabled"] is False
 
 
 def test_auth_notification_dedup_follows_user_schedule(monkeypatch):
@@ -80,10 +148,41 @@ def test_login_uses_normal_chrome_process_instead_of_webdriver(monkeypatch, tmp_
     opened = followup.open_login_browser("generic", "https://careers.example.com/personal")
     assert opened["status"] == "browser_open"
     assert "--user-data-dir=" + str(tmp_path) in captured["args"]
+    assert "--restore-last-session" in captured["args"]
     assert all("webdriver" not in arg.lower() for arg in captured["args"])
     assert followup.complete_login("generic")["status"] == "browser_open"
     process.returncode = 0
     assert followup.complete_login("generic")["status"] == "connected"
+
+
+def test_plain_sms_code_text_is_not_misclassified_as_human_verification():
+    text = "手机号登录 获取验证码"
+    assert not any(marker.lower() in text.lower() for marker in followup.VERIFY_MARKERS)
+    assert any(marker.lower() in text.lower() for marker in followup.LOGIN_MARKERS)
+
+
+def test_restored_matching_tab_is_activated():
+    class Switcher:
+        def __init__(self, driver):
+            self.driver = driver
+
+        def window(self, handle):
+            self.driver.active = handle
+
+    class Driver:
+        window_handles = ["blank", "cmb"]
+        active = "blank"
+
+        def __init__(self):
+            self.switch_to = Switcher(self)
+
+        @property
+        def current_url(self):
+            return {"blank": "data:,", "cmb": "https://cmbnt.cmbchina.com/center/history"}[self.active]
+
+    driver = Driver()
+    followup._activate_restored_portal_tab(driver, "https://cmbnt.cmbchina.com/center/history")
+    assert driver.active == "cmb"
 
 
 def test_unknown_local_status_uses_llm_fallback(monkeypatch):
@@ -112,6 +211,17 @@ def test_llm_result_must_quote_page_evidence():
     }, context)
     assert valid == {"status": "技术面", "raw_status": "专业交流环节", "confidence": 0.91}
     assert hallucinated is None
+
+
+def test_bare_offer_requires_an_explicit_current_status_label():
+    payload = {
+        "matched_application": True, "normalized_status": "Offer", "raw_status": "Offer",
+        "confidence": 0.99, "application_match_confidence": 0.99, "status_confidence": 0.99,
+    }
+    assert followup._validated_llm_result(payload, "AI应用开发\n流程：投递 筛选 面试 Offer", "简历筛选") is None
+    assert followup._validated_llm_result(payload, "AI应用开发\n当前状态：Offer", "简历筛选") == {
+        "status": "Offer", "raw_status": "Offer", "confidence": 0.99,
+    }
 
 
 def test_same_status_can_be_confirmed_at_lower_risk_threshold():

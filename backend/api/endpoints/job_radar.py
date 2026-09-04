@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -50,11 +51,11 @@ class TrackJobRequest(BaseModel):
 @router.post("/sync-url")
 async def sync_url(req: SyncUrlRequest) -> dict:
     try:
-        return await asyncio.to_thread(job_radar_service.sync_tencent_sheet, req.source_url)
+        return await asyncio.to_thread(job_radar_service.sync_job_source, req.source_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"腾讯文档读取失败：{exc}") from exc
+        raise HTTPException(status_code=500, detail=f"岗位源读取失败：{exc}") from exc
 
 
 @router.post("/import")
@@ -81,16 +82,19 @@ def recommendations(
     match_level: str = Query(default="", max_length=20),
     recruitment_type: str = Query(default="", max_length=20),
     favorite_only: bool = Query(default=False),
+    scene: str = Query(default="general", pattern="^(general|state_owned|civil_service)$"),
 ) -> dict:
     return job_radar_service.list_recommendations(
         limit=limit, min_score=min_score, query=query, company_type=company_type,
-        match_level=match_level, recruitment_type=recruitment_type, favorite_only=favorite_only,
+        match_level=match_level, recruitment_type=recruitment_type, favorite_only=favorite_only, scene=scene,
     )
 
 
 @router.get("/daily")
-def daily_recommendations() -> dict:
-    return job_radar_service.daily_recommendations(limit=3)
+def daily_recommendations(
+    scene: str = Query(default="general", pattern="^(general|state_owned|civil_service)$"),
+) -> dict:
+    return job_radar_service.daily_recommendations(limit=3, scene=scene)
 
 
 @router.post("/{job_id}/linked-recommendations")
@@ -166,6 +170,7 @@ def track_job(job_id: str, req: TrackJobRequest | None = None) -> dict:
         "role": confirmed.get("role") or job.get("role", "") or "招聘岗位",
         "base": confirmed.get("base") or job.get("location", ""),
         "remark": " / ".join(filter(None, [confirmed.get("recruitment_type") or job.get("recruitment_type", ""), "岗位雷达"])),
+        "applied_at": datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M"),
         "link": link,
         "status": "简历筛选",
         "icon": "",

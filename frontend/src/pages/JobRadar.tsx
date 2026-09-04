@@ -11,6 +11,8 @@ import {
 } from "../api/client";
 
 const DEFAULT_SOURCE = "https://docs.qq.com/smartsheet/DZkdPVGtGb1ZvaG5R?tab=t00i2h";
+const FEISHU_SOURCE = "https://yal2at57cvq.feishu.cn/base/GtSLbyyR3aCENOsJYC6cdlsVnih?from=from_copylink";
+type JobScene = "general" | "state_owned" | "civil_service";
 const DEFAULT_PREFERENCES: JobPreferences = {
   target_roles: [], preferred_locations: [], acceptable_locations: [], excluded_locations: [],
   recruitment_types: [], industries: [], company_types: [], preferred_keywords: [],
@@ -21,9 +23,10 @@ const DEFAULT_PREFERENCES: JobPreferences = {
 export default function JobRadarPage({ t }: { t: Strings }) {
   const english = t.nav.settings === "Settings";
   const [sourceUrl, setSourceUrl] = useState(DEFAULT_SOURCE);
+  const [scene, setScene] = useState<JobScene>("general");
   const [items, setItems] = useState<JobRecommendation[]>([]);
   const [dailyItems, setDailyItems] = useState<JobRecommendation[]>([]);
-  const [stats, setStats] = useState<JobRadarStats>({ total: 0, companies: 0, favorites: 0, schedule: { source_url: DEFAULT_SOURCE, auto_sync: true, auto_sync_time: "06:00" }, last_sync: null });
+  const [stats, setStats] = useState<JobRadarStats>({ total: 0, companies: 0, favorites: 0, by_scene: { general: 0, state_owned: 0, civil_service: 0 }, schedule: { source_url: DEFAULT_SOURCE, source_urls: [DEFAULT_SOURCE, FEISHU_SOURCE], auto_sync: true, auto_sync_time: "06:00" }, last_sync: null });
   const [profile, setProfile] = useState({ preferred_roles: [] as string[], preferred_locations: [] as string[], resume_skills: [] as string[] });
   const [query, setQuery] = useState("");
   const [minScore, setMinScore] = useState(40);
@@ -50,8 +53,8 @@ export default function JobRadarPage({ t }: { t: Strings }) {
     setLoading(true);
     try {
       const [recommendations, daily, radarStats] = await Promise.all([
-        getJobRadarRecommendations({ minScore, query, limit: 200, companyType, matchLevel, recruitmentType, favoriteOnly }),
-        getDailyJobRecommendations(), getJobRadarStats(),
+        getJobRadarRecommendations({ minScore, query, limit: 200, companyType, matchLevel, recruitmentType, favoriteOnly, scene }),
+        getDailyJobRecommendations(scene), getJobRadarStats(),
       ]);
       setItems(recommendations.items);
       setDailyItems(daily.items);
@@ -65,7 +68,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
     } finally {
       setLoading(false);
     }
-  }, [companyType, english, favoriteOnly, matchLevel, minScore, query, recruitmentType]);
+  }, [companyType, english, favoriteOnly, matchLevel, minScore, query, recruitmentType, scene]);
 
   useEffect(() => {
     const timer = window.setTimeout(load, 250);
@@ -228,6 +231,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
         </div>
         <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-lg font-bold ${job.score >= 70 ? "bg-emerald-100 text-emerald-700" : job.score >= 50 ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600"}`}>{job.score}</div>
       </div>
+
       <div className="mt-4 space-y-2">{job.reasons.map((reason) => <div key={reason} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300"><Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />{reason}</div>)}{job.hard_risks.map((risk) => <div key={risk} className="text-sm text-red-600">⚠ {risk}</div>)}</div>
       {job.referral && <div className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-700 dark:bg-brand-950/30 dark:text-brand-300"><span className="font-medium">内推码：</span>{job.referral}</div>}
       {job.description && <details className="mt-3 rounded-lg border border-gray-100 px-3 py-2 text-sm dark:border-gray-700"><summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-200">查看招聘原文</summary><div className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-gray-600 dark:text-gray-300">{job.description}</div></details>}
@@ -268,6 +272,14 @@ export default function JobRadarPage({ t }: { t: Strings }) {
         </div>
       </div>
 
+      <div className="grid gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm sm:grid-cols-3 dark:border-gray-700 dark:bg-gray-800">
+        {([
+          ["general", "普通招聘", "企业校招、实习和社会招聘"],
+          ["state_owned", "央国企招聘", "央企、国企与事业单位"],
+          ["civil_service", "考公考编", "信息源待接入"],
+        ] as const).map(([value, label, description]) => <button key={value} type="button" onClick={() => setScene(value)} className={`rounded-lg px-4 py-3 text-left transition ${scene === value ? "bg-brand-600 text-white shadow-sm" : "hover:bg-gray-50 dark:hover:bg-gray-700"}`}><div className="flex items-center justify-between gap-2"><span className="font-semibold">{label}</span><span className={`rounded-full px-2 py-0.5 text-xs ${scene === value ? "bg-white/20" : "bg-gray-100 text-gray-500 dark:bg-gray-900"}`}>{stats.by_scene[value] || 0}</span></div><div className={`mt-1 text-xs ${scene === value ? "text-brand-100" : "text-gray-500"}`}>{description}</div></button>)}
+      </div>
+
       <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100"><span className="flex items-center gap-2"><RefreshCw className="h-4 w-4 text-brand-600" />{english ? "Read-only source sync" : "岗位源"}</span><span className="text-xs font-normal text-gray-500">每天 {stats.schedule.auto_sync_time} 自动同步</span></div>
         <div className="flex flex-col gap-2 lg:flex-row">
@@ -284,6 +296,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
             <input type="file" accept=".csv,.xlsx" className="hidden" disabled={syncing} onChange={(event) => { void importFallback(event.target.files?.[0]); event.target.value = ""; }} />
           </label>
         </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs"><button type="button" onClick={() => setSourceUrl(DEFAULT_SOURCE)} className="rounded-full bg-blue-50 px-2.5 py-1 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">腾讯岗位源</button><button type="button" onClick={() => setSourceUrl(FEISHU_SOURCE)} className="rounded-full bg-sky-50 px-2.5 py-1 text-sky-700 dark:bg-sky-950/30 dark:text-sky-300">飞书岗位源</button><span className="self-center text-gray-400">已配置 {stats.schedule.source_urls?.length || 2} 个来源，自动同步后合并去重</span></div>
         {message && <div className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{message}</div>}
       </div>
 
@@ -313,7 +326,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          [english ? "Jobs" : "岗位总数", stats.total, BriefcaseBusiness],
+          [english ? "Jobs" : "当前场景岗位", stats.by_scene[scene] || 0, BriefcaseBusiness],
           [english ? "Companies" : "公司数量", stats.companies, Building2],
           [english ? "Strong matches" : "高匹配岗位", highMatches, Target],
           [english ? "Last sync" : "最后同步", stats.last_sync ? fmtTime(stats.last_sync.created_at) : (english ? "Never" : "尚未"), Clock3],
@@ -349,7 +362,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
 
       {favoriteOnly && !loading && <div className="flex items-center gap-2"><Heart className="h-5 w-5 fill-current text-rose-500" /><h3 className="text-lg font-bold text-gray-900 dark:text-white">收藏夹</h3></div>}
       {loading ? <div className="flex justify-center py-16"><LoaderCircle className="h-8 w-8 animate-spin text-brand-600" /></div> : items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 py-16 text-center dark:border-gray-700"><Radar className="mx-auto h-10 w-10 text-gray-300" /><p className="mt-3 text-gray-500">{favoriteOnly ? "收藏夹暂时为空" : (english ? "Sync a source to see recommendations." : "同步岗位源后，这里会显示推荐结果。")}</p></div>
+        <div className="rounded-2xl border border-dashed border-gray-300 py-16 text-center dark:border-gray-700"><Radar className="mx-auto h-10 w-10 text-gray-300" /><p className="mt-3 text-gray-500">{favoriteOnly ? "收藏夹暂时为空" : scene === "civil_service" ? "考公考编信息源尚未接入，入口已预留。" : (english ? "Sync a source to see recommendations." : "同步岗位源后，这里会显示推荐结果。")}</p></div>
       ) : <div className="grid gap-4 xl:grid-cols-2">{items.map((job) => renderJobCard(job))}</div>}
 
       {trackingJob && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="确认求职记录">

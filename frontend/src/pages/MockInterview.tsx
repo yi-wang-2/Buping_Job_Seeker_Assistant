@@ -59,6 +59,7 @@ export default function MockInterview({ t }: { t: Strings }) {
   const lastAssistantTextRef = useRef("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef("");
+  const answerInputRef = useRef<HTMLTextAreaElement | null>(null);
   const audioCacheRef = useRef<Map<string, Blob>>(new Map());
   const ttsAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -100,6 +101,15 @@ export default function MockInterview({ t }: { t: Strings }) {
     mountedRef.current = true;
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history, animatedContent]);
+
+  useEffect(() => {
+    const textarea = answerInputRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 42), 176);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 176 ? "auto" : "hidden";
+  }, [userInput]);
 
   useEffect(() => {
     setSpeechInputSupported(Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition));
@@ -570,6 +580,7 @@ export default function MockInterview({ t }: { t: Strings }) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -780,7 +791,7 @@ export default function MockInterview({ t }: { t: Strings }) {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4" style={{ maxHeight: "400px" }}>
+            <div className="min-h-[300px] max-h-[70vh] flex-1 space-y-4 overflow-y-auto p-5">
               {history.length === 0 && (
                 <div className="flex h-full items-center justify-center text-gray-400 dark:text-gray-500">
                   <div className="text-center">
@@ -842,14 +853,17 @@ export default function MockInterview({ t }: { t: Strings }) {
             {/* Input */}
             {sessionId && (
               <div className="border-t border-gray-200 p-4 dark:border-gray-700">
-                <div className="flex gap-2">
-                  <input
+                <div className="flex items-end gap-2">
+                  <textarea
+                    ref={answerInputRef}
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={mi.inputPlaceholder}
                     disabled={loading || isTyping}
-                    className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                    rows={1}
+                    aria-label="面试回答"
+                    className="max-h-44 min-h-[42px] flex-1 resize-none overflow-hidden rounded-lg border border-gray-300 px-4 py-2.5 text-sm leading-5 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
                   />
                   {interviewMode === "voice" && (
                     <button

@@ -44,6 +44,8 @@ class JobStatusClassifierSkill:
         "如果页面只有一条申请记录且状态明显属于整条申请流程，不得仅因志愿名称不同而判定不匹配；"
         "如果页面有多条独立申请记录，则必须定位目标岗位对应的状态。"
         "例如‘待处理’且页面说明简历评估尚未结束，应归类为‘简历筛选’。"
+        "页面导航、流程阶段列表或说明文字中孤立出现的‘Offer’不代表候选人已获得 Offer；"
+        "只有目标申请明确显示‘已录用’、‘录用通知’、‘Offer 已发放/已发送’，或‘当前状态：Offer’时才可归类为 Offer。"
         "返回且仅返回 JSON：matched_application(boolean), normalized_status(string), raw_status(string), "
         "confidence(number), application_match_confidence(number), status_confidence(number), reason(string), applications(array)。"
         "applications 中每项包含 role, matched_target, normalized_status, raw_status, confidence, "
@@ -136,3 +138,9 @@ class JobStatusClassifierSkill:
         context = str(inputs["page_context"])
         if status != "unknown" and (not evidence or evidence.lower() not in context.lower()):
             raise ValueError("AI 给出的状态证据无法在页面原文中复核")
+        if status == "Offer" and evidence.lower() == "offer" and not re.search(
+            r"(?:当前进度|当前状态|申请状态|流程状态|应聘状态)\s*[:：]\s*offer\b",
+            context,
+            re.IGNORECASE,
+        ):
+            raise ValueError("页面中孤立的 Offer 栏目不能证明已录用")

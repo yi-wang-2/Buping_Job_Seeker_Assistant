@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (ROOT / "data_folder" / "output").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "output" / "interview_prep").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "output" / "mock_interview").mkdir(parents=True, exist_ok=True)
+    (ROOT / "data_folder" / "ai_coding" / "sessions").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "job_tracker").mkdir(parents=True, exist_ok=True)
     (ROOT / "data_folder" / "job_tracker" / "icon").mkdir(parents=True, exist_ok=True)
     public_demo = os.getenv("BUPING_PUBLIC_DEMO", "").lower() in {"1", "true", "yes"}
@@ -109,7 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     attempted_date = datetime.now().astimezone().date()
                     if radar_auto_enabled and settings["auto_sync"]:
                         try:
-                            await asyncio.to_thread(job_radar_service.sync_tencent_sheet, settings["source_url"])
+                            await asyncio.to_thread(job_radar_service.sync_all_sources)
                             logger.info("Job Radar automatic sync completed")
                         except Exception:
                             logger.exception("Job Radar automatic sync failed")

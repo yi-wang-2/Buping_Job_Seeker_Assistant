@@ -684,6 +684,7 @@ export interface JobEntry {
   role: string;
   base: string;
   remark: string;
+  applied_at?: string;
   link: string;
   status: string;
   icon: string;
@@ -785,6 +786,22 @@ export async function checkAllJobFollowups(): Promise<{ status: string; checked:
   return data;
 }
 
+export function subscribeJobTrackerStatusChanges(
+  onChange: (records: JobEntry[]) => void,
+): () => void {
+  if (IS_PUBLIC || typeof EventSource === "undefined") return () => {};
+  const source = new EventSource("/api/job-tracker/followup/events");
+  source.addEventListener("status-changed", (event) => {
+    try {
+      const payload = JSON.parse((event as MessageEvent<string>).data) as { records?: JobEntry[] };
+      if (payload.records?.length) onChange(payload.records);
+    } catch {
+      // Ignore malformed events; EventSource remains connected for the next update.
+    }
+  });
+  return () => source.close();
+}
+
 const PUBLIC_FOLLOWUP_INTERVAL_KEY = "buping_followup_interval_hours";
 
 export interface JobFollowupSchedule {
@@ -837,6 +854,7 @@ export interface JobRecommendation {
   last_seen_at: string;
   updated_at: string;
   source_updated_at: string;
+  scene: "general" | "state_owned" | "civil_service";
   score: number;
   reasons: string[];
   matched_skills: string[];
@@ -859,7 +877,8 @@ export interface JobRadarStats {
   total: number;
   companies: number;
   favorites: number;
-  schedule: { source_url: string; auto_sync: boolean; auto_sync_time: string };
+  by_scene: Record<"general" | "state_owned" | "civil_service", number>;
+  schedule: { source_url: string; source_urls: string[]; auto_sync: boolean; auto_sync_time: string };
   last_sync: null | {
     imported: number;
     created: number;
@@ -916,6 +935,7 @@ export async function importJobRadarFile(file: File, sourceUrl = ""): Promise<{
 export async function getJobRadarRecommendations(params: {
   minScore?: number; query?: string; limit?: number; companyType?: string;
   matchLevel?: string; recruitmentType?: string; favoriteOnly?: boolean;
+  scene?: "general" | "state_owned" | "civil_service";
 } = {}): Promise<{
   items: JobRecommendation[];
   count: number;
@@ -926,6 +946,7 @@ export async function getJobRadarRecommendations(params: {
       min_score: params.minScore ?? 0, query: params.query ?? "", limit: params.limit ?? 200,
       company_type: params.companyType ?? "", match_level: params.matchLevel ?? "",
       recruitment_type: params.recruitmentType ?? "", favorite_only: params.favoriteOnly ?? false,
+      scene: params.scene ?? "general",
     },
   });
   return data;
@@ -953,8 +974,8 @@ export async function trackRecommendedJob(jobId: string, confirmed?: {
   return data;
 }
 
-export async function getDailyJobRecommendations(): Promise<{ items: JobRecommendation[]; count: number; date: string }> {
-  const { data } = await api.get("/job-radar/daily");
+export async function getDailyJobRecommendations(scene: "general" | "state_owned" | "civil_service" = "general"): Promise<{ items: JobRecommendation[]; count: number; date: string }> {
+  const { data } = await api.get("/job-radar/daily", { params: { scene } });
   return data;
 }
 
@@ -979,4 +1000,46 @@ export async function updateJobRadarAction(
 ): Promise<{ status: string; favorite: boolean; not_interested: boolean; applied: boolean }> {
   const { data } = await api.put(`/job-radar/${encodeURIComponent(jobId)}/action`, { action, enabled });
   return data;
+}
+
+export interface AICodingTaskSummary {
+  id: string; title: string; language: string; difficulty: string;
+  duration_minutes: number; summary: string;
+}
+
+export interface AICodingTask extends AICodingTaskSummary {
+  description: string; requirements: string[]; starter_code: string;
+  examples: Array<{ input: string; output: string }>;
+}
+
+export interface AICodingReport {
+  score: number; passed_tests: number; total_tests: number;
+  dimensions: Record<string, number>; feedback: string[];
+  public_results: Array<{ passed: boolean; actual?: unknown; expected?: unknown; error?: string }>;
+}
+
+export async function getAICodingTasks(): Promise<AICodingTaskSummary[]> {
+  const { data } = await api.get("/ai-coding/tasks");
+  return data.items;
+}
+
+export async function startAICodingSession(taskId: string): Promise<{
+  session: { id: string; started_at: string }; task: AICodingTask;
+}> {
+  const { data } = await api.post("/ai-coding/sessions/start", { task_id: taskId });
+  return data;
+}
+
+export async function submitAICodingSession(sessionId: string, payload: {
+  code: string; approach: string; test_strategy: string; ai_reflection: string;
+}): Promise<{ report: AICodingReport }> {
+  const { data } = await api.post(`/ai-coding/sessions/${encodeURIComponent(sessionId)}/submit`, payload);
+  return data;
+}
+
+export async function getAICodingSessions(): Promise<Array<{
+  id: string; task_id: string; task_title: string; status: string; started_at: string; score: number | null;
+}>> {
+  const { data } = await api.get("/ai-coding/sessions");
+  return data.items;
 }

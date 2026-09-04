@@ -33,13 +33,15 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data_folder"
 DB_PATH = DATA_DIR / "job_radar.sqlite3"
 DEFAULT_TENCENT_SOURCE = "https://docs.qq.com/smartsheet/DZkdPVGtGb1ZvaG5R?tab=t00i2h"
+DEFAULT_FEISHU_SOURCE = "https://yal2at57cvq.feishu.cn/base/GtSLbyyR3aCENOsJYC6cdlsVnih?from=from_copylink"
+JOB_SCENES = {"general", "state_owned", "civil_service"}
 _SYNC_LOCK = threading.Lock()
 _DETAIL_CRAWL_LOCK = threading.Lock()
 
 _HEADER_ALIASES = {
     "company": ("公司", "公司名称", "企业", "企业名称", "单位", "单位名称"),
     "role": ("岗位", "岗位名称", "职位", "职位名称", "招聘岗位", "职位类别"),
-    "location": ("地点", "工作地点", "城市", "base", "base地", "办公地点"),
+    "location": ("地点", "工作地点", "招聘地区", "城市", "base", "base地", "办公地点"),
     "industry": ("行业", "行业类型", "所属行业"),
     "recruitment_type": ("招聘类型", "招聘批次", "批次", "届次", "校招类型"),
     "link": ("链接", "岗位链接", "招聘链接", "投递链接", "网申链接", "官网链接", "内推链接", "申请链接"),
@@ -47,6 +49,7 @@ _HEADER_ALIASES = {
     "deadline": ("截止时间", "截止日期", "网申截止", "截止"),
     "source_updated_at": ("更新时间", "更新日期", "最后更新", "最后更新时间", "信息更新时间"),
     "description": ("岗位描述", "职位描述", "jd", "要求", "岗位要求", "备注"),
+    "company_nature": ("企业性质", "公司性质", "单位性质"),
 }
 
 _TECH_TERMS = {
@@ -85,6 +88,7 @@ def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
             description TEXT NOT NULL DEFAULT '',
             raw_json TEXT NOT NULL DEFAULT '{}',
             source_updated_at TEXT NOT NULL DEFAULT '',
+            scene TEXT NOT NULL DEFAULT 'general',
             first_seen_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -179,21 +183,22 @@ def _source_updated_at_from_raw(raw_json: str) -> str:
 
 
 def _migrate_job_postings(db: sqlite3.Connection) -> None:
-    """Add source timestamps to existing local databases without rewriting them."""
+    """Add new Job Radar columns to existing local databases in place."""
     columns = {row[1] for row in db.execute("PRAGMA table_info(job_postings)").fetchall()}
-    if "source_updated_at" in columns:
-        return
-    db.execute("ALTER TABLE job_postings ADD COLUMN source_updated_at TEXT NOT NULL DEFAULT ''")
-    rows = db.execute(
-        "SELECT id, raw_json FROM job_postings WHERE source_updated_at=''"
-    ).fetchall()
-    for row in rows:
-        source_updated_at = _source_updated_at_from_raw(row["raw_json"])
-        if source_updated_at:
-            db.execute(
-                "UPDATE job_postings SET source_updated_at=? WHERE id=?",
-                (source_updated_at, row["id"]),
-            )
+    if "source_updated_at" not in columns:
+        db.execute("ALTER TABLE job_postings ADD COLUMN source_updated_at TEXT NOT NULL DEFAULT ''")
+        rows = db.execute("SELECT id, raw_json FROM job_postings WHERE source_updated_at=''").fetchall()
+        for row in rows:
+            source_updated_at = _source_updated_at_from_raw(row["raw_json"])
+            if source_updated_at:
+                db.execute("UPDATE job_postings SET source_updated_at=? WHERE id=?", (source_updated_at, row["id"]))
+    if "scene" not in columns:
+        db.execute("ALTER TABLE job_postings ADD COLUMN scene TEXT NOT NULL DEFAULT 'general'")
+        db.execute(
+            """UPDATE job_postings SET scene='state_owned'
+               WHERE company LIKE '%央企%' OR company LIKE '%国企%' OR company LIKE '%事业单位%'
+                  OR industry LIKE '%央企%' OR industry LIKE '%国企%' OR industry LIKE '%事业单位%'"""
+        )
 
 
 def _decode_csv(raw: bytes) -> list[list[str]]:
@@ -510,56 +515,230 @@ def read_tencent_sheet(source_url: str) -> list[dict[str, str]]:
 def sync_tencent_sheet(source_url: str, db_path: Path = DB_PATH) -> dict[str, Any]:
     with _SYNC_LOCK:
         records = read_tencent_sheet(source_url)
+    return _sync_records(records, "腾讯文档岗位表", source_url, "direct-read", db_path)
+
+
+def _decode_feishu_blob(value: Any) -> dict[str, Any]:
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        decoded = zlib.decompress(base64.b64decode(value), 16 + zlib.MAX_WBITS).decode("utf-8")
+        payload = json.loads(decoded)
+    except (ValueError, TypeError, zlib.error, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _feishu_cell_text(cell: Any, field: dict[str, Any]) -> str:
+    if not isinstance(cell, dict):
+        return str(cell or "").strip()
+    value = cell.get("value")
+    options = {
+        str(option.get("id")): str(option.get("name") or "").strip()
+        for option in (field.get("property", {}).get("options") or []) if isinstance(option, dict)
+    }
+    if isinstance(value, list):
+        if value and all(isinstance(item, str) for item in value):
+            return " / ".join(options.get(item, item) for item in value)
+        parts = []
+        for item in value:
+            if isinstance(item, dict):
+                parts.append(str(item.get("link") or item.get("text") or item.get("name") or ""))
+            elif item is not None:
+                parts.append(str(item))
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(value, str):
+        return options.get(value, value).strip()
+    if isinstance(value, (int, float)) and field.get("type") == 5:
+        return datetime.fromtimestamp(value / 1000, timezone.utc).date().isoformat()
+    return str(value or "").strip()
+
+
+def parse_feishu_clientvars(response_text: str) -> list[dict[str, str]]:
+    """Parse the compressed public Bitable clientvars response."""
+    payload = json.loads(response_text)
+    if payload.get("code") != 0:
+        raise ValueError(f"飞书表格读取失败：{payload.get('msg') or payload.get('code')}")
+    table = _decode_feishu_blob(payload.get("data", {}).get("table"))
+    fields = table.get("fieldMap", {})
+    records = table.get("recordMap", {})
+    if not isinstance(fields, dict) or not isinstance(records, dict):
+        return []
+    names = {field_id: str(field.get("name") or "").strip() for field_id, field in fields.items()
+             if isinstance(field, dict)}
+    parsed: list[dict[str, str]] = []
+    for record_id, cells in records.items():
+        if not isinstance(cells, dict):
+            continue
+        source_row = {
+            names.get(field_id, field_id): _feishu_cell_text(cell, fields.get(field_id, {}))
+            for field_id, cell in cells.items()
+        }
+        record: dict[str, str] = {}
+        for heading, value in source_row.items():
+            if field := _header_field(heading):
+                record[field] = value
+        record["link"] = (source_row.get("投递链接", "") or source_row.get("网申链接", "")
+                          or source_row.get("公告链接", "") or record.get("link", ""))
+        details = [
+            f"专业要求：{source_row['专业要求']}" if source_row.get("专业要求") else "",
+            f"学历要求：{source_row['学历要求']}" if source_row.get("学历要求") else "",
+        ]
+        record["description"] = record.get("description", "") or "\n".join(filter(None, details))
+        nature = record.get("company_nature", "")
+        record["scene"] = "state_owned" if any(term in nature for term in ("央国企", "央企", "国企", "事业单位")) else "general"
+        record["raw_json"] = json.dumps({"record_id": record_id, **source_row}, ensure_ascii=False, sort_keys=True)
+        if record.get("company") and any(record.get(key) for key in ("role", "link", "description")):
+            parsed.append(record)
+    return parsed
+
+
+def read_feishu_bitable(source_url: str) -> list[dict[str, str]]:
+    """Read the public Bitable clientvars request made by the Feishu page."""
+    from selenium.webdriver.support.ui import WebDriverWait
+    from src.utils.chrome_utils import init_browser
+
+    parsed_url = urlparse(source_url)
+    if parsed_url.scheme != "https" or not parsed_url.hostname or not parsed_url.hostname.endswith(".feishu.cn") \
+            or "/base/" not in parsed_url.path:
+        raise ValueError("仅允许同步 https://*.feishu.cn/base/ 多维表格链接")
+    driver = init_browser(headless=True)
+    try:
+        driver.set_page_load_timeout(90)
+        driver.set_script_timeout(120)
+        driver.get(source_url)
+
+        def clientvars_url(current):
+            resources = current.execute_script(
+                "return performance.getEntriesByType('resource').map(function(x){return x.name})"
+            )
+            return next((url for url in resources if "/space/api/v1/bitable/" in url and "/clientvars?" in url), False)
+
+        request_url = WebDriverWait(driver, 90).until(clientvars_url)
+        request_url = re.sub(r"recordLimit=\d+", "recordLimit=3000", request_url)
+        request_url = re.sub(r"ondemandLimit=\d+", "ondemandLimit=3000", request_url)
+        response = driver.execute_async_script(
+            """const url = arguments[0], done = arguments[arguments.length - 1];
+            fetch(url, {credentials: 'include'})
+              .then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
+              .then(text => done({ok: true, text}))
+              .catch(error => done({ok: false, error: String(error)}));""",
+            request_url,
+        )
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error") or "clientvars 请求失败")
+        records = parse_feishu_clientvars(response["text"])
+        if not records:
+            raise RuntimeError("飞书表格已打开，但未读取到岗位记录")
+        return records
+    finally:
+        driver.quit()
+
+
+def sync_feishu_bitable(source_url: str, db_path: Path = DB_PATH) -> dict[str, Any]:
+    with _SYNC_LOCK:
+        records = read_feishu_bitable(source_url)
+    return _sync_records(records, "飞书岗位表", source_url, "direct-read", db_path)
+
+
+def sync_job_source(source_url: str, db_path: Path = DB_PATH) -> dict[str, Any]:
+    hostname = (urlparse(source_url).hostname or "").lower()
+    if hostname == "docs.qq.com":
+        return sync_tencent_sheet(source_url, db_path)
+    if hostname.endswith(".feishu.cn"):
+        return sync_feishu_bitable(source_url, db_path)
+    raise ValueError("当前仅支持腾讯文档智能表格和飞书多维表格链接")
+
+
+def _record_scene(record: dict[str, Any]) -> str:
+    explicit = str(record.get("scene") or "")
+    if explicit in JOB_SCENES:
+        return explicit
+    text = " ".join(str(record.get(key) or "") for key in ("company", "industry", "description", "company_nature"))
+    return "state_owned" if any(term in text for term in ("央国企", "央企", "国企", "事业单位")) else "general"
+
+
+def _identity_text(value: Any) -> str:
+    return re.sub(r"[\s·•,，、/\\()（）\-]+", "", str(value or "").lower())
+
+
+def _register_source(source_url: str, db_path: Path) -> None:
+    if not source_url:
+        return
+    settings = get_radar_settings(db_path)
+    sources = list(dict.fromkeys([*settings["source_urls"], source_url]))
+    set_radar_setting("source_urls", json.dumps(sources, ensure_ascii=False), db_path)
+    set_radar_setting("source_url", source_url, db_path)
+
+
+def _sync_records(records: list[dict[str, str]], source_name: str, source_url: str, filename: str,
+                  db_path: Path = DB_PATH) -> dict[str, Any]:
     if not records:
         raise ValueError("表格中没有识别到岗位记录")
-    # Reuse the exact database upsert contract without fabricating an export.
     timestamp = _now()
     stats = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0, "deactivated": 0}
     seen_fingerprints: set[str] = set()
     with _connect(db_path) as db:
+        existing_rows = [dict(row) for row in db.execute(
+            "SELECT id, fingerprint, content_hash, updated_at, source_updated_at, company, role, location FROM job_postings"
+        ).fetchall()]
+        by_fingerprint = {row["fingerprint"]: row for row in existing_rows}
+        by_identity = {
+            (_identity_text(row["company"]), _identity_text(row["role"]), _identity_text(row["location"])): row
+            for row in existing_rows if _identity_text(row["company"])
+        }
         for record in records:
             fingerprint = _fingerprint(record)
-            seen_fingerprints.add(fingerprint)
             content_hash = hashlib.sha256(json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-            existing = db.execute(
-                "SELECT id, content_hash, updated_at, source_updated_at FROM job_postings WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchone()
+            identity = (_identity_text(record.get("company")), _identity_text(record.get("role")),
+                        _identity_text(record.get("location")))
+            existing = by_fingerprint.get(fingerprint) or by_identity.get(identity)
             if existing:
+                seen_fingerprints.add(existing["fingerprint"])
                 changed = existing["content_hash"] != content_hash
                 source_updated_at = record.get("source_updated_at", "") or existing["source_updated_at"]
                 db.execute(
                     """UPDATE job_postings SET content_hash=?, source_name=?, source_url=?, company=?, role=?, location=?,
                        industry=?, recruitment_type=?, link=?, referral=?, deadline=?, description=?, raw_json=?,
-                       source_updated_at=?, last_seen_at=?, updated_at=?, status='active' WHERE fingerprint=?""",
-                    (content_hash, "腾讯文档岗位表", source_url, record.get("company", ""), record.get("role", ""),
+                       source_updated_at=?, scene=?, last_seen_at=?, updated_at=?, status='active' WHERE id=?""",
+                    (content_hash, source_name, source_url, record.get("company", ""), record.get("role", ""),
                      record.get("location", ""), record.get("industry", ""), record.get("recruitment_type", ""),
                      record.get("link", ""), record.get("referral", ""), record.get("deadline", ""),
-                     record.get("description", ""), record.get("raw_json", "{}"), source_updated_at, timestamp,
-                     timestamp if changed else existing["updated_at"], fingerprint),
+                     record.get("description", ""), record.get("raw_json", "{}"), source_updated_at,
+                     _record_scene(record), timestamp, timestamp if changed else existing["updated_at"], existing["id"]),
                 )
+                existing["content_hash"] = content_hash
+                existing["source_updated_at"] = source_updated_at
                 stats["updated" if changed else "unchanged"] += 1
             else:
+                seen_fingerprints.add(fingerprint)
                 job_id = hashlib.sha256(f"{fingerprint}|{timestamp}".encode()).hexdigest()[:24]
                 db.execute(
                     """INSERT INTO job_postings(id,fingerprint,content_hash,source_name,source_url,company,role,location,
                        industry,recruitment_type,link,referral,deadline,description,raw_json,source_updated_at,
-                       first_seen_at,last_seen_at,updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (job_id, fingerprint, content_hash, "腾讯文档岗位表", source_url, record.get("company", ""),
+                       scene,first_seen_at,last_seen_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (job_id, fingerprint, content_hash, source_name, source_url, record.get("company", ""),
                      record.get("role", ""), record.get("location", ""), record.get("industry", ""),
                      record.get("recruitment_type", ""), record.get("link", ""), record.get("referral", ""),
                      record.get("deadline", ""), record.get("description", ""), record.get("raw_json", "{}"),
-                     record.get("source_updated_at", ""), timestamp, timestamp, timestamp),
+                     record.get("source_updated_at", ""), _record_scene(record), timestamp, timestamp, timestamp),
                 )
+                stored = {"id": job_id, "fingerprint": fingerprint, "content_hash": content_hash,
+                          "updated_at": timestamp, "source_updated_at": record.get("source_updated_at", ""),
+                          "company": record.get("company", ""), "role": record.get("role", ""),
+                          "location": record.get("location", "")}
+                by_fingerprint[fingerprint] = stored
+                by_identity[identity] = stored
                 stats["created"] += 1
         stats["deactivated"] = _deactivate_missing(db, source_url, seen_fingerprints)
         run_id = hashlib.sha256(f"{source_url}|{timestamp}".encode()).hexdigest()[:24]
         db.execute("INSERT INTO job_sync_runs VALUES(?,?,?,?,?,?,?,?,?,?)",
-                   (run_id, "腾讯文档岗位表", source_url, "direct-read", len(records), stats["created"],
+                   (run_id, source_name, source_url, filename, len(records), stats["created"],
                     stats["updated"], stats["unchanged"], stats["skipped"], timestamp))
-    set_radar_setting("source_url", source_url, db_path)
-    return {"status": "ok", "imported": len(records), **stats, "filename": "direct-read", "synced_at": timestamp}
+    _register_source(source_url, db_path)
+    return {"status": "ok", "source_name": source_name, "imported": len(records), **stats,
+            "filename": filename, "synced_at": timestamp}
 
 
 def _fingerprint(record: dict[str, str]) -> str:
@@ -581,55 +760,7 @@ def _deactivate_missing(db: sqlite3.Connection, source_url: str, fingerprints: s
 def import_file(filename: str, raw: bytes, source_url: str = "", source_name: str = "腾讯文档岗位表",
                 db_path: Path = DB_PATH) -> dict[str, Any]:
     records = parse_tabular_file(filename, raw)
-    timestamp = _now()
-    stats = {"created": 0, "updated": 0, "unchanged": 0, "skipped": 0, "deactivated": 0}
-    seen_fingerprints: set[str] = set()
-    with _connect(db_path) as db:
-        for record in records:
-            fingerprint = _fingerprint(record)
-            seen_fingerprints.add(fingerprint)
-            content_hash = hashlib.sha256(json.dumps(record, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-            existing = db.execute(
-                "SELECT id, content_hash, updated_at, source_updated_at FROM job_postings WHERE fingerprint=?",
-                (fingerprint,),
-            ).fetchone()
-            if existing:
-                changed = existing["content_hash"] != content_hash
-                source_updated_at = record.get("source_updated_at", "") or existing["source_updated_at"]
-                db.execute(
-                    """UPDATE job_postings SET content_hash=?, source_name=?, source_url=?, company=?, role=?, location=?,
-                       industry=?, recruitment_type=?, link=?, referral=?, deadline=?, description=?, raw_json=?,
-                       source_updated_at=?, last_seen_at=?, updated_at=?, status='active' WHERE fingerprint=?""",
-                    (content_hash, source_name, source_url, record.get("company", ""), record.get("role", ""),
-                     record.get("location", ""), record.get("industry", ""), record.get("recruitment_type", ""),
-                     record.get("link", ""), record.get("referral", ""), record.get("deadline", ""),
-                     record.get("description", ""), record.get("raw_json", "{}"), source_updated_at, timestamp,
-                     timestamp if changed else existing["updated_at"],
-                     fingerprint),
-                )
-                stats["updated" if changed else "unchanged"] += 1
-            else:
-                job_id = hashlib.sha256(f"{fingerprint}|{timestamp}".encode()).hexdigest()[:24]
-                db.execute(
-                    """INSERT INTO job_postings(id,fingerprint,content_hash,source_name,source_url,company,role,location,
-                       industry,recruitment_type,link,referral,deadline,description,raw_json,source_updated_at,
-                       first_seen_at,last_seen_at,updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (job_id, fingerprint, content_hash, source_name, source_url, record.get("company", ""),
-                     record.get("role", ""), record.get("location", ""), record.get("industry", ""),
-                     record.get("recruitment_type", ""), record.get("link", ""), record.get("referral", ""),
-                     record.get("deadline", ""), record.get("description", ""), record.get("raw_json", "{}"),
-                     record.get("source_updated_at", ""), timestamp, timestamp, timestamp),
-                )
-                stats["created"] += 1
-        stats["deactivated"] = _deactivate_missing(db, source_url, seen_fingerprints)
-        run_id = hashlib.sha256(f"{filename}|{timestamp}".encode()).hexdigest()[:24]
-        db.execute(
-            "INSERT INTO job_sync_runs VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (run_id, source_name, source_url, filename, len(records), stats["created"], stats["updated"],
-             stats["unchanged"], stats["skipped"], timestamp),
-        )
-    return {"status": "ok", "imported": len(records), **stats, "filename": filename, "synced_at": timestamp}
+    return _sync_records(records, source_name, source_url, filename, db_path)
 
 
 def _flatten(value: Any) -> Iterable[str]:
@@ -1766,7 +1897,7 @@ def _match_level(score: float) -> str:
 
 def list_recommendations(limit: int = 100, min_score: float = 0, query: str = "",
                          company_type: str = "", match_level: str = "", recruitment_type: str = "",
-                         favorite_only: bool = False,
+                         favorite_only: bool = False, scene: str = "",
                          db_path: Path = DB_PATH, data_dir: Path = DATA_DIR) -> dict[str, Any]:
     profile = load_user_profile(data_dir, db_path)
     with _connect(db_path) as db:
@@ -1786,6 +1917,9 @@ def list_recommendations(limit: int = 100, min_score: float = 0, query: str = ""
     query_lower = query.strip().lower()
     items = []
     for row in rows:
+        row_scene = row.get("scene") if row.get("scene") in JOB_SCENES else _record_scene(row)
+        if scene and row_scene != scene:
+            continue
         if query_lower and query_lower not in " ".join(str(value).lower() for value in row.values()):
             continue
         result = score_job(row, profile)
@@ -1821,7 +1955,7 @@ def list_recommendations(limit: int = 100, min_score: float = 0, query: str = ""
         row.pop("content_hash", None)
         for action_name in ("favorite", "not_interested", "applied"):
             row[action_name] = bool(row[action_name])
-        items.append({**row, **result, "company_type": row_company_type,
+        items.append({**row, **result, "scene": row_scene, "company_type": row_company_type,
                       "match_level": level, "recruitment_tags": tags,
                       "linked_jobs": top_linked, "linked_job_count": len(ranked_linked),
                       "linked_excluded_count": excluded_linked,
@@ -1858,9 +1992,9 @@ def set_job_action(job_id: str, action: str, enabled: bool = True, db_path: Path
     return {key: bool(state[key]) for key in ("favorite", "not_interested", "applied")}
 
 
-def daily_recommendations(limit: int = 3, db_path: Path = DB_PATH,
+def daily_recommendations(limit: int = 3, scene: str = "general", db_path: Path = DB_PATH,
                           data_dir: Path = DATA_DIR) -> dict[str, Any]:
-    result = list_recommendations(limit=10000, db_path=db_path, data_dir=data_dir)
+    result = list_recommendations(limit=10000, scene=scene, db_path=db_path, data_dir=data_dir)
     selected: list[dict[str, Any]] = []
     companies: set[str] = set()
     blocked_companies = {
@@ -1895,8 +2029,19 @@ def set_radar_setting(key: str, value: str, db_path: Path = DB_PATH) -> None:
 def get_radar_settings(db_path: Path = DB_PATH) -> dict[str, Any]:
     with _connect(db_path) as db:
         values = {row["key"]: row["value"] for row in db.execute("SELECT key, value FROM job_radar_settings")}
+    legacy_source = values.get("source_url", DEFAULT_TENCENT_SOURCE)
+    try:
+        stored_sources = json.loads(values.get("source_urls", "[]"))
+    except json.JSONDecodeError:
+        stored_sources = []
+    if not isinstance(stored_sources, list):
+        stored_sources = []
+    source_urls = list(dict.fromkeys(
+        str(item) for item in ([*stored_sources, legacy_source, DEFAULT_FEISHU_SOURCE]) if str(item).strip()
+    ))
     return {
-        "source_url": values.get("source_url", DEFAULT_TENCENT_SOURCE),
+        "source_url": legacy_source,
+        "source_urls": source_urls,
         "auto_sync": values.get("auto_sync", "true").lower() == "true",
         "auto_sync_time": "06:00",
         "auto_match": os.getenv("BUPING_JOB_RADAR_AUTO_MATCH", "1").lower() not in {"0", "false", "no"},
@@ -1910,5 +2055,22 @@ def get_stats(db_path: Path = DB_PATH) -> dict[str, Any]:
         companies = db.execute("SELECT COUNT(DISTINCT company) FROM job_postings WHERE status='active'").fetchone()[0]
         last_run = db.execute("SELECT * FROM job_sync_runs ORDER BY created_at DESC LIMIT 1").fetchone()
         favorites = db.execute("SELECT COUNT(*) FROM job_radar_actions WHERE favorite=1").fetchone()[0]
+        scene_rows = db.execute(
+            "SELECT scene, COUNT(*) AS count FROM job_postings WHERE status='active' GROUP BY scene"
+        ).fetchall()
+        by_scene = {key: 0 for key in JOB_SCENES}
+        by_scene.update({row["scene"]: row["count"] for row in scene_rows if row["scene"] in JOB_SCENES})
     return {"total": total, "companies": companies, "favorites": favorites,
-            "last_sync": dict(last_run) if last_run else None, "schedule": get_radar_settings(db_path)}
+            "by_scene": by_scene, "last_sync": dict(last_run) if last_run else None,
+            "schedule": get_radar_settings(db_path)}
+
+
+def sync_all_sources(db_path: Path = DB_PATH) -> dict[str, Any]:
+    results = []
+    for source_url in get_radar_settings(db_path)["source_urls"]:
+        try:
+            results.append(sync_job_source(source_url, db_path))
+        except Exception as exc:
+            results.append({"status": "failed", "source_url": source_url, "error": str(exc)})
+    return {"status": "ok" if any(item.get("status") == "ok" for item in results) else "failed",
+            "sources": results}

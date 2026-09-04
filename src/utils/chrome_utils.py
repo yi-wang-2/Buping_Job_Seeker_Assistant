@@ -54,6 +54,10 @@ def chrome_browser_options(headless: bool = True, user_data_dir: str | None = No
     options.add_argument("--disable-cache")
     if user_data_dir:
         options.add_argument(f"--user-data-dir={os.path.abspath(user_data_dir)}")
+        # Some recruitment sites keep authentication in session cookies or
+        # sessionStorage instead of durable cookies. Restore the previous site
+        # tab so those sessions survive the login-window/check-window boundary.
+        options.add_argument("--restore-last-session")
     else:
         options.add_argument("--incognito")
     if headless:
