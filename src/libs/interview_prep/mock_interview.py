@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, List, Optional
 from datetime import datetime, timezone
@@ -108,6 +108,66 @@ class MockInterviewSession:
     current_round: InterviewRound = InterviewRound.OPENING
     context_window: int = 5
     last_context_metrics: dict[str, int] = field(default_factory=dict)
+    interview_blueprint: dict[str, Any] = field(default_factory=dict)
+    question_pool: List[dict[str, Any]] = field(default_factory=list)
+    competency_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    asked_unit_ids: List[str] = field(default_factory=list)
+    knowledge_index_version: str = ""
+    last_question_plan: dict[str, Any] = field(default_factory=dict)
+
+
+def _answer_depth(answer: str) -> float:
+    """Cheap, deterministic signal used only to steer the next question."""
+    from .answer_evaluator import evaluate_answer_signals
+    return evaluate_answer_signals(answer).depth
+
+
+def _plan_next_question(session: MockInterviewSession, answer: str = "") -> dict[str, Any]:
+    """Select a competency and question-card snapshot without exposing its answer."""
+    if answer and session.last_question_plan.get("competency"):
+        competency = session.last_question_plan["competency"]
+        state = session.competency_state.setdefault(competency, {"turns": 0, "depth": 0.0})
+        state["turns"] += 1
+        state["depth"] = max(float(state.get("depth", 0)), _answer_depth(answer))
+
+    weights = session.interview_blueprint.get("competency_weights") or {"role_fundamentals": 1.0}
+    previous_competency = session.last_question_plan.get("competency")
+    if answer and previous_competency and _answer_depth(answer) < .55:
+        target = previous_competency
+    else:
+        target = min(
+            weights,
+            key=lambda name: (
+                session.competency_state.get(name, {}).get("turns", 0) / max(float(weights[name]), .01),
+                session.competency_state.get(name, {}).get("depth", 0),
+                name,
+            ),
+        )
+    previous_depth = float(session.competency_state.get(target, {}).get("depth", 0))
+    difficulty = "introductory" if previous_depth < .35 else "intermediate" if previous_depth < .75 else "advanced"
+    candidates = [
+        item for item in session.question_pool
+        if item.get("unit_id") not in session.asked_unit_ids
+        and (not item.get("competencies") or target in item.get("competencies", []))
+    ]
+    if not candidates:
+        candidates = [item for item in session.question_pool if item.get("unit_id") not in session.asked_unit_ids]
+    card = candidates[0] if candidates else {}
+    if card.get("unit_id"):
+        session.asked_unit_ids.append(card["unit_id"])
+    from .answer_evaluator import evaluate_answer_signals
+    signals = evaluate_answer_signals(answer) if answer else None
+    plan = {
+        "competency": target, "difficulty": difficulty,
+        "question_seed": card.get("question", ""),
+        "interviewer_intent": card.get("interviewer_intent", ""),
+        "rubric": card.get("rubric", []),
+        "unit_id": card.get("unit_id", ""),
+        "decision": signals.decision if signals else "start",
+        "answer_signals": asdict(signals) if signals else {},
+    }
+    session.last_question_plan = plan
+    return plan
 
 
 def _create_chat_model(api_key: str, model_type: str, base_url: str, model_name: str = ""):
@@ -170,6 +230,15 @@ def _build_system_prompt(session: MockInterviewSession) -> str:
    - 案例分析：系统设计、方案设计
    - 反问环节：让候选人提问
    - 结束语：礼貌结束面试
+
+【本轮问题计划】
+{session.last_question_plan or "按当前阶段自然提问"}
+
+【能力覆盖状态】
+{session.competency_state or "尚未开始"}
+
+9. 题卡只提供提问方向；不得泄露参考答案、评分规则或知识库原文
+10. 若本轮计划包含 question_seed，应结合候选人简历和上一轮回答改写，不要机械照抄
 
 请直接输出你要说的话，不要包含"面试官："等前缀。"""
 
@@ -260,6 +329,16 @@ def _generate_evaluation(session: MockInterviewSession, llm) -> str:
         speaker = "面试官" if msg.role == "interviewer" else "候选人"
         conversation.append(f"{speaker}: {msg.content}")
     conversation_text = "\n".join(conversation)
+    used_cards = [
+        {
+            "unit_id": item.get("unit_id"),
+            "competencies": item.get("competencies", []),
+            "interviewer_intent": item.get("interviewer_intent", ""),
+            "rubric": item.get("rubric", []),
+        }
+        for item in session.question_pool
+        if item.get("unit_id") in session.asked_unit_ids
+    ]
 
     # 不用 f-string，避免 {} 被误识别
     # 改成手动拼接，确保模板里没有任何 {} 变量
@@ -271,6 +350,15 @@ def _generate_evaluation(session: MockInterviewSession, llm) -> str:
 【候选人简历】
 """ + session.candidate.resume_text + """
 
+【面试覆盖状态】
+""" + str(session.competency_state) + """
+
+【本场题卡来源】
+""" + str(session.asked_unit_ids) + """
+
+【内部评价 Rubric（仅用于评分，不要逐字披露）】
+""" + str(used_cards) + """
+
 【评估维度】
 1. 总体评分（1-10分）
 2. 核心优势（3点）
@@ -280,6 +368,7 @@ def _generate_evaluation(session: MockInterviewSession, llm) -> str:
 6. 综合素质评价
 7. 是否推荐进入下一轮（强烈推荐/推荐/待定/不推荐）
 8. 准备建议（针对该岗位）
+9. 按能力维度说明覆盖轮次、回答深度与证据；只引用上面真实存在的题卡 ID
 
 请用 Markdown 格式输出评估报告，使用清晰的标题和列表。"""
 
@@ -327,6 +416,7 @@ class MockInterviewer:
         job: JobProfile,
         interview_type: str = "综合面试",
         style: InterviewStyle = InterviewStyle.PROFESSIONAL,
+        selected_knowledge_source_ids: list[str] | None = None,
     ) -> MockInterviewSession:
         """开始一场模拟面试"""
         # Fallback api_key
@@ -353,6 +443,40 @@ class MockInterviewer:
             started_at=time.time(),
             current_round=InterviewRound.OPENING,
         )
+
+        try:
+            from backend.services.interview_knowledge_service import get_interview_knowledge_service
+            from src.libs.ai_engine.knowledge import InterviewKnowledgeContextProvider
+
+            augmentation = InterviewKnowledgeContextProvider(
+                get_interview_knowledge_service().retriever,
+            ).prepare(
+                resume=candidate.resume_text, job_description=job.description,
+                interview_type=interview_type, session_id=session.session_id,
+                source_ids=list(selected_knowledge_source_ids or []),
+            )
+            session.interview_blueprint = augmentation.blueprint.model_dump(mode="json")
+            if augmentation.retrieval:
+                session.knowledge_index_version = augmentation.retrieval.index_version
+                for hit in augmentation.retrieval.hits:
+                    metadata = hit.unit.metadata
+                    session.question_pool.append({
+                        "unit_id": hit.unit.id,
+                        "question": metadata.get("question") or hit.unit.title,
+                        "competencies": list(metadata.get("competencies") or []),
+                        "interviewer_intent": metadata.get("interviewer_intent", ""),
+                        "rubric": list(metadata.get("scoring_points") or metadata.get("rubric") or []),
+                        "topic": hit.unit.topic or "",
+                        "difficulty": hit.unit.difficulty or "",
+                        "retrieval_score": hit.score,
+                    })
+        except Exception:
+            session.interview_blueprint = {"competency_weights": {"role_fundamentals": 1.0}}
+        session.competency_state = {
+            name: {"turns": 0, "depth": 0.0}
+            for name in session.interview_blueprint.get("competency_weights", {"role_fundamentals": 1.0})
+        }
+        _plan_next_question(session)
 
         # 生成开场白（直接用 llm.invoke，避免 chain 的 dict 参数问题）
         prompt = _build_dialogue_prompt(session)
@@ -391,6 +515,8 @@ class MockInterviewer:
 
         # 推进到下一轮
         session.current_round = _next_round(session)
+
+        _plan_next_question(session, answer)
 
         # 生成下一个问题
         prompt = _build_dialogue_prompt(session)

@@ -1,0 +1,46 @@
+{
+  "schema_version": "1",
+  "provenance": "checked-in deterministic K0 baseline fixture; replace measurements through the benchmark CLI for provider comparisons",
+  "cases": [
+    {
+      "id": "backend-java-campus",
+      "target_role": "Java 后端工程师",
+      "expected_topics": ["java", "数据库", "缓存", "系统设计", "项目深挖"],
+      "covered_topics": ["java", "数据库", "项目深挖"],
+      "questions": ["请介绍一下 HashMap 的实现。", "数据库索引为什么能加速查询？", "请深入介绍你的项目。", "请介绍一下 HashMap 的实现。"],
+      "input_tokens": 1180,
+      "output_tokens": 920,
+      "latency_ms": 5400
+    },
+    {
+      "id": "ai-agent-engineer",
+      "target_role": "AI Agent 工程师",
+      "expected_topics": ["llm", "rag", "agent", "评测", "工程可靠性"],
+      "covered_topics": ["llm", "agent", "项目深挖"],
+      "questions": ["请解释 Agent 的基本工作流程。", "如何调用大语言模型？", "介绍一个你做过的 Agent 项目。", "如何调用大语言模型？"],
+      "input_tokens": 1350,
+      "output_tokens": 1060,
+      "latency_ms": 6100
+    },
+    {
+      "id": "frontend-react",
+      "target_role": "React 前端工程师",
+      "expected_topics": ["javascript", "react", "性能", "浏览器", "工程化"],
+      "covered_topics": ["javascript", "react", "性能", "项目深挖"],
+      "questions": ["闭包是什么？", "React Hooks 的规则是什么？", "如何优化首屏性能？", "介绍你的前端项目。"],
+      "input_tokens": 1100,
+      "output_tokens": 870,
+      "latency_ms": 5000
+    },
+    {
+      "id": "product-behavioral",
+      "target_role": "产品经理",
+      "expected_topics": ["需求分析", "数据指标", "冲突处理", "产品设计", "复盘"],
+      "covered_topics": ["需求分析", "冲突处理", "复盘"],
+      "questions": ["你如何分析用户需求？", "讲一次跨团队冲突。", "介绍一个失败项目以及复盘。", "你如何分析用户需求？"],
+      "input_tokens": 980,
+      "output_tokens": 810,
+      "latency_ms": 4700
+    }
+  ]
+}

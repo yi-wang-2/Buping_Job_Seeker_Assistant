@@ -73,6 +73,7 @@ def generate_interview_prep(
     interview_type: str = "综合面试",
     question_count: int = 10,
     resume_language: str = "zh",
+    selected_knowledge_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Generate interview preparation report and persist Markdown/PDF downloads."""
     from src.libs.interview_prep import InterviewPrepGenerator
@@ -95,6 +96,7 @@ def generate_interview_prep(
         interview_type=interview_type,
         question_count=int(question_count),
         language=resume_language,
+        selected_knowledge_source_ids=selected_knowledge_source_ids,
     )
 
     output_dir = OUTPUT_FOLDER / "interview_prep"
@@ -305,6 +307,7 @@ def start_mock_interview(
     job_title: str = "",
     interview_type: str = "综合面试",
     interview_style: str = "专业型",
+    selected_knowledge_source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Start a mock interview session. Returns {history, session_id, status}."""
     from src.libs.interview_prep import (
@@ -347,6 +350,7 @@ def start_mock_interview(
         job=job,
         interview_type=interview_type,
         style=style_enum,
+        selected_knowledge_source_ids=selected_knowledge_source_ids,
     )
 
     # Store session for later use
@@ -365,6 +369,7 @@ def start_mock_interview(
             "job_title": job_title,
             "interview_type": interview_type,
             "interview_style": interview_style,
+            "selected_knowledge_source_ids": list(selected_knowledge_source_ids or []),
         },
     }
 
@@ -399,6 +404,12 @@ def submit_mock_answer(
         interview_type=stored["config"]["interview_type"],
         style=interviewer.sessions[session_id].style,
         context_window=max(1, min(int(context_window or 5), 10)),
+        interview_blueprint=dict(interviewer.sessions[session_id].interview_blueprint),
+        question_pool=list(interviewer.sessions[session_id].question_pool),
+        competency_state=dict(interviewer.sessions[session_id].competency_state),
+        asked_unit_ids=list(interviewer.sessions[session_id].asked_unit_ids),
+        knowledge_index_version=interviewer.sessions[session_id].knowledge_index_version,
+        last_question_plan=dict(interviewer.sessions[session_id].last_question_plan),
     )
     for entry in history:
         role = entry.get("role", "")
@@ -916,6 +927,12 @@ def end_mock_interview(session_id: str, history: list[dict]) -> dict[str, Any]:
         job=interviewer.sessions[session_id].job,
         interview_type=config["interview_type"],
         style=interviewer.sessions[session_id].style,
+        interview_blueprint=dict(interviewer.sessions[session_id].interview_blueprint),
+        question_pool=list(interviewer.sessions[session_id].question_pool),
+        competency_state=dict(interviewer.sessions[session_id].competency_state),
+        asked_unit_ids=list(interviewer.sessions[session_id].asked_unit_ids),
+        knowledge_index_version=interviewer.sessions[session_id].knowledge_index_version,
+        last_question_plan=dict(interviewer.sessions[session_id].last_question_plan),
     )
     for entry in history:
         role = entry.get("role", "")

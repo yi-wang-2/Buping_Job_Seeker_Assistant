@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
 import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getMockInterviewTTSVoices, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
+import KnowledgeSourcePicker from "../components/interview/KnowledgeSourcePicker";
 
 interface Message {
   role: "user" | "assistant";
@@ -96,6 +97,7 @@ export default function MockInterview({ t }: { t: Strings }) {
     { id: "zf_001", label: "女声 zf_001" },
   ]);
   const [ttsSpeed, setTtsSpeed] = useSessionState("buping_mock_tts_speed", 1);
+  const [knowledgeSourceIds, setKnowledgeSourceIds] = useSessionState<string[]>("buping_mock_knowledge", []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -513,6 +515,7 @@ export default function MockInterview({ t }: { t: Strings }) {
         job_title: jobTitle,
         interview_type: interviewType,
         interview_style: interviewStyle,
+        selected_knowledge_source_ids: knowledgeSourceIds,
       });
       if (mountedRef.current) startTypewriter(result.history as Message[]);
       else setHistory(result.history as Message[]);
@@ -591,13 +594,13 @@ export default function MockInterview({ t }: { t: Strings }) {
   const interviewStyles = ["友善型", "专业型", "压力型", "学术型", "闲聊型"];
 
   return (
-    <div className="page-enter max-w-6xl mx-auto">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{mi.title}</h2>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">{mi.desc}</p>
+    <div className="page-enter mx-auto flex h-full max-w-6xl min-h-0 flex-col overflow-hidden">
+      <h2 className="mb-1 flex-none text-xl font-bold text-gray-900 dark:text-white">{mi.title}</h2>
+      <p className="mb-3 flex-none text-xs text-gray-500 dark:text-gray-400">{mi.desc}</p>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Config Panel */}
-        <div className="lg:col-span-1 space-y-4">
+        <div className="space-y-4 overflow-y-auto pr-1 lg:col-span-1">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
               <Bot className="h-4 w-4 text-brand-500" />
@@ -639,6 +642,7 @@ export default function MockInterview({ t }: { t: Strings }) {
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.jobDesc}</label>
                 <textarea value={jobDesc} onChange={(e) => setJobDesc(e.target.value)} placeholder={mi.jobDescPlaceholder} rows={3} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white resize-none" />
               </div>
+              <KnowledgeSourcePicker selected={knowledgeSourceIds} onChange={setKnowledgeSourceIds} disabled={Boolean(sessionId) || loading} />
             </div>
 
             {!sessionId ? (
@@ -676,8 +680,8 @@ export default function MockInterview({ t }: { t: Strings }) {
         </div>
 
         {/* Chat Panel */}
-        <div className="lg:col-span-2 flex flex-col">
-          <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800 flex flex-col" style={{ minHeight: "500px" }}>
+        <div className="flex h-full min-h-0 flex-col gap-3 lg:col-span-2">
+          <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
             {/* Chat header */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{mi.chat}</h3>
@@ -791,7 +795,7 @@ export default function MockInterview({ t }: { t: Strings }) {
             </div>
 
             {/* Messages */}
-            <div className="min-h-[300px] max-h-[70vh] flex-1 space-y-4 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
               {history.length === 0 && (
                 <div className="flex h-full items-center justify-center text-gray-400 dark:text-gray-500">
                   <div className="text-center">
@@ -898,7 +902,7 @@ export default function MockInterview({ t }: { t: Strings }) {
 
           {/* Status */}
           {status && (
-            <div className={`mt-3 rounded-lg border p-3 text-sm ${
+            <div className={`flex-none rounded-lg border p-2 text-sm ${
               status.startsWith("✅")
                 ? "border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300"
                 : "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300"
@@ -909,7 +913,7 @@ export default function MockInterview({ t }: { t: Strings }) {
 
           {/* Evaluation */}
           {evaluation && (
-            <div className="mt-4 rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="max-h-52 flex-none overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{mi.evaluation}</h3>
                 {reportPdfFile && (

@@ -24,6 +24,7 @@ class InterviewPrepRequest(BaseModel):
     interview_type: str = "综合面试"
     question_count: int = 10
     resume_language: str = "zh"
+    selected_knowledge_source_ids: list[str] = []
 
 
 class InterviewPrepResponse(BaseModel):
@@ -47,6 +48,7 @@ def generate_interview_prep(req: InterviewPrepRequest) -> InterviewPrepResponse:
             interview_type=req.interview_type,
             question_count=req.question_count,
             resume_language=req.resume_language,
+            selected_knowledge_source_ids=req.selected_knowledge_source_ids,
         )
         return InterviewPrepResponse(**result)
     except Exception as e:
@@ -85,6 +87,7 @@ class MockInterviewStartRequest(BaseModel):
     job_title: str = ""
     interview_type: str = "综合面试"
     interview_style: str = "专业型"
+    selected_knowledge_source_ids: list[str] = []
 
 
 class MockInterviewStartResponse(BaseModel):
@@ -109,6 +112,7 @@ def start_mock_interview(req: MockInterviewStartRequest) -> MockInterviewStartRe
             job_title=req.job_title,
             interview_type=req.interview_type,
             interview_style=req.interview_style,
+            selected_knowledge_source_ids=req.selected_knowledge_source_ids,
         )
         return MockInterviewStartResponse(**result)
     except Exception as e:

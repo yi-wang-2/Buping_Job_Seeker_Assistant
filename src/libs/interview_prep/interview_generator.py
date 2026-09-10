@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from langchain_core.output_parsers import BaseOutputParser
@@ -63,6 +64,7 @@ class InterviewPrepGenerator:
         interview_type: str,
         question_count: int,
         language: str = "zh",
+        selected_knowledge_source_ids: list[str] | None = None,
     ) -> str:
         if not self.api_key:
             raise ValueError("API key is required.")
@@ -98,6 +100,7 @@ class InterviewPrepGenerator:
                 "question_count": target_count,
                 "language": language,
                 "prepared_prompt": prepared_prompt,
+                "selected_knowledge_source_ids": list(selected_knowledge_source_ids or []),
             }, provider=self.model_type, model=model)
 
         result = execute(prompt)
@@ -113,7 +116,48 @@ class InterviewPrepGenerator:
             result = execute(prompt + compact_instruction)
             if self._is_truncated(result):
                 raise RuntimeError("模型连续两次达到输出长度上限，请减少问题数量后重试。")
+        knowledge_unit_ids = list(getattr(result, "context_metadata", {}).get("knowledge_unit_ids") or [])
+        if knowledge_unit_ids and not self._valid_knowledge_citations(result.content, knowledge_unit_ids):
+            result = execute(
+                prompt + "\n\n你使用了检索知识。请重新生成完整报告，并在每个采用外部知识的段落保留"
+                "形如 [K:知识单元ID] 的真实引用；不得创造未提供的 ID。"
+            )
+            if self._is_truncated(result):
+                raise RuntimeError("知识增强报告重试时达到输出长度上限，请减少问题数量后重试。")
+            if not self._valid_knowledge_citations(result.content, knowledge_unit_ids):
+                raise RuntimeError("知识增强报告连续两次未通过引用校验，请重试。")
+        if not self._valid_question_count(result.content, target_count):
+            citation_rule = (
+                "同时保留所有真实 [K:知识单元ID] 引用，不得创造 ID。" if knowledge_unit_ids else ""
+            )
+            result = execute(
+                prompt + "\n\n输出契约修正：所有问题章节合计必须严格为 "
+                f"{target_count} 道。问题标题统一写成 `### Q1`、`### Q2` 并连续编号；"
+                "当数量较少时允许某类问题为 0 道，不得为了填满每个分类而增加总数。" + citation_rule
+            )
+            if self._is_truncated(result):
+                raise RuntimeError("题数修正报告达到输出长度上限，请减少问题数量后重试。")
+            if not self._valid_question_count(result.content, target_count):
+                raise RuntimeError(f"面试准备报告题数不符合要求：期望 {target_count} 道。")
+            retry_unit_ids = list(getattr(result, "context_metadata", {}).get("knowledge_unit_ids") or knowledge_unit_ids)
+            if retry_unit_ids and not self._valid_knowledge_citations(result.content, retry_unit_ids):
+                raise RuntimeError("题数修正后知识引用校验失败，请重试。")
         return result.content
+
+    @staticmethod
+    def _valid_knowledge_citations(content: str, allowed_unit_ids: list[str]) -> bool:
+        citations = re.findall(r"\[K:([^\]]+)\]", str(content))
+        return bool(citations) and all(citation in set(allowed_unit_ids) for citation in citations)
+
+    @staticmethod
+    def _valid_question_count(content: str, expected: int) -> bool:
+        headings = re.findall(
+            r"(?im)^#{2,4}\s*(?:Q(?:uestion)?|问题)\s*[：:#-]*\s*\d+\b", str(content),
+        )
+        if headings:
+            return len(headings) == expected
+        markers = re.findall(r"(?im)^\s*[-*]\s*\*\*(?:问题|Question)\*\*\s*[：:]", str(content))
+        return len(markers) == expected
 
     @staticmethod
     def _is_truncated(result: Any) -> bool:
@@ -169,6 +213,7 @@ Interview type: {interview_type}
 Target number of questions: {question_count}
 
 The target is the TOTAL number of questions across all question sections, not the number per section. Allocate approximately 50% to technical/role questions, 30% to resume deep-dives, and 20% to behavioral questions. Number them continuously and produce exactly {question_count} questions in total.
+When the target is small, a question category may contain zero questions. Never add questions merely to populate every category.
 
 Return Markdown only. Use this structure:
 
@@ -229,6 +274,7 @@ Rules:
 目标问题数量：{question_count}
 
 目标问题数量是所有问题章节合计的总数，不是每个章节的问题数。请按大约 50% 技术/岗位问题、30% 简历深挖问题、20% 行为问题分配，连续编号，所有章节合计必须严格生成 {question_count} 道问题。
+当目标数量较少时，允许某类问题为 0 道；不得为了填满每个问题分类而增加总题数。
 
 请只返回 Markdown，并使用以下结构：
 

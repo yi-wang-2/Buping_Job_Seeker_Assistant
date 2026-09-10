@@ -1,0 +1,29 @@
+{
+  "schema_version": "1",
+  "scripts": [
+    {
+      "id": "backend-progressive-followup",
+      "target_role": "后端工程师",
+      "stages": ["opening", "fundamentals", "project", "system_design", "behavioral", "closing"],
+      "required_behaviors": [
+        "问题覆盖至少四个能力主题",
+        "至少一次追问明确引用上一轮回答中的事实",
+        "连续问题不能是语义重复",
+        "参考答案不能在提问前泄漏",
+        "用户简历事实与公共知识必须区分来源"
+      ]
+    },
+    {
+      "id": "ai-agent-weak-answer-recovery",
+      "target_role": "AI Agent 工程师",
+      "stages": ["opening", "agent_fundamentals", "rag", "evaluation", "project", "closing"],
+      "required_behaviors": [
+        "回答空泛时先要求具体例子",
+        "连续两次薄弱时降低问题难度",
+        "表现稳定后提高到工程权衡问题",
+        "结论引用题目知识单元与用户回答",
+        "不把公共案例写成候选人经历"
+      ]
+    }
+  ]
+}

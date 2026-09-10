@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BookOpen, Download, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Strings } from "../i18n";
 import { generateInterviewPrep, getInterviewPrepDownloadUrl } from "../api/client";
 import { useSessionState } from "../hooks/useSessionState";
+import { useWorkspaceBridgeRegistration, type AssistantProposal, type WorkspaceSnapshot } from "../assistant/workspaceBridge";
+import KnowledgeSourcePicker from "../components/interview/KnowledgeSourcePicker";
 
 export default function InterviewPrep({ t }: { t: Strings }) {
   const ip = t.interviewPrep;
+  const english = t.nav.settings === "Settings";
   const [jobDesc, setJobDesc] = useSessionState("buping_interview_prep_job_desc", "");
   const [interviewType, setInterviewType] = useSessionState("buping_interview_prep_type", "综合面试");
   const [questionCount, setQuestionCount] = useSessionState("buping_interview_prep_question_count", 10);
@@ -15,8 +18,38 @@ export default function InterviewPrep({ t }: { t: Strings }) {
   const [status, setStatus] = useSessionState("buping_interview_prep_status", "");
   const [report, setReport] = useSessionState("buping_interview_prep_report", "");
   const [downloads, setDownloads] = useSessionState("buping_interview_prep_downloads", { md: "", pdf: "" });
+  const [knowledgeSourceIds, setKnowledgeSourceIds] = useSessionState<string[]>("buping_interview_prep_knowledge", []);
 
-  const handleGenerate = async () => {
+  const assistantBridge = useMemo(() => ({
+    page: "interview-prep",
+    workspaceObjectId: "default",
+    selectedObjects: [],
+    getContextSnapshot: (): WorkspaceSnapshot => ({
+      language: english ? "en" : "zh",
+      job_description: jobDesc,
+      interview_report: report,
+      interview_generation_options: { interview_type: interviewType, question_count: questionCount },
+    }),
+    describeContexts: (snapshot: WorkspaceSnapshot) => [
+      ...(snapshot.job_description?.trim() ? [{
+        id: "interview.job_description", label: english ? "Job description" : "职位描述",
+        description: snapshot.job_description.trim().slice(0, 48),
+        snapshotKeys: ["job_description", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      }] : []),
+      ...(snapshot.interview_report?.trim() ? [{
+        id: "interview.report", label: english ? "Interview prep report" : "面试准备报告",
+        description: snapshot.interview_report.trim().slice(0, 48),
+        snapshotKeys: ["interview_report", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      }] : []),
+    ],
+    applyProposal: async (proposal: AssistantProposal) => {
+      if (proposal.proposal_type !== "interview_preparation_request") throw new Error("Unsupported proposal type");
+      await handleGenerate();
+    },
+  }), [english, handleGenerate, interviewType, jobDesc, questionCount, report]);
+  useWorkspaceBridgeRegistration(assistantBridge);
+
+  async function handleGenerate() {
     if (!jobDesc.trim()) {
       setStatus("❌ 请提供职位描述");
       return;
@@ -30,6 +63,7 @@ export default function InterviewPrep({ t }: { t: Strings }) {
         job_description: jobDesc,
         interview_type: interviewType,
         question_count: questionCount,
+        selected_knowledge_source_ids: knowledgeSourceIds,
       });
       const nextDownloads = { md: result.md_filename, pdf: result.pdf_filename };
       const successStatus = "✅ 报告生成成功！";
@@ -42,17 +76,17 @@ export default function InterviewPrep({ t }: { t: Strings }) {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const interviewTypes = ["综合面试", "技术面试", "HR 面试", "行为面试", "项目深挖", "英文面试"];
 
   return (
-    <div className="page-enter max-w-5xl mx-auto">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">{ip.title}</h2>
+    <div className="page-enter mx-auto flex h-full max-w-5xl min-h-0 flex-col overflow-hidden">
+      <h2 className="mb-3 flex-none text-xl font-bold text-gray-900 dark:text-white">{ip.title}</h2>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Config */}
-        <div className="lg:col-span-1 space-y-4">
+        <div className="space-y-4 overflow-y-auto lg:col-span-1">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
               <BookOpen className="h-4 w-4 text-brand-500" />
@@ -90,19 +124,20 @@ export default function InterviewPrep({ t }: { t: Strings }) {
                   <span>20</span>
                 </div>
               </div>
+              <KnowledgeSourcePicker selected={knowledgeSourceIds} onChange={setKnowledgeSourceIds} disabled={loading} />
             </div>
           </div>
         </div>
 
         {/* Main */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="flex min-h-0 flex-col gap-3 lg:col-span-2">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <label className="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">{ip.jobDesc}</label>
             <textarea
               value={jobDesc}
               onChange={(e) => setJobDesc(e.target.value)}
               placeholder={ip.jobDescPlaceholder}
-              rows={8}
+              rows={6}
               className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white resize-none"
             />
           </div>
@@ -128,7 +163,7 @@ export default function InterviewPrep({ t }: { t: Strings }) {
 
           {/* Report */}
           {report && (
-            <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{ip.report}</h3>
                 <div className="flex gap-2">

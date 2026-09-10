@@ -1,0 +1,77 @@
+{
+  "schema_version": "1",
+  "cases": [
+    {
+      "id": "java-hashmap-internals",
+      "query": "Java 后端面试中如何考察 HashMap 扩容与并发问题？",
+      "roles": ["Java 后端工程师"],
+      "topics": ["Java", "集合"],
+      "unit_types": ["question_card", "concept"],
+      "expected_terms": ["HashMap", "扩容"],
+      "expected_competencies": ["Java 集合", "并发边界"]
+    },
+    {
+      "id": "database-index-tradeoff",
+      "query": "数据库索引为什么能加速查询，又有什么代价？",
+      "roles": ["后端工程师"],
+      "topics": ["数据库", "索引"],
+      "unit_types": ["question_card", "concept"],
+      "expected_terms": ["索引", "查询"],
+      "expected_competencies": ["数据库原理"]
+    },
+    {
+      "id": "redis-cache-consistency",
+      "query": "缓存和数据库一致性应该怎样追问？",
+      "roles": ["后端工程师"],
+      "topics": ["Redis", "缓存一致性"],
+      "unit_types": ["question_card", "practical_case"],
+      "expected_terms": ["缓存", "一致性"],
+      "expected_competencies": ["分布式系统"]
+    },
+    {
+      "id": "agent-evaluation",
+      "query": "如何评价一个 AI Agent 系统是否可靠？",
+      "roles": ["AI Agent 工程师"],
+      "topics": ["Agent", "评测", "可靠性"],
+      "unit_types": ["question_card", "concept", "practical_case"],
+      "expected_terms": ["Agent", "评测"],
+      "expected_competencies": ["AI 工程化", "评测设计"]
+    },
+    {
+      "id": "rag-grounding",
+      "query": "RAG 如何降低幻觉，怎样验证引用真实有效？",
+      "roles": ["算法工程师", "AI Agent 工程师"],
+      "topics": ["RAG", "Grounding"],
+      "unit_types": ["question_card", "concept"],
+      "expected_terms": ["RAG", "引用"],
+      "expected_competencies": ["检索增强生成"]
+    },
+    {
+      "id": "react-render-performance",
+      "query": "React 页面重复渲染如何定位和优化？",
+      "roles": ["前端工程师"],
+      "topics": ["React", "性能"],
+      "unit_types": ["question_card", "practical_case"],
+      "expected_terms": ["React", "渲染"],
+      "expected_competencies": ["前端性能"]
+    },
+    {
+      "id": "system-design-high-concurrency",
+      "query": "设计高并发秒杀系统时应该覆盖哪些核心权衡？",
+      "roles": ["后端工程师"],
+      "topics": ["系统设计", "高并发"],
+      "unit_types": ["practical_case", "question_card"],
+      "expected_terms": ["并发", "库存"],
+      "expected_competencies": ["系统设计"]
+    },
+    {
+      "id": "project-deep-dive",
+      "query": "根据候选人的真实项目经历生成递进式追问。",
+      "roles": [],
+      "topics": ["项目深挖"],
+      "unit_types": ["question_card", "user_evidence"],
+      "expected_terms": ["项目", "难点"],
+      "expected_competencies": ["问题解决", "事实表达"]
+    }
+  ]
+}

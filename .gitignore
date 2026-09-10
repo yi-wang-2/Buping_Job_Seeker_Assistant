@@ -215,6 +215,11 @@ data_folder/resume_photo.webp
 data_folder/job_tracker/records.json
 data_folder/job_tracker/notifications.sqlite3
 data_folder/job_tracker/followup_runtime.json
+# Local interview knowledge index; source content may be private or license-restricted.
+data_folder/interview_knowledge.sqlite3
+# Imported knowledge repositories and user uploads stay local. They may contain
+# private content, nested Git metadata, or material with separate licenses.
+data_folder/knowledge_sources/
 # Dedicated Chrome profiles may contain private login cookies and tokens.
 data_folder/browser_profiles/
 # ChatTTS local weights are multi-gigabyte runtime assets. Kokoro is kept in

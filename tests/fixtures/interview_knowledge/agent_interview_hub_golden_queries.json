@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "source": "agent-interview-hub/data.json",
+  "cases": [
+    {"id": "agent-rag", "query": "RAG Agent 如何做检索增强生成？", "expected_terms": ["RAG", "检索"]},
+    {"id": "agent-mcp", "query": "MCP 在 Agent 工具生态中解决什么问题？", "expected_terms": ["MCP", "工具"]},
+    {"id": "agent-function-calling", "query": "Function Calling 工具调用怎样设计？", "expected_terms": ["function calling", "工具调用"]},
+    {"id": "agent-evaluation", "query": "如何评估 Agent 的效果和可靠性？", "expected_terms": ["评估", "Agent"]},
+    {"id": "agent-security", "query": "如何防御 Prompt 注入并限制高危工具？", "expected_terms": ["Prompt 注入", "安全"]},
+    {"id": "agent-memory", "query": "Agent 长期记忆应该如何设计？", "expected_terms": ["记忆", "Agent"]},
+    {"id": "agent-multi-agent", "query": "多 Agent 协作怎样划分角色和协调任务？", "expected_terms": ["多 Agent", "协作"]},
+    {"id": "agent-observability", "query": "生产 Agent 如何做监控和可观测性？", "expected_terms": ["监控", "可观测"]}
+  ]
+}
