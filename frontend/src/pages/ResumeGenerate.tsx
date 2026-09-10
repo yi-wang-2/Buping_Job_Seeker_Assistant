@@ -8,6 +8,7 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import AIRewriteDialog from "../components/AIRewriteDialog";
 import { EditableResumePreview } from "../components/editor";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import { useWorkspaceBridgeRegistration, type AssistantProposal, type WorkspaceSnapshot } from "../assistant/workspaceBridge";
 
 // Preset list of supported LLM providers — kept in sync with Settings page.
 // Choosing a preset auto-fills base_url AND protocol fields.
@@ -248,6 +249,12 @@ function replaceFirstTextOccurrence(
   }
 
   return true;
+}
+
+async function sha256Text(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export default function ResumeGenerate({ t }: { t: Strings }) {
@@ -722,8 +729,8 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   // directly (the parent state mirrors the mutation via the iframe's
   // input event listener). This preserves rich-text formatting and avoids
   // the "selected text vs HTML source" mismatch that breaks find-and-replace.
-  const handleApplyRewrite = (rewritten: string) => {
-    if (!selectedText || !rewritten) return;
+  const applyTextReplacement = useCallback((original: string, rewritten: string) => {
+    if (!original || !rewritten) return;
     const doc = editorIframe?.contentDocument;
     if (!doc) {
       setStatus(
@@ -731,29 +738,159 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
           ? "⚠️ 无法定位编辑器，请重试"
           : "⚠️ Cannot locate editor, please retry",
       );
-      setRewriteDialogOpen(false);
-      return;
+      throw new Error(resumeLang === "zh" ? "请先进入编辑模式再应用建议" : "Enter edit mode before applying a proposal");
     }
-    const replaced = replaceFirstTextOccurrence(doc.body, selectedText, rewritten);
+    const replaced = replaceFirstTextOccurrence(doc.body, original, rewritten);
     if (!replaced) {
       setStatus(
         resumeLang === "zh"
           ? "⚠️ 选中文本在文档中未找到（可能被格式化分散）"
           : "⚠️ Selected text not found (may be split by formatting)",
       );
-      setRewriteDialogOpen(false);
-      return;
+      throw new Error(resumeLang === "zh" ? "原文已发生变化，请重新选择文字后再试" : "The source text changed; select it again");
     }
     // Trigger input event so the iframe's onChange handler fires and
     // updates parent state via the existing `onChange` callback.
     doc.dispatchEvent(new Event("input", { bubbles: true }));
+    if (!String(doc.body.textContent || "").includes(rewritten)) {
+      replaceFirstTextOccurrence(doc.body, rewritten, original);
+      doc.dispatchEvent(new Event("input", { bubbles: true }));
+      throw new Error(
+        resumeLang === "zh" ? "修改后的内容验证失败，已回滚" : "Post-apply verification failed and was rolled back",
+      );
+    }
     setRewriteDialogOpen(false);
     setStatus(
       resumeLang === "zh"
         ? "✓ 已应用 AI 改写（记得保存到本地或下载）"
         : "✓ Rewrite applied (save or download to persist)",
     );
+  }, [editorIframe, resumeLang, setEditedHtml]);
+
+  const handleApplyRewrite = (rewritten: string) => {
+    if (!selectedText || !rewritten) return;
+    try {
+      applyTextReplacement(selectedText, rewritten);
+    } catch {
+      // The local dialog already surfaces editor state through the page status.
+    }
   };
+
+  const currentResumeFilename = downloadFile || downloadHtmlFile || (
+    /\.(?:pdf|html?)$/i.test(resumeDocumentName)
+      ? resumeDocumentName
+      : `${resumeDocumentName || (resumeLang === "zh" ? "未命名简历" : "untitled-resume")}.html`
+  );
+
+  const assistantBridge = useMemo(() => ({
+    page: "resume",
+    workspaceObjectId: "default",
+    selectedObjects: lastSelection ? ["resume.selection"] : [],
+    getContextSnapshot: () => {
+      const useUnsavedEditor = editMode && Boolean(editedHtml) && editedHtml !== previewHtml;
+      const fullHtml = editMode && editedHtml ? editedHtml : (previewHtml || "");
+      const index = lastSelection ? fullHtml.indexOf(lastSelection) : -1;
+      const surrounding = index >= 0
+        ? `${fullHtml.slice(Math.max(0, index - 300), index)}⟨SELECTION⟩${fullHtml.slice(index + lastSelection.length, index + lastSelection.length + 300)}`
+        : "";
+      return {
+        selected_text: lastSelection,
+        surrounding_context: surrounding,
+        language: resumeLang === "en" ? "en" as const : "zh" as const,
+        version: `${previewKey}:${useUnsavedEditor ? "dirty" : "current"}`,
+        summary: previewHtml
+          ? `${resumeLang === "zh" ? "当前已加载" : "Currently loaded"}: ${currentResumeFilename}`
+          : (resumeLang === "zh" ? "当前尚未加载简历" : "No resume is loaded"),
+        job_description: jobDesc,
+        resume_generation_options: {
+          generation_mode: generationMode,
+          target_pages: targetPages,
+          style_name: styleName,
+        },
+        resume_artifact: {
+          id: "resume.current",
+          version: `${previewKey}:${useUnsavedEditor ? "dirty" : "current"}`,
+          content_format: "html" as const,
+          content: fullHtml,
+          source: useUnsavedEditor ? "editor_unsaved" as const : "preview" as const,
+          is_dirty: useUnsavedEditor,
+        },
+      };
+    },
+    describeContexts: (snapshot: WorkspaceSnapshot) => [
+      ...(snapshot.resume_artifact?.content
+        ? [{
+            id: "resume.current", label: currentResumeFilename,
+            description: snapshot.summary || "", snapshotKeys: ["resume_artifact", "summary", "language", "version"] as Array<keyof WorkspaceSnapshot>,
+            defaultAttached: true,
+          }]
+        : []),
+      ...historyFiles
+        .filter((file) => file.name !== downloadFile)
+        .map((file) => ({
+          id: `resume.history:${file.name}`,
+          label: file.name,
+          description: `${resumeLang === "zh" ? "历史简历" : "Historical resume"} · ${file.modified}`,
+          snapshotKeys: ["language"] as Array<keyof WorkspaceSnapshot>,
+          defaultAttached: false,
+        })),
+      ...(snapshot.selected_text
+        ? [{
+            id: "resume.selection", label: resumeLang === "zh" ? "选中的简历文本" : "Selected resume text",
+            description: snapshot.selected_text.slice(0, 48),
+            snapshotKeys: ["selected_text", "surrounding_context", "language", "version"] as Array<keyof WorkspaceSnapshot>,
+            selectedObjects: ["resume.selection"], defaultAttached: true,
+          }]
+        : []),
+      ...(snapshot.job_description?.trim()
+        ? [{
+            id: "resume.job_description", label: resumeLang === "zh" ? "职位描述" : "Job description",
+            description: snapshot.job_description.trim().slice(0, 48),
+            snapshotKeys: ["job_description", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+          }]
+        : []),
+    ],
+    applyProposal: async (proposal: AssistantProposal) => {
+      if (proposal.proposal_type === "resume_generation_request") {
+        await handleGenerate();
+        return;
+      }
+      if (proposal.proposal_type !== "resume_text_rewrite") throw new Error("Unsupported proposal type");
+      const useUnsavedEditor = editMode && Boolean(editedHtml) && editedHtml !== previewHtml;
+      const currentHtml = editMode && editedHtml ? editedHtml : (previewHtml || "");
+      const currentVersion = `${previewKey}:${useUnsavedEditor ? "dirty" : "current"}`;
+      if (proposal.target_version && proposal.target_version !== currentVersion) {
+        throw new Error(
+          resumeLang === "zh" ? "简历版本已变化，请重新发起改写" : "The resume version changed; request a new rewrite",
+        );
+      }
+      const expectedHash = String(proposal.payload.base_artifact_hash || "");
+      if (expectedHash && await sha256Text(currentHtml) !== expectedHash) {
+        throw new Error(
+          resumeLang === "zh" ? "简历内容已变化，请重新发起改写" : "The resume content changed; request a new rewrite",
+        );
+      }
+      const original = String(proposal.payload.original_text || "");
+      const expectedOriginalHash = String(proposal.payload.original_text_hash || "");
+      if (expectedOriginalHash && await sha256Text(original) !== expectedOriginalHash) {
+        throw new Error(
+          resumeLang === "zh" ? "改写建议完整性校验失败" : "Rewrite proposal integrity check failed",
+        );
+      }
+      applyTextReplacement(
+        original,
+        String(proposal.payload.replacement_text || ""),
+      );
+    },
+    undoProposal: async (proposal: AssistantProposal) => {
+      if (proposal.proposal_type !== "resume_text_rewrite") throw new Error("Unsupported undo operation");
+      applyTextReplacement(
+        String(proposal.payload.replacement_text || ""),
+        String(proposal.payload.original_text || ""),
+      );
+    },
+  }), [applyTextReplacement, currentResumeFilename, downloadFile, editMode, editedHtml, generationMode, handleGenerate, historyFiles, jobDesc, lastSelection, previewHtml, previewKey, resumeLang, styleName, targetPages]);
+  useWorkspaceBridgeRegistration(assistantBridge);
 
   // Load history list (PDF + HTML files)
   const loadHistory = async () => {
@@ -769,6 +906,10 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
       setLoadingHistory(false);
     }
   };
+
+  useEffect(() => {
+    void loadHistory();
+  }, []);
 
   // Preview a specific historical resume by loading its saved HTML
   const handlePreviewHistory = async (pdfFile: HistoryFile) => {
@@ -800,13 +941,13 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   };
 
   return (
-    <div className="page-enter mx-auto max-w-[1680px]">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">{rt.title}</h2>
+    <div className="page-enter mx-auto flex h-full max-w-[1680px] min-h-0 flex-col overflow-hidden">
+      <h2 className="mb-3 flex-none text-xl font-bold text-gray-900 dark:text-white">{rt.title}</h2>
 
-      {/* Three-column layout: Left config | Center preview | Right job desc */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_minmax(0,1fr)_300px]">
+      {/* Preview plus a single right-side settings column. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
         {/* Left Panel: Config + Style */}
-        <div className="space-y-4">
+        <div className="hidden">
           {/* Config Card */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
@@ -986,8 +1127,8 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         </div>
 
         {/* Center Panel: Preview (centered & prominent) */}
-        <div className="min-w-0 space-y-4">
-          <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800 flex flex-col">
+        <div className="flex min-h-0 min-w-0 flex-col gap-3">
+          <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
                 <Eye className="h-4 w-4 text-brand-500" />
@@ -1195,10 +1336,10 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
             </div>
 
             {/* Preview / Editor area */}
-            <div className="flex-1 p-5">
-              <div className="mx-auto w-full max-w-[920px] overflow-hidden rounded-lg border border-gray-200 bg-gray-50 shadow-inner dark:border-gray-600 dark:bg-gray-900">
+            <div className="min-h-0 flex-1 p-3">
+              <div className="mx-auto h-full w-full max-w-[920px] overflow-hidden rounded-lg border border-gray-200 bg-gray-50 shadow-inner dark:border-gray-600 dark:bg-gray-900">
                 {previewing && !previewHtml ? (
-                  <div className="flex h-[700px] items-center justify-center">
+                  <div className="flex h-full items-center justify-center">
                     <LoadingSpinner />
                     <span className="ml-2 text-sm text-gray-500">{rt.previewing}</span>
                   </div>
@@ -1233,11 +1374,11 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                       }
                     }}
                     title="Resume Preview"
-                    className="h-[700px] w-full max-w-full overflow-x-hidden bg-white"
+                    className="h-full w-full max-w-full overflow-x-hidden bg-white"
                     sandbox="allow-same-origin"
                   />
                 ) : (
-                  <div className="flex h-[700px] items-center justify-center text-sm text-gray-500">
+                  <div className="flex h-full items-center justify-center text-sm text-gray-500">
                     {rt.previewEmpty}
                   </div>
                 )}
@@ -1246,7 +1387,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
           </div>
 
           {/* Action bar below preview */}
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex-none rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <button
                 onClick={handleGenerate}
@@ -1364,7 +1505,67 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         </div>
 
         {/* Right Panel: Job Description */}
-        <div className="min-w-0 space-y-4">
+        <div className="h-full min-w-0 space-y-3 overflow-y-auto pr-1">
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+              <Palette className="h-4 w-4 text-brand-500" />
+              {resumeLang === "zh" ? "简历设置" : "Resume Settings"}
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {rt.style}
+                </label>
+                <select
+                  value={styleName}
+                  onChange={(event) => setStyleName(event.target.value)}
+                  disabled={loading || Object.keys(styles).length === 0}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white disabled:opacity-50"
+                >
+                  {Object.entries(styles).map(([name, info]) => (
+                    <option key={name} value={name}>{name} · {info.author}</option>
+                  ))}
+                </select>
+                {stylesError && (
+                  <button
+                    type="button"
+                    onClick={loadStylesAndSettings}
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    {resumeLang === "zh" ? "模板加载失败，点击重试" : "Failed to load templates. Retry"}
+                  </button>
+                )}
+                {previewHtml && (
+                  <p className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+                    {resumeLang === "zh"
+                      ? "切换模板只改变样式，保留当前内容和编辑结果。"
+                      : "Switching templates preserves the current content and edits."}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                  {rt.resumeLang}
+                </label>
+                <select
+                  value={resumeLang}
+                  onChange={(event) => setResumeLang(event.target.value)}
+                  disabled={loading}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white disabled:opacity-50"
+                >
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+              <p className="rounded-lg bg-gray-50 px-3 py-2 text-[11px] leading-4 text-gray-500 dark:bg-gray-900/40 dark:text-gray-400">
+                {resumeLang === "zh"
+                  ? "模型供应商、API Key 与模型名称统一在“设置”页面管理。"
+                  : "Provider, API key and model are managed centrally in Settings."}
+              </p>
+            </div>
+          </div>
+
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
               <FileText className="h-4 w-4 text-brand-500" />

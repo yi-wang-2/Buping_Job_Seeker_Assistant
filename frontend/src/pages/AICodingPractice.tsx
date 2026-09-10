@@ -5,6 +5,7 @@ import {
   getAICodingSessions, getAICodingTasks, startAICodingSession, submitAICodingSession,
   type AICodingReport, type AICodingTask, type AICodingTaskSummary,
 } from "../api/client";
+import { useWorkspaceBridgeRegistration, type WorkspaceSnapshot } from "../assistant/workspaceBridge";
 
 type SessionRow = Awaited<ReturnType<typeof getAICodingSessions>>[number];
 
@@ -23,6 +24,33 @@ export default function AICodingPractice({ t }: { t: Strings }) {
   const [report, setReport] = useState<AICodingReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const assistantBridge = useMemo(() => ({
+    page: "ai-coding",
+    workspaceObjectId: sessionId || "default",
+    selectedObjects: [],
+    getContextSnapshot: (): WorkspaceSnapshot => ({
+      language: english ? "en" : "zh",
+      coding_task: task ? {
+        id: task.id, title: task.title, description: task.description,
+        requirements: task.requirements, examples: task.examples,
+      } : undefined,
+      coding_code: code,
+    }),
+    describeContexts: (snapshot: WorkspaceSnapshot) => [
+      ...(snapshot.coding_task ? [{
+        id: "coding.task", label: english ? "Current coding task" : "当前编程题",
+        description: String(snapshot.coding_task.title || ""),
+        snapshotKeys: ["coding_task", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      }] : []),
+      ...(snapshot.coding_code?.trim() ? [{
+        id: "coding.code", label: english ? "Current code" : "当前代码",
+        description: `${snapshot.coding_code.split("\n").length} ${english ? "lines" : "行"}`,
+        snapshotKeys: ["coding_code", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      }] : []),
+    ],
+  }), [code, english, sessionId, task]);
+  useWorkspaceBridgeRegistration(assistantBridge);
 
   const reload = async () => {
     const [nextTasks, nextHistory] = await Promise.all([getAICodingTasks(), getAICodingSessions()]);
@@ -58,29 +86,29 @@ export default function AICodingPractice({ t }: { t: Strings }) {
     finally { setLoading(false); }
   };
 
-  return <div className="page-enter mx-auto max-w-6xl space-y-6">
-    <div>
-      <h2 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white"><Code2 className="text-brand-600" />{english ? "AI Coding Practice" : "AI Coding 训练场"}</h2>
-      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{english ? "Practice the complete loop: understand, implement, verify, and reflect on AI collaboration." : "练习理解任务、实现代码、验证结果和复盘 AI 协作的完整闭环。"}</p>
+  return <div className="page-enter mx-auto flex h-full max-w-6xl min-h-0 flex-col gap-3 overflow-hidden">
+    <div className="flex-none">
+      <h2 className="flex items-center gap-2 text-xl font-bold text-gray-900 dark:text-white"><Code2 className="text-brand-600" />{english ? "AI Coding Practice" : "AI Coding 训练场"}</h2>
+      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{english ? "Practice the complete loop: understand, implement, verify, and reflect on AI collaboration." : "练习理解任务、实现代码、验证结果和复盘 AI 协作的完整闭环。"}</p>
     </div>
     {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">{error}</div>}
 
-    {!task && <section className="grid gap-4 md:grid-cols-2">
+    {!task && <section className="grid min-h-0 flex-1 gap-3 overflow-y-auto md:grid-cols-2">
       {tasks.map((item) => <article key={item.id} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-gray-900 dark:text-white">{item.title}</h3><p className="mt-2 text-sm text-gray-500">{item.summary}</p></div><span className="rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">{item.difficulty}</span></div>
         <div className="mt-4 flex items-center justify-between text-xs text-gray-500"><span>{item.language} · {item.duration_minutes} min</span><button disabled={loading} onClick={() => begin(item.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 font-medium text-white hover:bg-brand-700 disabled:opacity-50"><Play className="h-4 w-4" />{english ? "Start" : "开始训练"}</button></div>
       </article>)}
     </section>}
 
-    {task && <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-      <section className="space-y-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    {task && <div className="grid min-h-0 flex-1 gap-4 overflow-hidden lg:grid-cols-[0.8fr_1.2fr]">
+      <section className="space-y-4 overflow-y-auto rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-center justify-between"><h3 className="font-semibold text-gray-900 dark:text-white">{task.title}</h3><span className="flex items-center gap-1 font-mono text-sm text-gray-500"><Clock3 className="h-4 w-4" />{clock}</span></div>
         <p className="text-sm leading-6 text-gray-600 dark:text-gray-300">{task.description}</p>
         <div><h4 className="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-200">{english ? "Requirements" : "要求"}</h4><ul className="list-disc space-y-1 pl-5 text-sm text-gray-600 dark:text-gray-300">{task.requirements.map((item) => <li key={item}>{item}</li>)}</ul></div>
         {task.examples.map((example, index) => <div key={index} className="rounded-lg bg-gray-50 p-3 font-mono text-xs dark:bg-gray-900"><div>Input: {example.input}</div><div className="mt-1">Output: {example.output}</div></div>)}
         <button onClick={() => { setTask(null); setReport(null); }} className="text-xs text-gray-500 hover:text-brand-600">← {english ? "Back to tasks" : "返回题目列表"}</button>
       </section>
-      <section className="space-y-4">
+      <section className="min-h-0 space-y-3 overflow-y-auto pr-1">
         <div className="rounded-xl border border-gray-200 bg-gray-950 p-4 shadow-sm"><div className="mb-3 text-xs font-medium text-gray-400">solution.py</div><textarea spellCheck={false} value={code} onChange={(e) => setCode(e.target.value)} rows={14} className="w-full resize-y bg-transparent font-mono text-sm leading-6 text-emerald-300 outline-none" /></div>
         <div className="grid gap-3 md:grid-cols-3">
           <textarea value={approach} onChange={(e) => setApproach(e.target.value)} rows={4} placeholder={english ? "Explain your approach" : "说明你的解题思路与关键不变量"} className="rounded-xl border border-gray-300 p-3 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
@@ -98,6 +126,6 @@ export default function AICodingPractice({ t }: { t: Strings }) {
       </section>
     </div>}
 
-    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800"><h3 className="mb-3 flex items-center gap-2 font-semibold text-gray-900 dark:text-white"><History className="h-4 w-4" />{english ? "Recent practice" : "最近训练"}</h3>{history.length === 0 ? <p className="text-sm text-gray-400">{english ? "No sessions yet." : "还没有训练记录。"}</p> : <div className="space-y-2">{history.slice(0, 6).map((item) => <div key={item.id} className="flex items-center justify-between border-t border-gray-100 py-2 text-sm dark:border-gray-700"><span className="text-gray-700 dark:text-gray-200">{item.task_title}</span><span className="text-gray-500">{item.status === "completed" ? `${item.score}/100` : (english ? "In progress" : "进行中")}</span></div>)}</div>}</section>
+    <section className="max-h-36 flex-none overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800"><h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white"><History className="h-4 w-4" />{english ? "Recent practice" : "最近训练"}</h3>{history.length === 0 ? <p className="text-xs text-gray-400">{english ? "No sessions yet." : "还没有训练记录。"}</p> : <div>{history.slice(0, 4).map((item) => <div key={item.id} className="flex items-center justify-between border-t border-gray-100 py-1.5 text-xs dark:border-gray-700"><span className="truncate text-gray-700 dark:text-gray-200">{item.task_title}</span><span className="ml-2 flex-none text-gray-500">{item.status === "completed" ? `${item.score}/100` : (english ? "In progress" : "进行中")}</span></div>)}</div>}</section>
   </div>;
 }

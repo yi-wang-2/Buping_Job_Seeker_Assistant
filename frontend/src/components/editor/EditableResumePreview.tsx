@@ -1156,7 +1156,7 @@ function EditableWYSIWYGEditor({
   // The actual reset happens by reloading the iframe srcdoc.
 
   return (
-    <div>
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-0.5 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-600 dark:bg-gray-900">
         <ToolButton title="撤销 (Ctrl+Z)" onClick={() => exec("undo")}>
           <Undo className="h-4 w-4" />
@@ -1293,7 +1293,7 @@ function EditableWYSIWYGEditor({
         title="Resume Editor"
         onLoad={handleIframeLoad}
         sandbox="allow-same-origin allow-scripts"
-        className={`block w-full max-w-full overflow-x-hidden bg-white transition-colors ${
+        className={`block min-h-0 w-full max-w-full flex-1 overflow-x-hidden bg-white transition-colors ${
           isFocused
             ? "border-brand-500 ring-2 ring-brand-500/20"
             : "border-gray-200 dark:border-gray-600"
@@ -1301,7 +1301,7 @@ function EditableWYSIWYGEditor({
         style={{
           width: "100%",
           maxWidth: "100%",
-          height: "700px",
+          height: "100%",
           border: "1px solid",
           borderTop: "none",
           borderRadius: "0 0 0.5rem 0.5rem",

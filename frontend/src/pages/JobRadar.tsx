@@ -9,6 +9,7 @@ import {
   importJobRadarFile, saveJobPreferences, syncJobRadarUrl, trackRecommendedJob, updateJobRadarAction,
   type JobPreferences, type JobRadarStats, type JobRecommendation, type LinkedJobRecommendation,
 } from "../api/client";
+import { useWorkspaceBridgeRegistration, type AssistantProposal, type WorkspaceSnapshot } from "../assistant/workspaceBridge";
 
 const DEFAULT_SOURCE = "https://docs.qq.com/smartsheet/DZkdPVGtGb1ZvaG5R?tab=t00i2h";
 const FEISHU_SOURCE = "https://yal2at57cvq.feishu.cn/base/GtSLbyyR3aCENOsJYC6cdlsVnih?from=from_copylink";
@@ -25,6 +26,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
   const [sourceUrl, setSourceUrl] = useState(DEFAULT_SOURCE);
   const [scene, setScene] = useState<JobScene>("general");
   const [items, setItems] = useState<JobRecommendation[]>([]);
+  const [matchingCount, setMatchingCount] = useState(0);
   const [dailyItems, setDailyItems] = useState<JobRecommendation[]>([]);
   const [stats, setStats] = useState<JobRadarStats>({ total: 0, companies: 0, favorites: 0, by_scene: { general: 0, state_owned: 0, civil_service: 0 }, schedule: { source_url: DEFAULT_SOURCE, source_urls: [DEFAULT_SOURCE, FEISHU_SOURCE], auto_sync: true, auto_sync_time: "06:00" }, last_sync: null });
   const [profile, setProfile] = useState({ preferred_roles: [] as string[], preferred_locations: [] as string[], resume_skills: [] as string[] });
@@ -49,6 +51,71 @@ export default function JobRadarPage({ t }: { t: Strings }) {
   const [linkedJobCounts, setLinkedJobCounts] = useState<Record<string, number>>({});
   const [showingAllLinkedJobs, setShowingAllLinkedJobs] = useState<Record<string, boolean>>({});
 
+  const assistantBridge = useMemo(() => ({
+    page: "job-radar",
+    workspaceObjectId: scene,
+    selectedObjects: [],
+    getContextSnapshot: (): WorkspaceSnapshot => ({
+      language: english ? "en" : "zh",
+      job_preferences: preferences as unknown as Record<string, unknown>,
+      job_radar_stats: {
+        total: stats.total,
+        companies: stats.companies,
+        favorites: stats.favorites,
+        by_scene: stats.by_scene,
+        last_sync_at: stats.last_sync?.created_at || null,
+      },
+      job_results_meta: {
+        matching_results: matchingCount,
+        sample_size: Math.min(items.length, 20),
+        is_sample: matchingCount > 20,
+        scene,
+      },
+      job_results: items.slice(0, 20).map((job) => ({
+        id: job.id, company: job.company, role: job.role, location: job.location,
+        recruitment_type: job.recruitment_type, match_score: job.score,
+        industry: job.industry, company_type: job.company_type, link: job.link,
+      })),
+    }),
+    describeContexts: (snapshot: WorkspaceSnapshot) => [
+      {
+        id: "radar.stats", label: english ? "Database statistics" : "岗位库统计",
+        description: english
+          ? `${snapshot.job_radar_stats?.companies || 0} companies, ${snapshot.job_radar_stats?.total || 0} active jobs`
+          : `${snapshot.job_radar_stats?.companies || 0} 家公司，${snapshot.job_radar_stats?.total || 0} 个有效岗位`,
+        snapshotKeys: ["job_radar_stats", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      },
+      {
+        id: "radar.preferences", label: english ? "Job preferences" : "求职偏好",
+        description: english ? "Saved matching preferences" : "当前已保存的岗位匹配偏好",
+        snapshotKeys: ["job_preferences", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      },
+      ...((snapshot.job_results?.length || 0) > 0 ? [{
+        id: "radar.results", label: english ? "Current job results" : "当前岗位结果",
+        description: english
+          ? `${snapshot.job_results_meta?.sample_size || 0}-job sample from ${snapshot.job_results_meta?.matching_results || 0} current matches`
+          : `当前 ${snapshot.job_results_meta?.matching_results || 0} 个匹配结果中的 ${snapshot.job_results_meta?.sample_size || 0} 个样本`,
+        snapshotKeys: ["job_results", "job_results_meta", "language"] as Array<keyof WorkspaceSnapshot>, defaultAttached: true,
+      }] : []),
+    ],
+    applyProposal: async (proposal: AssistantProposal) => {
+      if (proposal.proposal_type !== "job_radar_action") throw new Error("Unsupported proposal type");
+      const action = String(proposal.payload.action || "");
+      const proposedJob = proposal.payload.job as unknown as JobRecommendation;
+      const currentJob = items.find((item) => item.id === proposedJob?.id);
+      if (!currentJob) throw new Error(english ? "The selected job is no longer visible" : "目标岗位已不在当前结果中，请重新选择");
+      if (action === "track_job") {
+        track(currentJob);
+        return;
+      }
+      if (action === "favorite_job") await updateJobRadarAction(currentJob.id, "favorite", true);
+      else if (action === "not_interested_job") await updateJobRadarAction(currentJob.id, "not_interested", true);
+      else throw new Error("Unsupported job action");
+      await load();
+    },
+  }), [english, items, matchingCount, preferences, scene, stats]);
+  useWorkspaceBridgeRegistration(assistantBridge);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -57,6 +124,7 @@ export default function JobRadarPage({ t }: { t: Strings }) {
         getDailyJobRecommendations(scene), getJobRadarStats(),
       ]);
       setItems(recommendations.items);
+      setMatchingCount(recommendations.count);
       setDailyItems(daily.items);
       const loadedJobs = [...recommendations.items, ...daily.items];
       setLinkedJobs(Object.fromEntries(loadedJobs.filter((job) => job.linked_jobs?.length).map((job) => [job.id, job.linked_jobs])));

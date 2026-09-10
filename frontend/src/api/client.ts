@@ -20,7 +20,7 @@ export interface AIMetrics {
     calls: number; successful_calls: number; errors: number; success_rate: number;
     input_tokens: number; output_tokens: number; total_tokens: number; retries: number;
     avg_latency_ms: number; p95_latency_ms: number; cache_hits: number; cache_entries: number;
-    cache_hit_rate: number; memory_items: number; context_original_tokens: number;
+    cache_hit_rate: number; cache_saved_tokens: number; memory_items: number; context_original_tokens: number;
     context_final_tokens: number; context_saved_tokens: number; context_compression_rate: number;
     compressed_items: number; dropped_items: number;
   };
@@ -28,6 +28,17 @@ export interface AIMetrics {
   by_model: Array<{ model: string; calls: number; tokens: number }>;
   timeline: Array<{ date: string; calls: number; tokens: number; errors: number }>;
   recent: Array<Record<string, any>>;
+  assistant: {
+    summary: { runs: number; completed: number; failed: number; cancelled: number; active: number; total_tokens: number; avg_latency_ms: number };
+    by_mode: Array<{ mode: string; runs: number; tokens: number; failures: number }>;
+    by_page: Array<{ page: string; runs: number; tokens: number; failures: number }>;
+    recent: Array<Record<string, any>>;
+  };
+  knowledge: {
+    sources: number; active_sources: number; units: number; retrieval_calls: number;
+    units_retrieved: number; candidates: number; avg_retrieval_ms: number;
+    by_source: Array<{ source_id: string; uses: number }>;
+  };
 }
 
 type PublicMetric = { timestamp: string; skill: string; status: "success" | "error"; latency_ms: number };
@@ -69,7 +80,7 @@ export async function getAIMetrics(days = 30): Promise<AIMetrics> {
         input_tokens: 0, output_tokens: 0, total_tokens: 0, retries: 0,
         avg_latency_ms: average,
         p95_latency_ms: latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * .95))] : 0,
-        cache_hits: 0, cache_entries: 0, cache_hit_rate: 0, memory_items: 0,
+        cache_hits: 0, cache_entries: 0, cache_hit_rate: 0, cache_saved_tokens: 0, memory_items: 0,
         context_original_tokens: 0, context_final_tokens: 0, context_saved_tokens: 0,
         context_compression_rate: 0, compressed_items: 0, dropped_items: 0,
       },
@@ -80,7 +91,8 @@ export async function getAIMetrics(days = 30): Promise<AIMetrics> {
       })),
       by_model: [], timeline: [], recent: rows.slice().reverse().map((row, index) => ({
         ...row, trace_id: `browser-${index}`, model: "browser session", usage: { total_tokens: 0 },
-      })),
+      })), assistant: { summary: { runs: 0, completed: 0, failed: 0, cancelled: 0, active: 0, total_tokens: 0, avg_latency_ms: 0 }, by_mode: [], by_page: [], recent: [] },
+      knowledge: { sources: 0, active_sources: 0, units: 0, retrieval_calls: 0, units_retrieved: 0, candidates: 0, avg_retrieval_ms: 0, by_source: [] },
     };
   }
   const { data } = await api.get("/ai-metrics", { params: { days } });
@@ -178,6 +190,135 @@ export async function generateResume(params: {
     files.unshift({ name: data.filename, html_filename: data.html_filename || "", path: data.path, size: 0, modified: new Date().toLocaleString() });
     window.sessionStorage.setItem(PUBLIC_HISTORY_SESSION_KEY, JSON.stringify(files.slice(0, 30)));
   }
+  return data;
+}
+
+export interface AssistantMessage {
+  id: string; session_id: string; role: "user" | "assistant" | "system" | "tool";
+  content: string; run_id: string | null; status: string;
+  metadata: Record<string, any>; created_at: string;
+}
+
+export interface AssistantProposal {
+  id: string; run_id: string; proposal_type: string; target_ref: string;
+  target_version: string; payload: Record<string, any>; payload_hash: string;
+  risk: string; status: string; created_at: string;
+}
+
+export interface AssistantAttachment {
+  id: string; session_id: string; filename: string; mime_type: string;
+  size_bytes: number; character_count: number; content_hash: string; created_at: string;
+}
+
+export async function createAssistantSession(workspaceType: string, workspaceObjectId = "default"):
+Promise<{ session: { id: string; workspace_type: string; workspace_object_id: string }; messages: AssistantMessage[]; proposals: AssistantProposal[]; attachments: AssistantAttachment[]; active_runs: Array<Record<string, any>> }> {
+  const { data } = await api.post("/assistant/sessions", {
+    workspace_type: workspaceType, workspace_object_id: workspaceObjectId,
+  });
+  return data;
+}
+
+export async function getAssistantSession(sessionId: string): Promise<{
+  session: Record<string, any>; messages: AssistantMessage[]; proposals: AssistantProposal[];
+  attachments: AssistantAttachment[]; active_runs: Array<Record<string, any>>;
+}> {
+  const { data } = await api.get(`/assistant/sessions/${encodeURIComponent(sessionId)}`);
+  return data;
+}
+
+export async function getAssistantRun(runId: string): Promise<Record<string, any>> {
+  const { data } = await api.get(`/assistant/runs/${encodeURIComponent(runId)}`);
+  return data;
+}
+
+export async function cancelAssistantRun(runId: string): Promise<Record<string, any>> {
+  const { data } = await api.post(`/assistant/runs/${encodeURIComponent(runId)}/cancel`);
+  return data;
+}
+
+export async function uploadAssistantAttachment(
+  sessionId: string, file: File,
+): Promise<AssistantAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post(
+    `/assistant/sessions/${encodeURIComponent(sessionId)}/attachments`, form,
+    { headers: { "Content-Type": "multipart/form-data" } },
+  );
+  return data;
+}
+
+export async function sendAssistantMessage(sessionId: string, payload: Record<string, any>): Promise<{
+  user_message: AssistantMessage; assistant_message: AssistantMessage;
+  run: Record<string, any>; proposal: AssistantProposal | null;
+}> {
+  const { data } = await api.post(`/assistant/sessions/${encodeURIComponent(sessionId)}/messages`, payload);
+  return data;
+}
+
+export type AssistantStreamEvent =
+  | { type: "progress"; data: Record<string, any> }
+  | { type: "result_start"; data: { user_message: AssistantMessage; assistant_message: AssistantMessage; run: Record<string, any>; proposal: AssistantProposal | null } }
+  | { type: "content_delta"; data: { delta: string } }
+  | { type: "result_end"; data: { user_message: AssistantMessage; assistant_message: AssistantMessage; run: Record<string, any>; proposal: AssistantProposal | null } }
+  | { type: "error"; data: { detail: string; error_type?: string } };
+
+export async function streamAssistantMessage(
+  sessionId: string,
+  payload: Record<string, any>,
+  onEvent: (event: AssistantStreamEvent) => void,
+): Promise<void> {
+  const response = await fetch(
+    `/api/assistant/sessions/${encodeURIComponent(sessionId)}/messages/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!response.ok || !response.body) {
+    throw new Error(`Assistant stream failed (${response.status}): ${await response.text()}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() || "";
+    for (const frame of frames) {
+      let type = "progress";
+      const dataLines: string[] = [];
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) type = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (!dataLines.length) continue;
+      onEvent({ type, data: JSON.parse(dataLines.join("\n")) } as AssistantStreamEvent);
+    }
+    if (done) break;
+  }
+}
+
+export async function confirmAssistantProposal(proposalId: string): Promise<{ confirmation_token: string; expires_in_seconds: number }> {
+  const { data } = await api.post(`/assistant/proposals/${encodeURIComponent(proposalId)}/confirm`);
+  return data;
+}
+
+export async function applyAssistantProposal(proposalId: string, confirmationToken: string): Promise<AssistantProposal> {
+  const { data } = await api.post(`/assistant/proposals/${encodeURIComponent(proposalId)}/apply`, { confirmation_token: confirmationToken });
+  return data;
+}
+
+export async function dismissAssistantProposal(proposalId: string): Promise<AssistantProposal> {
+  const { data } = await api.post(`/assistant/proposals/${encodeURIComponent(proposalId)}/dismiss`);
+  return data;
+}
+
+export async function undoAssistantProposal(proposalId: string): Promise<AssistantProposal> {
+  const { data } = await api.post(`/assistant/proposals/${encodeURIComponent(proposalId)}/undo`);
   return data;
 }
 
@@ -311,6 +452,7 @@ export async function generateInterviewPrep(params: {
   interview_type?: string;
   question_count?: number;
   resume_language?: string;
+  selected_knowledge_source_ids?: string[];
 }): Promise<{ report: string; file_path: string; md_filename: string; pdf_filename: string; status: string }> {
   const { data } = await api.post("/interview/prep", params);
   return data;
@@ -332,6 +474,7 @@ export async function startMockInterview(params: {
   job_title?: string;
   interview_type?: string;
   interview_style?: string;
+  selected_knowledge_source_ids?: string[];
 }): Promise<{ history: Array<{ role: string; content: string }>; session_id: string | null; status: string }> {
   let payload = params;
   if ((IS_CLOUD || IS_PUBLIC) && !params.api_key) {
@@ -553,6 +696,59 @@ export async function saveSettings(params: {
   }
   const { data } = await api.put("/settings", cloudSettings);
   return data;
+}
+
+export interface InterviewKnowledgeSource {
+  id: string; name: string; source_type: string; scope: "public" | "organization" | "user" | "session";
+  sync_status: string; last_synced_at?: string | null; license?: string | null;
+  stats: { units: number; characters: number; average_quality: number };
+}
+
+export async function getInterviewKnowledgeSources(): Promise<{ items: InterviewKnowledgeSource[] }> {
+  const { data } = await api.get("/interview-knowledge/sources");
+  return data;
+}
+
+export async function uploadInterviewKnowledge(file: File): Promise<{ source: InterviewKnowledgeSource }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("user_id", "local");
+  form.append("domain_pack", "interview");
+  const { data } = await api.post("/interview-knowledge/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
+  });
+  return data;
+}
+
+export async function setInterviewKnowledgeEnabled(sourceId: string, enabled: boolean): Promise<void> {
+  await api.patch(`/interview-knowledge/sources/${encodeURIComponent(sourceId)}/status`, { enabled });
+}
+
+export async function deleteInterviewKnowledgeSource(sourceId: string): Promise<void> {
+  await api.delete(`/interview-knowledge/sources/${encodeURIComponent(sourceId)}`, { params: { user_id: "local" } });
+}
+
+export interface AIMemoryItem {
+  id: string; namespace: string; key: string; value: unknown; source: string;
+  confidence: number; importance: number; status: string; created_at: string;
+}
+
+export async function getAIMemories(): Promise<{ items: AIMemoryItem[] }> {
+  const { data } = await api.get("/memory");
+  return data;
+}
+
+export async function deleteAIMemory(memoryId: string): Promise<void> {
+  await api.delete(`/memory/${encodeURIComponent(memoryId)}`);
+}
+
+export async function getAIMemoryCandidates(): Promise<{ items: AIMemoryItem[] }> {
+  const { data } = await api.get("/memory/candidates");
+  return data;
+}
+
+export async function reviewAIMemoryCandidate(candidateId: string, accepted: boolean): Promise<void> {
+  await api.post(`/memory/candidates/${encodeURIComponent(candidateId)}/review`, { accepted });
 }
 
 export async function switchResumeTemplate(

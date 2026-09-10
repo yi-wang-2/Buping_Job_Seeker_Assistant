@@ -85,6 +85,24 @@ achievements:
       name: {type: string}
       description: {type: string}
 
+academic_achievements:
+  type: array
+  items:
+    type: object
+    properties:
+      type: {type: string}
+      title: {type: string}
+      authors:
+        oneOf:
+          - {type: string}
+          - type: array
+            items: {type: string}
+      venue: {type: string}
+      date: {type: string}
+      status: {type: string}
+      description: {type: string}
+      link: {type: string}
+
 certifications:
   type: array
   items:

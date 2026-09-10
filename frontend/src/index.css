@@ -39,6 +39,25 @@
   animation: fadeIn 0.2s ease-out;
 }
 
+.workspace-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-divider {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .workspace-split {
+    grid-template-columns: var(--assistant-width) 12px minmax(0, 1fr);
+  }
+
+  .workspace-divider {
+    display: flex;
+  }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }

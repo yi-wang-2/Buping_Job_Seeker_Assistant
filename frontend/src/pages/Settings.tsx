@@ -12,15 +12,25 @@ import {
   getResumePhotoStatus,
   getResumePhotoUrl,
   clearAIMemory,
+  deleteAIMemory,
+  getAIMemories,
+  getAIMemoryCandidates,
   getMemorySettings,
   saveMemorySettings,
+  reviewAIMemoryCandidate,
   getNotificationSettings,
   saveNotificationSettings,
   testNotifications,
   type NotificationSettings,
   type ResumeValidation,
+  type AIMemoryItem,
 } from "../api/client";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+
+function formatMemoryValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
 
 // Preset list of supported LLM providers. Choosing one auto-fills the
 // base_url AND protocol fields. Protocol is decoupled from provider so
@@ -120,6 +130,8 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [cacheEnabled, setCacheEnabled] = useState(true);
   const [memoryStatus, setMemoryStatus] = useState("");
+  const [memories, setMemories] = useState<AIMemoryItem[]>([]);
+  const [memoryCandidates, setMemoryCandidates] = useState<AIMemoryItem[]>([]);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
     email_enabled: false, smtp_host: "", smtp_port: 465, smtp_username: "", smtp_from: "", smtp_to: "",
     smtp_security: "ssl", wechat_enabled: false, smtp_password_configured: false, serverchan_sendkey_configured: false,
@@ -160,12 +172,33 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setMemoryEnabled(settings.memory_enabled);
       setCacheEnabled(settings.cache_enabled);
     }).catch(() => {});
+    void loadMemories();
     void loadNotificationSettings();
     getResumePhotoStatus().then((result) => {
       setPhotoUploaded(result.uploaded);
       if (result.uploaded) setPhotoCacheKey(String(Date.now()));
     }).catch(() => {});
   }, []);
+
+  const loadMemories = async () => {
+    try {
+      const [saved, candidates] = await Promise.all([getAIMemories(), getAIMemoryCandidates()]);
+      setMemories(saved.items);
+      setMemoryCandidates(candidates.items);
+    } catch { /* settings remain usable if the optional list cannot load */ }
+  };
+
+  const reviewMemory = async (id: string, accepted: boolean) => {
+    await reviewAIMemoryCandidate(id, accepted);
+    setMemoryStatus(accepted ? "已确认并保存长期记忆" : "已拒绝记忆候选");
+    await loadMemories();
+  };
+
+  const removeMemory = async (id: string) => {
+    await deleteAIMemory(id);
+    setMemoryStatus("已删除长期记忆");
+    await loadMemories();
+  };
 
   const loadNotificationSettings = async () => {
     setNotificationLoadState("loading");
@@ -519,6 +552,8 @@ export default function SettingsPage({ t }: { t: Strings }) {
           {notificationBusy && <Loader2 className="h-4 w-4 animate-spin text-brand-500" />}
           {notificationStatus && <span className={`text-sm ${notificationStatus.startsWith("❌") ? "text-red-600" : "text-green-600"}`}>{notificationStatus}</span>}
         </div>
+        {memoryCandidates.length > 0 && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-800 dark:bg-amber-950/20"><h4 className="text-sm font-semibold text-amber-900 dark:text-amber-200">待确认的记忆候选</h4><p className="mt-1 text-xs text-amber-700 dark:text-amber-300">模型推断不会直接成为用户事实；确认后才会进入长期记忆。</p><div className="mt-3 space-y-2">{memoryCandidates.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-white p-2 text-xs dark:bg-gray-800"><span className="break-all text-gray-700 dark:text-gray-200"><b>{item.namespace}.{item.key}</b>：{formatMemoryValue(item.value)} · {Math.round(item.confidence * 100)}%</span><span className="flex gap-1"><button onClick={() => void reviewMemory(item.id, true)} className="rounded bg-brand-600 px-2 py-1 text-white">确认</button><button onClick={() => void reviewMemory(item.id, false)} className="rounded border border-gray-300 px-2 py-1 dark:border-gray-600">拒绝</button></span></div>)}</div></div>}
+        {memories.length > 0 && <div className="mt-5"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">已保存的长期记忆</h4><div className="mt-2 max-h-56 space-y-1 overflow-y-auto">{memories.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 rounded border border-gray-100 px-3 py-2 text-xs dark:border-gray-700"><span className="min-w-0 break-all text-gray-600 dark:text-gray-300"><b>{item.namespace}.{item.key}</b>：{formatMemoryValue(item.value)}</span><button onClick={() => void removeMemory(item.id)} className="shrink-0 text-red-500 hover:underline">删除</button></div>)}</div></div>}
       </div>
 
       {/* AI memory and cache privacy controls */}
