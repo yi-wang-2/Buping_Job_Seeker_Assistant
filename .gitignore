@@ -197,6 +197,13 @@ docs/PERFORMANCE.md
 docs/ROADMAP.md
 docs/NOTION_MCP_SETUP.md
 
+# Local architecture/design documents and internal validation reports.
+# Keep implementation plans in the workspace without publishing them.
+docs/*DESIGN*.md
+docs/*_PLAN.md
+docs/PROJECT_OVERVIEW.md
+docs/ai_engine/*LIVE_TEST_REPORT*.md
+
 # Local planning note (kept locally only)
 # 本地规划笔记，仅本地维护，不推送到远程
 TODO.md
