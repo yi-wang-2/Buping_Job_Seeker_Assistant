@@ -8,7 +8,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -186,7 +186,82 @@ def save_followup_schedule(interval_hours: int) -> dict:
     return get_followup_schedule()
 
 
-def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) -> bool:
+def _build_notification_event(
+    record: dict, result: dict, old_status: str, new_status: str | None,
+) -> dict[str, Any] | None:
+    company = str(record.get("company") or "未知企业")
+    role = str(record.get("role") or "未知岗位")
+    if new_status and new_status != old_status:
+        return {
+            "category": f"status:{new_status}",
+            "label": f"状态更新为“{new_status}”",
+            "title": f"求职状态更新：{new_status}",
+            "record_id": record.get("id"),
+            "event_key": f"status:{record.get('id')}:{old_status}:{new_status}",
+            "dedup_seconds": 86400,
+            "body": (
+                f"企业：{company}\n岗位：{role}\n原状态：{old_status or '未记录'}\n"
+                f"新状态：{new_status}\n网站原文：{result.get('raw_status') or '无'}\n"
+                f"检查时间：{result.get('checked_at') or '未知'}"
+            ),
+        }
+    issue = result.get("result")
+    if issue not in {"login_required", "verification_required"}:
+        return None
+    reason = "登录已失效" if issue == "login_required" else "网站要求人机验证"
+    return {
+        "category": f"auth:{issue}",
+        "label": reason,
+        "title": f"求职跟进提醒：{reason}",
+        "record_id": record.get("id"),
+        "event_key": f"auth:{record.get('id')}:{issue}",
+        "dedup_seconds": max(3600, get_followup_schedule()["interval_hours"] * 3600 - 300),
+        "body": f"企业：{company}\n岗位：{role}\n问题：{reason}",
+    }
+
+
+def _send_notification_batches(
+    pending: list[tuple[dict, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[tuple[dict, dict[str, Any]]]] = {}
+    for record, event in pending:
+        groups.setdefault(event["category"], []).append((record, event))
+
+    batches = []
+    for category, items in groups.items():
+        events = [event for _, event in items]
+        count = len(events)
+        label = events[0]["label"]
+        title = events[0]["title"] if count == 1 else f"求职跟进汇总：{count} 个岗位{label}"
+        body = (
+            f"本轮检查发现 {count} 个岗位{label}。\n\n"
+            + "\n\n---\n\n".join(
+                f"{index}. {event['body']}" for index, event in enumerate(events, 1)
+            )
+        )
+        if category.startswith("auth:"):
+            body += "\n\n请打开不平，在求职记录中重新登录或完成验证。"
+        member_keys = sorted(event["event_key"] for event in events)
+        notification = _safe_notify(
+            title, body,
+            event_key=f"batch:{category}:{'|'.join(member_keys)}",
+            dedup_seconds=min(int(event["dedup_seconds"]) for event in events),
+        )
+        batch = {
+            "category": category, "count": count, "title": title,
+            "record_ids": [event["record_id"] for event in events],
+            **notification,
+        }
+        batches.append(batch)
+        for record, _ in items:
+            record["last_notification"] = batch
+    return batches
+
+
+def _apply_followup_result(
+    record: dict, result: dict, *, notify: bool = False,
+    notification_events: list[tuple[dict, dict[str, Any]]] | None = None,
+) -> bool:
     old_status = str(record.get("status") or "")
     record["last_checked_at"] = result.get("checked_at", "")
     record["followup_state"] = result.get("connection_state", record.get("followup_state", ""))
@@ -214,25 +289,16 @@ def _apply_followup_result(record: dict, result: dict, *, notify: bool = False) 
             "source": "website",
         })
     _stop_rejected_followup(record)
-    notification = None
-    company = str(record.get("company") or "未知企业")
-    role = str(record.get("role") or "未知岗位")
-    if notify and status_changed:
-        notification = _safe_notify(
-            f"求职状态更新：{company}",
-            f"企业：{company}\n岗位：{role}\n原状态：{old_status or '未记录'}\n新状态：{new_status}\n网站原文：{result.get('raw_status') or '无'}\n检查时间：{result.get('checked_at') or '未知'}",
-            event_key=f"status:{record.get('id')}:{old_status}:{new_status}",
-        )
-    elif notify and result.get("result") in {"login_required", "verification_required"}:
-        reason = "登录已失效" if result.get("result") == "login_required" else "网站要求人机验证"
-        notification = _safe_notify(
-            f"求职跟进需要处理：{company}",
-            f"企业：{company}\n岗位：{role}\n问题：{reason}\n请打开不平，在求职记录中重新登录或完成验证。",
-            event_key=f"auth:{record.get('id')}:{result.get('result')}",
-            dedup_seconds=max(3600, get_followup_schedule()["interval_hours"] * 3600 - 300),
-        )
-    if notification:
-        record["last_notification"] = notification
+    event = _build_notification_event(record, result, old_status, new_status)
+    if notify and event:
+        if notification_events is not None:
+            notification_events.append((record, event))
+        else:
+            notification = _safe_notify(
+                event["title"], event["body"], event_key=event["event_key"],
+                dedup_seconds=int(event["dedup_seconds"]),
+            )
+            record["last_notification"] = notification
     return status_changed
 
 
@@ -274,6 +340,7 @@ def run_followup_all() -> dict:
     records = _load_records()
     results = []
     changed_records = []
+    notification_events: list[tuple[dict, dict[str, Any]]] = []
     for record in records:
         if not record.get("followup_enabled"):
             continue
@@ -281,13 +348,19 @@ def run_followup_all() -> dict:
             result = job_followup_service.check_application(record)
         except Exception as exc:
             result = {"result": "error", "connection_state": "error", "message": str(exc), "checked_at": ""}
-        if _apply_followup_result(record, result, notify=True):
+        if _apply_followup_result(
+            record, result, notify=True, notification_events=notification_events,
+        ):
             changed_records.append(record.copy())
         results.append({"id": record.get("id"), **result})
+    notification_batches = _send_notification_batches(notification_events)
     if results:
         _save_records(records)
     _publish_status_changes(changed_records)
-    return {"status": "ok", "checked": len(results), "results": results}
+    return {
+        "status": "ok", "checked": len(results), "results": results,
+        "notification_batches": notification_batches,
+    }
 
 
 # ---- Endpoints ----

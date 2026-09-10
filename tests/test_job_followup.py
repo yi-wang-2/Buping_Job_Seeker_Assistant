@@ -65,6 +65,68 @@ def test_scheduled_followup_publishes_only_confirmed_status_changes(monkeypatch)
     assert published[0]["status"] == "技术面"
 
 
+def test_scheduled_followup_batches_same_type_but_separates_status_from_auth(monkeypatch):
+    records = [
+        {"id": 1, "company": "甲公司", "role": "算法", "status": "简历筛选", "followup_enabled": True, "status_history": []},
+        {"id": 2, "company": "乙公司", "role": "后端", "status": "简历筛选", "followup_enabled": True, "status_history": []},
+        {"id": 3, "company": "丙公司", "role": "产品", "status": "简历筛选", "followup_enabled": True, "status_history": []},
+        {"id": 4, "company": "丁公司", "role": "Agent", "status": "简历筛选", "followup_enabled": True, "status_history": []},
+    ]
+    results = {
+        1: {"result": "login_required", "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z"},
+        2: {"result": "login_required", "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z"},
+        3: {"result": "login_required", "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z"},
+        4: {"result": "changed", "status": "技术面", "raw_status": "进入初试", "connection_state": "connected", "checked_at": "2026-09-10T01:00:00Z"},
+    }
+    sent = []
+    monkeypatch.setattr(job_tracker, "_load_records", lambda: records)
+    monkeypatch.setattr(job_tracker, "_save_records", lambda _records: None)
+    monkeypatch.setattr(job_tracker, "_publish_status_changes", lambda _records: None)
+    monkeypatch.setattr(job_tracker.job_followup_service, "check_application", lambda record: results[record["id"]])
+    monkeypatch.setattr(
+        job_tracker, "_safe_notify",
+        lambda title, body, **kwargs: sent.append((title, body, kwargs)) or {"sent": 1, "results": []},
+    )
+
+    response = job_tracker.run_followup_all()
+
+    assert len(sent) == 2
+    login = next(item for item in sent if "登录已失效" in item[0])
+    interview = next(item for item in sent if "技术面" in item[0])
+    assert "3 个岗位登录已失效" in login[0]
+    assert all(company in login[1] for company in ("甲公司", "乙公司", "丙公司"))
+    assert "丁公司" not in login[1]
+    assert "丁公司" in interview[1]
+    assert "甲公司" not in interview[1]
+    assert sorted(batch["count"] for batch in response["notification_batches"]) == [1, 3]
+    assert all(record.get("last_notification") for record in records)
+
+
+def test_scheduled_followup_splits_different_auth_issue_types(monkeypatch):
+    records = [
+        {"id": 1, "company": "甲公司", "role": "算法", "status": "简历筛选", "followup_enabled": True},
+        {"id": 2, "company": "乙公司", "role": "后端", "status": "简历筛选", "followup_enabled": True},
+    ]
+    sent = []
+    monkeypatch.setattr(job_tracker, "_load_records", lambda: records)
+    monkeypatch.setattr(job_tracker, "_save_records", lambda _records: None)
+    monkeypatch.setattr(job_tracker, "_publish_status_changes", lambda _records: None)
+    monkeypatch.setattr(job_tracker.job_followup_service, "check_application", lambda record: {
+        "result": "login_required" if record["id"] == 1 else "verification_required",
+        "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z",
+    })
+    monkeypatch.setattr(
+        job_tracker, "_safe_notify",
+        lambda title, body, **kwargs: sent.append(title) or {"sent": 1, "results": []},
+    )
+
+    job_tracker.run_followup_all()
+
+    assert len(sent) == 2
+    assert any("登录已失效" in title for title in sent)
+    assert any("人机验证" in title for title in sent)
+
+
 def test_legacy_job_entry_gets_safe_followup_defaults():
     entry = job_tracker.JobEntry(
         id=1, company="示例公司", role="工程师", base="北京", remark="秋招",
