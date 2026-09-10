@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import uuid
+from dataclasses import replace
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +56,13 @@ class SQLiteMemoryRepository:
                 CREATE TABLE IF NOT EXISTS memory_events (
                     id TEXT PRIMARY KEY, memory_id TEXT, operation TEXT NOT NULL,
                     payload_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_candidates (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, namespace TEXT NOT NULL,
+                    key TEXT NOT NULL, value_json TEXT NOT NULL, source TEXT NOT NULL,
+                    confidence REAL NOT NULL, importance INTEGER NOT NULL,
+                    status TEXT NOT NULL, content_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL, reviewed_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS job_descriptions (
                     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, company TEXT, role TEXT,
@@ -153,6 +161,55 @@ class SQLiteMemoryRepository:
             if result.rowcount:
                 db.execute("INSERT INTO memory_events VALUES (?,?,?,?,?)", (str(uuid.uuid4()), memory_id, "DELETE", "{}", self._now()))
         return bool(result.rowcount)
+
+    def create_memory_candidate(self, item: MemoryItem) -> MemoryItem:
+        value_json = self._json(item.value)
+        content_hash = hashlib.sha256(
+            f"{item.user_id}:{item.namespace}:{item.key}:{value_json}".encode("utf-8")
+        ).hexdigest()
+        now = self._now()
+        with self.connection() as db:
+            existing = db.execute(
+                "SELECT id FROM memory_candidates WHERE user_id=? AND content_hash=? AND status='pending'",
+                (item.user_id, content_hash),
+            ).fetchone()
+            candidate_id = existing["id"] if existing else str(uuid.uuid4())
+            if not existing:
+                db.execute(
+                    "INSERT INTO memory_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)",
+                    (candidate_id, item.user_id, item.namespace, item.key, value_json, item.source,
+                     item.confidence, item.importance, "pending", content_hash, now),
+                )
+        return replace(item, id=candidate_id, status="pending")
+
+    def list_memory_candidates(self, user_id: str = "local", status: str = "pending") -> list[dict[str, Any]]:
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT * FROM memory_candidates WHERE user_id=? AND status=? ORDER BY created_at DESC",
+                (user_id, status),
+            ).fetchall()
+        return [{**dict(row), "value": json.loads(row["value_json"])} for row in rows]
+
+    def review_memory_candidate(self, candidate_id: str, accepted: bool) -> MemoryItem | None:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT * FROM memory_candidates WHERE id=? AND status='pending'", (candidate_id,),
+            ).fetchone()
+        if not row:
+            raise KeyError(candidate_id)
+        saved = None
+        if accepted:
+            saved = self.upsert_memory(MemoryItem(
+                namespace=row["namespace"], key=row["key"], value=json.loads(row["value_json"]),
+                user_id=row["user_id"], source="user_confirmed", confidence=1.0,
+                importance=row["importance"],
+            ))
+        with self.connection() as db:
+            db.execute(
+                "UPDATE memory_candidates SET status=?, reviewed_at=? WHERE id=?",
+                ("accepted" if accepted else "rejected", self._now(), candidate_id),
+            )
+        return saved
 
     def clear_memories(self, user_id: str = "local", namespace: str = "") -> int:
         query = "DELETE FROM memory_items WHERE user_id=?"

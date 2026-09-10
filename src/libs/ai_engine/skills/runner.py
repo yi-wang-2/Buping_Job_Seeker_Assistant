@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import replace
-from typing import Any
+from typing import Any, Callable, Mapping
 
-from ..context import ContextItem, ContextKind, ContextManager, TokenBudgetAllocator
+from ..context import ContextItem, ContextKind, ContextManager, ContextProviderResult, TokenBudgetAllocator, model_capability, token_estimator_for_model
 from ..memory import MemoryManager, SQLiteMemoryRepository
 from ..models import LLMRequest, TokenUsage
 from ..optimization import PromptCache, document_fingerprint
+from ..presentation.service import build_skill_presentation
 from ..providers import LLMGateway
 from .base import SkillResult
 from .registry import SkillRegistry
@@ -24,7 +25,8 @@ class SkillRunner:
         cache: PromptCache | None = None,
         memory_manager: MemoryManager | None = None,
         repository: SQLiteMemoryRepository | None = None,
-        available_tools: set[str] | None = None,
+        available_tools: set[str] | Mapping[str, Callable[..., Any]] | None = None,
+        context_providers: Mapping[str, Any] | None = None,
     ) -> None:
         self.registry = registry
         self.gateway = gateway
@@ -33,7 +35,9 @@ class SkillRunner:
         self.cache = cache
         self.memory_manager = memory_manager
         self.repository = repository
-        self.available_tools = frozenset(available_tools or ())
+        self.tool_handlers = dict(available_tools) if isinstance(available_tools, Mapping) else {}
+        self.available_tools = frozenset(self.tool_handlers or (available_tools or ()))
+        self.context_providers = dict(context_providers or {})
 
     def run(
         self,
@@ -45,6 +49,7 @@ class SkillRunner:
         trace_id: str = "",
         user_id: str = "local",
         session_id: str = "",
+        stream_event_sink: Any | None = None,
     ) -> SkillResult:
         skill = self.registry.get(skill_name)
         metadata = skill.metadata
@@ -61,9 +66,20 @@ class SkillRunner:
         try:
             skill.validate_input(validated_inputs)
             memory_context, memories_used = self._recall_memories(metadata.memory_read, user_id)
-            allocation = self.allocator.allocate(metadata.token_budget, metadata.context_weights)
+            provider_items, provider_metadata, provider_warnings, validated_inputs = self._provide_context(
+                metadata.context_providers, metadata.name, validated_inputs, user_id, session_id,
+            )
+            capability = model_capability(provider, model, metadata.token_budget.model_context_limit)
+            effective_budget = replace(
+                metadata.token_budget,
+                model_context_limit=min(metadata.token_budget.model_context_limit, capability.context_window),
+            )
+            allocation = self.allocator.allocate(
+                effective_budget, metadata.context_weights, metadata.context_minimums,
+            )
             context = self.context_manager.build(
-                [*skill.context_items(validated_inputs), *memory_context], allocation,
+                [*skill.context_items(validated_inputs), *provider_items, *memory_context], allocation,
+                estimator=token_estimator_for_model(provider, model) if self.context_manager.model_aware else None,
             )
             messages = skill.build_messages(validated_inputs, context.items)
         except Exception as exc:
@@ -91,7 +107,11 @@ class SkillRunner:
                 "context_items_kept": len(context.items),
                 "context_items_compressed": compressed_count,
                 "context_items_dropped": dropped_count,
+                "model_context_limit": capability.context_window,
+                "tokenizer": capability.tokenizer,
+                **provider_metadata,
             },
+            stream_event_sink=stream_event_sink,
         )
         cache_key = ""
         if self.cache and metadata.cacheable:
@@ -113,15 +133,19 @@ class SkillRunner:
                         cache_hit=True,
                         memories_used=tuple(dict.fromkeys((*memories_used, *result.memories_used))),
                         trace_id=trace_id,
+                        warnings=tuple(dict.fromkeys((*provider_warnings, *result.warnings))),
+                        context_metadata=provider_metadata,
                     )
                     result = self._collect_memory_writes(skill, result, validated_inputs)
                     result = self._write_memories(metadata.memory_write, result, user_id)
+                    result = self._execute_tools(skill, result, validated_inputs)
                     run_id = self._record_run(metadata.name, metadata.version, input_hash, model, result.usage, True,
                                               "success", "", user_id, session_id)
                     return replace(result, run_id=run_id)
                 except Exception as exc:
                     # Never let a malformed historical response poison future calls.
                     self.cache.delete(cache_key)
+        response = None
         try:
             response = self.gateway.invoke(request)
             result = self._validate_output(skill, skill.parse_output(response), validated_inputs)
@@ -131,16 +155,53 @@ class SkillRunner:
                 result,
                 memories_used=tuple(dict.fromkeys((*memories_used, *result.memories_used))),
                 trace_id=trace_id,
+                warnings=tuple(dict.fromkeys((*provider_warnings, *result.warnings))),
+                context_metadata=provider_metadata,
             )
             result = self._collect_memory_writes(skill, result, validated_inputs)
             result = self._write_memories(metadata.memory_write, result, user_id)
+            result = self._execute_tools(skill, result, validated_inputs)
             run_id = self._record_run(metadata.name, metadata.version, input_hash, model, result.usage, False,
                                       "success", "", user_id, session_id)
             return replace(result, run_id=run_id)
         except Exception as exc:
-            self._record_run(metadata.name, metadata.version, input_hash, model, TokenUsage(), False,
+            failure_usage = response.usage if response is not None else TokenUsage()
+            try:
+                setattr(exc, "skill_usage", failure_usage)
+            except Exception:
+                pass
+            self._record_run(metadata.name, metadata.version, input_hash, model, failure_usage, False,
                              "error", type(exc).__name__, user_id, session_id)
             raise
+
+    def _provide_context(
+        self, names: tuple[str, ...], skill_name: str, inputs: dict[str, Any],
+        user_id: str, session_id: str,
+    ) -> tuple[list[ContextItem], dict[str, Any], tuple[str, ...], dict[str, Any]]:
+        items: list[ContextItem] = []
+        metadata: dict[str, Any] = {}
+        warnings: list[str] = []
+        enriched = dict(inputs)
+        for name in names:
+            provider = self.context_providers.get(name)
+            if provider is None:
+                warnings.append(f"Optional context provider is unavailable: {name}")
+                continue
+            result = provider.provide(
+                skill_name=skill_name, inputs=dict(enriched), user_id=user_id,
+                session_id=session_id or None,
+            )
+            if not isinstance(result, ContextProviderResult):
+                raise TypeError(f"Context provider '{name}' returned an invalid result")
+            for key, value in result.input_updates.items():
+                current = enriched.get(key)
+                if current not in (None, "", [], {}) and current != value:
+                    raise ValueError(f"Context provider '{name}' cannot overwrite input: {key}")
+                enriched[key] = value
+            items.extend(result.items)
+            metadata.update(result.metadata)
+            warnings.extend(result.warnings)
+        return items, metadata, tuple(dict.fromkeys(warnings)), enriched
 
     @staticmethod
     def _validate_inputs(skill: Any, inputs: dict[str, Any]) -> dict[str, Any]:
@@ -149,6 +210,21 @@ class SkillRunner:
             return dict(inputs)
         validated = schema.model_validate(inputs)
         return validated.model_dump()
+
+    def _execute_tools(self, skill: Any, result: SkillResult, inputs: dict[str, Any]) -> SkillResult:
+        builder = getattr(skill, "build_tool_calls", None)
+        if not callable(builder):
+            return result
+        calls = tuple(builder(result, inputs) or ())
+        outputs: list[dict[str, Any]] = []
+        for call in calls:
+            if call.name not in skill.metadata.tools:
+                raise PermissionError(f"Skill requested undeclared tool: {call.name}")
+            handler = self.tool_handlers.get(call.name)
+            if not handler:
+                raise PermissionError(f"Tool handler is unavailable: {call.name}")
+            outputs.append({"name": call.name, "output": handler(**call.arguments)})
+        return replace(result, tool_results=tuple(outputs))
 
     @staticmethod
     def _validate_output(skill: Any, result: SkillResult, inputs: dict[str, Any]) -> SkillResult:
@@ -161,6 +237,9 @@ class SkillRunner:
         validator = getattr(skill, "validate_output", None)
         if callable(validator):
             validator(result, inputs)
+        presentation = build_skill_presentation(skill, result, inputs)
+        if presentation is not None:
+            result = replace(result, presentation=presentation)
         return result
 
     def _recall_memories(self, namespaces: tuple[str, ...], user_id: str) -> tuple[list[ContextItem], tuple[str, ...]]:

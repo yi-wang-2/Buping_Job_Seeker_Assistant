@@ -7,6 +7,7 @@ from ..models import LLMRequest
 
 class ChatClient(Protocol):
     def invoke(self, messages: list[dict[str, str]]): ...
+    def stream(self, messages: list[dict[str, str]]): ...
 
 
 class ClientFactory(Protocol):

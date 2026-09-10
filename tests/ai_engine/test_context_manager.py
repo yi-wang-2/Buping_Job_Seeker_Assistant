@@ -3,6 +3,8 @@ from src.libs.ai_engine.context import (
     ContextItem,
     ContextKind,
     ContextManager,
+    model_capability,
+    token_estimator_for_model,
 )
 
 
@@ -27,4 +29,33 @@ def test_context_manager_respects_section_budget():
     bundle = manager.build(items, BudgetAllocation(2, {"history": 2}))
 
     assert bundle.total_tokens <= 2
+
+
+def test_model_capability_and_tokenizer_have_safe_fallbacks():
+    assert model_capability("openai", "gpt-4o-mini").context_window == 128000
+    assert model_capability("custom", "unknown", 24000).context_window == 24000
+    assert token_estimator_for_model("custom", "unknown").count("中文 token test") > 0
+
+
+def test_context_manager_borrows_unused_section_budget():
+    manager = ContextManager()
+    items = [ContextItem("task", ContextKind.TASK, "one two three four", "job", relevance=.9)]
+    allocation = BudgetAllocation(8, {"task": 2, "history": 6}, {"task": 2, "history": 2})
+
+    bundle = manager.build(items, allocation)
+
+    assert bundle.items[0].content == "one two three four"
+    assert any(decision.reason == "borrowed_elastic_budget" for decision in bundle.decisions)
+
+
+def test_protected_context_uses_global_budget_not_section_cap():
+    manager = ContextManager()
+    items = [ContextItem(
+        "request", ContextKind.REQUEST, "one two three four", "user", protected=True,
+    )]
+
+    bundle = manager.build(items, BudgetAllocation(6, {"request": 1, "task": 5}))
+
+    assert bundle.items[0].content == "one two three four"
+    assert bundle.decisions[0].reason == "protected_global_budget"
 

@@ -8,38 +8,20 @@ from ..utils import LoggerChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 import config as cfg
-
-try:
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
-        from langchain_anthropic import ChatAnthropic as ChatModel
-    else:
-        from langchain_openai import ChatOpenAI as ChatModel
-except Exception:
-    from langchain_openai import ChatOpenAI as ChatModel
+from src.libs.ai_engine.observability.langchain_tracing import LangChainGatewayChatClient
+from src.libs.ai_engine.observability import JsonlTraceSink
+from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
 
 
 def _create_chat_model(api_key: str):
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
-        model_name = cfg.ANTHROPIC_MODEL or cfg.LLM_MODEL or ""
-        base_url = cfg.ANTHROPIC_BASE_URL or ""
-        try:
-            if base_url:
-                return ChatModel(model=model_name, api_key=api_key, base_url=base_url, temperature=0.4)
-            return ChatModel(model=model_name, api_key=api_key, temperature=0.4)
-        except TypeError:
-            try:
-                if base_url:
-                    return ChatModel(model=model_name, api_key=api_key, anthropic_api_url=base_url, temperature=0.4)
-                return ChatModel(model=model_name, api_key=api_key, temperature=0.4)
-            except TypeError:
-                return ChatModel(model=model_name, api_key=api_key, temperature=0.4)
-
-    model_name = cfg.LLM_MODEL or "gpt-4o-mini"
-    base_url = cfg.LLM_API_URL or ""
-    if base_url:
-        return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4)
-    return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4)
-from langchain_openai import OpenAIEmbeddings
+    anthropic = cfg.LLM_MODEL_TYPE in {"anthropic", "claude", "minimax-anth"}
+    provider = "anthropic" if anthropic else cfg.LLM_MODEL_TYPE or "openai"
+    model_name = (cfg.ANTHROPIC_MODEL if anthropic else cfg.LLM_MODEL) or "gpt-4o-mini"
+    base_url = (cfg.ANTHROPIC_BASE_URL if anthropic else cfg.LLM_API_URL) or ""
+    return LangChainGatewayChatClient(
+        LLMGateway(GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2), trace_sink=JsonlTraceSink()),
+        provider=provider, model=model_name, skill="cover_letter", temperature=0.4, max_output_tokens=4096,
+    )
 from pathlib import Path
 from dotenv import load_dotenv
 from requests.exceptions import HTTPError as HTTPStatusError
@@ -61,7 +43,6 @@ class LLMCoverLetterJobDescription:
         api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
         llm_client = _create_chat_model(api_key)
         self.llm_cheap = LoggerChatModel(llm_client)
-        self.llm_embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
         self.strings = strings
 
     @staticmethod

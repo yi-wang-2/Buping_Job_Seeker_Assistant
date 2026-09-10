@@ -5,7 +5,7 @@ from typing import Any
 
 from ....context import ContextItem, ContextKind, TokenBudget
 from ....models import LLMResponse, Message
-from ...base import SkillMetadata, SkillResult
+from ...base import SkillMetadata, SkillResult, ToolCall
 from ...schemas import JDAnalysis, JDAnalyzerInput
 
 
@@ -20,6 +20,7 @@ class JDAnalyzerSkill:
         tags=("job", "analysis"),
         input_schema=JDAnalyzerInput,
         output_schema=JDAnalysis,
+        tools=("archive_job_description",),
     )
 
     SYSTEM = """你是职位描述分析器。仅根据输入 JD 提取信息，不得补充未出现的要求。严格输出 JSON，字段为 role、company、responsibilities、required_skills、preferred_skills、experience_years、education、location、salary、keywords。未知标量使用 null，未知列表使用空列表。"""
@@ -44,4 +45,12 @@ class JDAnalyzerSkill:
         if not isinstance(parsed, dict):
             raise ValueError("JD analyzer output must be a JSON object")
         return SkillResult(content=raw, structured_output=parsed, usage=response.usage)
+
+    def build_tool_calls(self, result: SkillResult, inputs: dict[str, Any]) -> tuple[ToolCall, ...]:
+        analysis = dict(result.structured_output or {})
+        return (ToolCall("archive_job_description", {
+            "raw_text": inputs["job_description"], "normalized": analysis,
+            "company": str(analysis.get("company") or ""), "role": str(analysis.get("role") or ""),
+            "source_url": str(inputs.get("source_url") or ""),
+        }),)
 

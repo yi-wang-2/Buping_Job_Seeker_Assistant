@@ -44,7 +44,12 @@ class LLMGateway:
 
         for attempt in range(self.config.max_retries + 1):
             try:
-                raw = client.invoke([message.as_dict() for message in request.messages])
+                messages = [message.as_dict() for message in request.messages]
+                raw = (
+                    self._invoke_stream(client, messages, request.stream_event_sink)
+                    if request.stream_event_sink and callable(getattr(client, "stream", None))
+                    else client.invoke(messages)
+                )
                 response = self._normalize_response(raw, request, retries, started)
                 self._emit(trace_id, request, response=response)
                 return response
@@ -59,6 +64,80 @@ class LLMGateway:
         raise ProviderInvocationError(
             f"{request.provider} invocation failed after {retries} retries: {error}"
         ) from error
+
+    @staticmethod
+    def _invoke_stream(client: ChatClient, messages: list[dict[str, str]], sink: Callable) -> Any:
+        aggregate = None
+        reasoning_characters = 0
+        text_characters = 0
+        reasoning_seen = False
+        text_seen = False
+        for chunk in client.stream(messages):
+            aggregate = chunk if aggregate is None else aggregate + chunk
+            reasoning_delta, text_delta = LLMGateway._stream_delta_sizes(chunk)
+            reasoning_characters += reasoning_delta
+            text_characters += text_delta
+            if reasoning_delta:
+                reasoning_seen = True
+                sink({
+                    "kind": "thinking",
+                    "reasoning_characters": reasoning_characters,
+                    "text_characters": text_characters,
+                })
+            if text_delta and not text_seen:
+                text_seen = True
+                sink({
+                    "kind": "text_started",
+                    "reasoning_characters": reasoning_characters,
+                    "text_characters": text_characters,
+                    "reasoning_seen": reasoning_seen,
+                })
+        if aggregate is None:
+            raise ValueError("Provider stream returned no chunks")
+        sink({
+            "kind": "stream_completed",
+            "reasoning_characters": reasoning_characters,
+            "text_characters": text_characters,
+            "reasoning_seen": reasoning_seen,
+        })
+        return aggregate
+
+    @staticmethod
+    def _stream_delta_sizes(chunk: Any) -> tuple[int, int]:
+        content_blocks = getattr(chunk, "content_blocks", None)
+        if content_blocks:
+            reasoning = 0
+            text = 0
+            for block in content_blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "reasoning":
+                    reasoning += len(str(block.get("reasoning") or ""))
+                elif block.get("type") == "text":
+                    text += len(str(block.get("text") or ""))
+            if reasoning or text:
+                return reasoning, text
+
+        content = getattr(chunk, "content", "")
+        if isinstance(content, str):
+            additional = getattr(chunk, "additional_kwargs", {}) or {}
+            reasoning = len(str(
+                additional.get("reasoning_content") or additional.get("thinking") or ""
+            )) if isinstance(additional, dict) else 0
+            return reasoning, len(content)
+        reasoning = 0
+        text = 0
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    text += len(str(block))
+                    continue
+                block_type = str(block.get("type") or "")
+                if block_type in {"thinking", "thinking_delta", "reasoning"}:
+                    reasoning += len(str(block.get("thinking") or block.get("reasoning") or ""))
+                elif block_type in {"text", "text_delta"}:
+                    text += len(str(block.get("text") or ""))
+        return reasoning, text
 
     def _create_client(self, request: LLMRequest) -> ChatClient:
         provider = request.provider.strip().lower()
@@ -75,6 +154,7 @@ class LLMGateway:
             common["api_key"] = self.config.api_key
             if self.config.base_url:
                 common["base_url"] = self.config.base_url
+            common["timeout"] = request.timeout_seconds
             return ChatAnthropic(**common)
 
         if provider in {"ollama"}:
@@ -97,6 +177,7 @@ class LLMGateway:
             common["api_key"] = self.config.api_key
             if self.config.base_url:
                 common["base_url"] = self.config.base_url
+            common["timeout"] = request.timeout_seconds
             return ChatOpenAI(**common)
 
         raise ProviderConfigurationError(f"Unsupported provider: {request.provider}")

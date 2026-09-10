@@ -17,7 +17,10 @@ from langchain_core.prompt_values import StringPromptValue
 from langchain_core.prompts import ChatPromptTemplate
 from Levenshtein import distance
 
-import ai_hawk.llm.prompts as prompts
+try:
+    import ai_hawk.llm.prompts as prompts
+except ModuleNotFoundError:
+    prompts = None  # The removed upstream package is not required by the Web Runtime.
 from config import JOB_SUITABILITY_SCORE
 from src.utils.constants import (
     AVAILABILITY,
@@ -73,6 +76,9 @@ from src.utils.constants import (
 from src.job import Job
 from src.logging import logger
 import config as cfg
+from src.libs.ai_engine.models import LLMRequest, Message
+from src.libs.ai_engine.observability import JsonlTraceSink
+from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
 
 load_dotenv()
 
@@ -81,6 +87,46 @@ class AIModel(ABC):
     @abstractmethod
     def invoke(self, prompt: str) -> str:
         pass
+
+
+class GatewayLegacyModel(AIModel):
+    """LangChain-compatible bridge keeping legacy prompts on the unified Gateway."""
+
+    def __init__(self, api_key: str, provider: str, model: str, base_url: str = "") -> None:
+        self.provider = provider
+        self.model_name = model
+        self.gateway = LLMGateway(
+            GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2),
+            trace_sink=JsonlTraceSink(),
+        )
+
+    def invoke(self, prompt) -> BaseMessage:
+        raw_messages = prompt.to_messages() if hasattr(prompt, "to_messages") else prompt
+        if isinstance(raw_messages, str):
+            messages = (Message("user", raw_messages),)
+        else:
+            normalized = []
+            for item in raw_messages:
+                if isinstance(item, dict):
+                    role, content = item.get("role", "user"), item.get("content", "")
+                else:
+                    role = getattr(item, "type", None) or getattr(item, "role", "user")
+                    content = getattr(item, "content", str(item))
+                role = "assistant" if role in {"ai", "assistant"} else "system" if role == "system" else "user"
+                normalized.append(Message(role, str(content)))
+            messages = tuple(normalized) or (Message("user", ""),)
+        response = self.gateway.invoke(LLMRequest(
+            messages=messages, model=self.model_name, provider=self.provider,
+            temperature=0.4, max_output_tokens=4096, timeout_seconds=120,
+            metadata={"skill": "legacy_gpt_answerer", "legacy_adapter": True},
+        ))
+        return AIMessage(
+            content=response.content, id=response.response_id or None,
+            response_metadata={"model_name": response.model, "finish_reason": response.finish_reason},
+            usage_metadata={"input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                            "total_tokens": response.usage.total_tokens},
+        )
 
 
 class OpenAIModel(AIModel):
@@ -194,11 +240,11 @@ class AIAdapter:
         logger.debug(f"Using {llm_model_type} with {llm_model}")
 
         if llm_model_type == OPENAI:
-            return OpenAIModel(api_key, llm_model)
+            return GatewayLegacyModel(api_key, "openai", llm_model, llm_api_url)
         elif llm_model_type == CLAUDE:
-            return ClaudeModel(api_key, llm_model)
+            return GatewayLegacyModel(api_key, "anthropic", llm_model, llm_api_url)
         elif llm_model_type == OLLAMA:
-            return OllamaModel(llm_model, llm_api_url)
+            return GatewayLegacyModel(api_key, "ollama", llm_model, llm_api_url)
         elif llm_model_type == GEMINI:
             return GeminiModel(api_key, llm_model)
         elif llm_model_type == HUGGINGFACE:
@@ -462,6 +508,10 @@ class LoggerChatModel:
 
 class GPTAnswerer:
     def __init__(self, config, llm_api_key):
+        if prompts is None:
+            raise RuntimeError(
+                "Legacy GPTAnswerer prompts are unavailable. Use the Web AI Runtime/Skills entry points instead."
+            )
         self.ai_adapter = AIAdapter(config, llm_api_key)
         self.llm_cheap = LoggerChatModel(self.ai_adapter)
 

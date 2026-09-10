@@ -10,6 +10,7 @@ def test_allocator_uses_entire_input_budget():
     assert allocation.total_input == 27000
     assert sum(allocation.sections.values()) == 27000
     assert allocation.sections["system"] >= 2000
+    assert allocation.minimums["request"] >= 1200
 
 
 def test_invalid_budget_fails():

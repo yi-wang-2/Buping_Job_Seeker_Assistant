@@ -16,8 +16,47 @@ class TextRewriterInput(SkillInputModel):
     context: str = ""
 
 
+class ResumeReviewerInput(SkillInputModel):
+    resume_text: str = Field(min_length=1)
+    resume_blocks: list[dict[str, str]] = Field(default_factory=list)
+    request: str = "请分析当前简历的优缺点"
+    language: Literal["zh", "en"] = "zh"
+    artifact_id: str = "resume.current"
+    artifact_version: str = "unsaved"
+
+
+class ResumeReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    section: str
+    title: str
+    analysis: str
+    evidence_quote: str = Field(min_length=1)
+    block_id: str = ""
+
+
+class ResumeReviewPriority(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    priority: Literal["high", "medium", "low"]
+    action: str
+    reason: str
+
+
+class ResumeReviewOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    overall_summary: str = Field(min_length=1)
+    strengths: list[ResumeReviewFinding] = Field(default_factory=list)
+    weaknesses: list[ResumeReviewFinding] = Field(default_factory=list)
+    priorities: list[ResumeReviewPriority] = Field(default_factory=list)
+    grounding_status: Literal["grounded", "partially_grounded"] = "grounded"
+    grounding_removed_count: int = Field(default=0, ge=0)
+
+
 class JDAnalyzerInput(SkillInputModel):
     job_description: str = Field(min_length=1)
+    source_url: str = ""
 
 
 class JDAnalysis(BaseModel):
@@ -52,6 +91,11 @@ class InterviewCoachInput(SkillInputModel):
     question_count: int = Field(default=10, ge=1, le=50)
     language: Literal["zh", "en"] = "zh"
     prepared_prompt: str = ""
+    knowledge_context: str = ""
+    interview_blueprint: dict[str, Any] = Field(default_factory=dict)
+    knowledge_source_ids: list[str] = Field(default_factory=list)
+    knowledge_unit_ids: list[str] = Field(default_factory=list)
+    selected_knowledge_source_ids: list[str] = Field(default_factory=list)
 
 
 class MockInterviewerInput(SkillInputModel):
@@ -59,6 +103,8 @@ class MockInterviewerInput(SkillInputModel):
     resume: str = ""
     job_description: str = ""
     history: list[dict[str, Any]] = Field(default_factory=list)
+    interview_type: str = "综合面试"
+    selected_knowledge_source_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_source(self) -> "MockInterviewerInput":
@@ -96,6 +142,38 @@ class CareerAdviceOutput(BaseModel):
     priorities: list[str] = Field(default_factory=list)
     action_plan: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+
+
+class JobRecommenderInput(SkillInputModel):
+    query: str = "请推荐最适合我的岗位"
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    jobs: list[dict[str, Any]] = Field(min_length=1, max_length=50)
+    limit: int = Field(default=10, ge=1, le=20)
+    language: Literal["zh", "en"] = "zh"
+
+
+class JobRecommendationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    fit_highlights: list[str] = Field(default_factory=list)
+    cautions: list[str] = Field(default_factory=list)
+
+
+class JobRecommendationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    recommendations: list[JobRecommendationItem] = Field(default_factory=list)
+
+
+class DirectChatInput(SkillInputModel):
+    message: str = Field(min_length=1)
+    page: str
+    workspace_context: dict[str, Any] = Field(default_factory=dict)
+    conversation_summary: str = ""
+    language: Literal["zh", "en"] = "zh"
 
 
 class JobStatusClassifierInput(SkillInputModel):

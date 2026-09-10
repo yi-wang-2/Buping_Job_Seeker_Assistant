@@ -52,18 +52,12 @@ def analyze_job_description(
     bundle = build_ai_runtime(config, [skill], trace_sink=JsonlTraceSink())
     result = bundle.runtime.execute(
         skill.metadata.name,
-        {"job_description": job_description},
+        {"job_description": job_description, "source_url": source_url},
         provider=config["provider"],
         model=config["model"],
     )
     analysis = result.structured_output or {}
-    archive = bundle.repository.archive_job_description(
-        job_description,
-        analysis,
-        company=str(analysis.get("company") or ""),
-        role=str(analysis.get("role") or ""),
-        source_url=source_url,
-    )
+    archive = next((item["output"] for item in result.tool_results if item["name"] == "archive_job_description"), {})
     return {
         "analysis": analysis,
         "archive": archive,

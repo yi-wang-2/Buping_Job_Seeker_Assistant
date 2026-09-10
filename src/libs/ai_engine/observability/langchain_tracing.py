@@ -91,6 +91,21 @@ class GatewayChatClient:
         ))
 
 
+class LangChainGatewayChatClient(GatewayChatClient):
+    """Gateway adapter returning an AIMessage for legacy LCEL chains."""
+
+    def invoke(self, messages: Any, *, trace_metadata: dict[str, Any] | None = None) -> Any:
+        response = super().invoke(messages, trace_metadata=trace_metadata)
+        from langchain_core.messages import AIMessage
+        return AIMessage(
+            content=response.content, id=response.response_id or None,
+            response_metadata={"model_name": response.model, "finish_reason": response.finish_reason},
+            usage_metadata={"input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                            "total_tokens": response.usage.total_tokens},
+        )
+
+
 class SkillChatClient:
     """Compatibility adapter that routes legacy ``chat.invoke`` calls through a Skill."""
 

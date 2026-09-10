@@ -88,9 +88,35 @@ def _extract_pdf(raw: bytes) -> str:
     except Exception as exc:
         errors.append(f"pdfminer failed: {exc!r}")
 
+    # PyMuPDF delegates OCR to the local Tesseract runtime and keeps document
+    # contents on-device. This path is reached only when both text extractors
+    # found no usable text, so normal PDFs do not pay the OCR cost.
+    try:
+        import fitz
+        doc = fitz.open(stream=raw, filetype="pdf")
+        language = os.getenv("PDF_OCR_LANGUAGES", "chi_sim+eng")
+        pages = []
+        for page in doc:
+            text_page = page.get_textpage_ocr(language=language, dpi=200, full=True)
+            pages.append(page.get_text(textpage=text_page) or "")
+        doc.close()
+        text = _clean_extracted_text("\n".join(pages))
+        if text and not _looks_like_pdf_binary_decode(text):
+            logger.info("PDF text extracted: method=local-ocr languages={} chars={}", language, len(text))
+            return text
+        errors.append(f"local OCR produced unusable text chars={len(text)}")
+    except Exception as exc:
+        errors.append(f"local OCR unavailable: {exc!r}")
+
     # Last resort for malformed text-like PDFs. This should be rare; log loudly
     # because binary-looking output will hurt the LLM extraction step.
     text = raw.decode("utf-8", errors="replace")
+    if _looks_like_pdf_binary_decode(text):
+        raise ValueError(
+            "PDF contains no extractable text and local OCR is unavailable. "
+            "Install Tesseract language data (chi_sim and eng), or set PDF_OCR_LANGUAGES. "
+            f"Diagnostics: {'; '.join(errors)}"
+        )
     logger.warning(
         "PDF text extraction fell back to raw decode: chars={} errors={}",
         len(text),
@@ -576,9 +602,9 @@ def _call_llm(prompt: str, api_key: str, model_type: str = "anthropic",
     Uses the underlying LLM client directly (not LoggerChatModel.__call__,
     which expects to be part of a LangChain chain). Returns the raw AIMessage.
     """
-    from src.libs.resume_and_cover_builder.llm.llm_generate_resume import (
-        _create_chat_model,
-    )
+    from src.libs.ai_engine.observability.langchain_tracing import LangChainGatewayChatClient
+    from src.libs.ai_engine.observability import JsonlTraceSink
+    from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
     import config as cfg
 
     try:
@@ -613,7 +639,13 @@ def _call_llm(prompt: str, api_key: str, model_type: str = "anthropic",
             cfg.ANTHROPIC_BASE_URL = normalized_base_url
             cfg.ANTHROPIC_AUTH_TOKEN = api_key
 
-        client = _create_chat_model(api_key)
+        client = LangChainGatewayChatClient(
+            LLMGateway(
+                GatewayConfig(api_key=api_key, base_url=normalized_base_url, max_retries=2),
+                trace_sink=JsonlTraceSink(),
+            ), provider=normalized_model_type, model=model_name or cfg.LLM_MODEL,
+            skill="resume_document_parser", temperature=0.1, max_output_tokens=6000,
+        )
 
         # Call the underlying chat model directly with a HumanMessage.
         # This avoids both LangChain's template .format() parser (which

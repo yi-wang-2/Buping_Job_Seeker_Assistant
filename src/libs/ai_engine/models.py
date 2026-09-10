@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -42,6 +42,9 @@ class LLMRequest:
     max_output_tokens: int = 4096
     timeout_seconds: float = 120.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    stream_event_sink: Callable[[dict[str, Any]], None] | None = field(
+        default=None, repr=False, compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.messages:

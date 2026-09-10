@@ -8,6 +8,13 @@ from pydantic import BaseModel
 from ..context import ContextItem, TokenBudget
 from ..memory import MemoryItem
 from ..models import LLMResponse, Message, TokenUsage
+from ..presentation.models import ResponseDocument
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +29,8 @@ class SkillMetadata:
     tags: tuple[str, ...] = ()
     cacheable: bool = True
     context_weights: dict[str, float] | None = None
+    context_minimums: dict[str, int] | None = None
+    context_providers: tuple[str, ...] = ()
     prompt_version: str = "1"
     schema_version: str = "1"
     input_schema: type[BaseModel] | None = None
@@ -56,6 +65,9 @@ class SkillResult:
     warnings: tuple[str, ...] = ()
     trace_id: str = ""
     run_id: str = ""
+    presentation: ResponseDocument | None = None
+    tool_results: tuple[dict[str, Any], ...] = ()
+    context_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Skill(Protocol):

@@ -29,6 +29,10 @@ class MemorySettingsRequest(BaseModel):
     cache_enabled: bool
 
 
+class MemoryReviewRequest(BaseModel):
+    accepted: bool
+
+
 def serialize(item: MemoryItem) -> dict[str, Any]:
     data = asdict(item)
     for field in ("created_at", "updated_at", "expires_at"):
@@ -45,6 +49,24 @@ def list_memory(namespace: str = "") -> dict[str, Any]:
 def write_memory(req: MemoryWriteRequest) -> dict[str, Any]:
     item = repository().upsert_memory(MemoryItem(**req.model_dump()))
     return serialize(item)
+
+
+@router.get("/candidates")
+def list_memory_candidates() -> dict[str, Any]:
+    items = repository().list_memory_candidates()
+    for item in items:
+        item.pop("value_json", None)
+    return {"items": items}
+
+
+@router.post("/candidates/{candidate_id}/review")
+def review_memory_candidate(candidate_id: str, req: MemoryReviewRequest) -> dict[str, Any]:
+    try:
+        saved = repository().review_memory_candidate(candidate_id, req.accepted)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Memory candidate not found") from exc
+    return {"status": "accepted" if req.accepted else "rejected",
+            "memory": serialize(saved) if saved else None}
 
 
 @router.delete("/{memory_id}", status_code=204)

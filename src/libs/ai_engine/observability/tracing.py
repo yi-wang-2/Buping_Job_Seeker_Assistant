@@ -59,6 +59,13 @@ class JsonlTraceSink:
                 "items_compressed": int(request.metadata.get("context_items_compressed", 0)),
                 "items_dropped": int(request.metadata.get("context_items_dropped", 0)),
             },
+            "knowledge": {
+                "source_ids": list(request.metadata.get("knowledge_source_ids") or []),
+                "unit_ids": list(request.metadata.get("knowledge_unit_ids") or []),
+                "index_version": str(request.metadata.get("knowledge_index_version") or ""),
+                "retrieval_ms": float(request.metadata.get("knowledge_retrieval_ms") or 0),
+                "candidates": int(request.metadata.get("knowledge_candidates") or 0),
+            },
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock, self.path.open("a", encoding="utf-8") as handle:

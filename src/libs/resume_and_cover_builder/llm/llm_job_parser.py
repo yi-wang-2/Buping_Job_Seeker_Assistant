@@ -7,37 +7,20 @@ from src.libs.resume_and_cover_builder.utils import LoggerChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 import config as cfg
-
-try:
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
-        from langchain_anthropic import ChatAnthropic as ChatModel
-    else:
-        from langchain_openai import ChatOpenAI as ChatModel
-except Exception:
-    from langchain_openai import ChatOpenAI as ChatModel
+from src.libs.ai_engine.observability.langchain_tracing import LangChainGatewayChatClient
+from src.libs.ai_engine.observability import JsonlTraceSink
+from src.libs.ai_engine.providers import GatewayConfig, LLMGateway
 
 
 def _create_chat_model(api_key: str):
-    if cfg.LLM_MODEL_TYPE == 'anthropic':
-        model_name = cfg.ANTHROPIC_MODEL or cfg.LLM_MODEL or ""
-        base_url = cfg.ANTHROPIC_BASE_URL or ""
-        try:
-            if base_url:
-                return ChatModel(model=model_name, api_key=api_key, base_url=base_url, temperature=0.4)
-            return ChatModel(model=model_name, api_key=api_key, temperature=0.4)
-        except TypeError:
-            try:
-                if base_url:
-                    return ChatModel(model=model_name, api_key=api_key, anthropic_api_url=base_url, temperature=0.4)
-                return ChatModel(model=model_name, api_key=api_key, temperature=0.4)
-            except TypeError:
-                return ChatModel(model=model_name, api_key=api_key, temperature=0.4)
-
-    model_name = cfg.LLM_MODEL or "gpt-4o-mini"
-    base_url = cfg.LLM_API_URL or ""
-    if base_url:
-        return ChatModel(model_name=model_name, openai_api_key=api_key, base_url=base_url, temperature=0.4)
-    return ChatModel(model_name=model_name, openai_api_key=api_key, temperature=0.4)
+    anthropic = cfg.LLM_MODEL_TYPE in {"anthropic", "claude", "minimax-anth"}
+    provider = "anthropic" if anthropic else cfg.LLM_MODEL_TYPE or "openai"
+    model_name = (cfg.ANTHROPIC_MODEL if anthropic else cfg.LLM_MODEL) or "gpt-4o-mini"
+    base_url = (cfg.ANTHROPIC_BASE_URL if anthropic else cfg.LLM_API_URL) or ""
+    return LangChainGatewayChatClient(
+        LLMGateway(GatewayConfig(api_key=api_key, base_url=base_url, max_retries=2), trace_sink=JsonlTraceSink()),
+        provider=provider, model=model_name, skill="legacy_jd_parser", temperature=0.4, max_output_tokens=2048,
+    )
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from loguru import logger
@@ -45,9 +28,6 @@ from pathlib import Path
 from langchain_core.prompt_values import StringPromptValue
 from langchain_core.runnables import RunnablePassthrough
 from langchain_text_splitters import TokenTextSplitter
-from langchain_community.embeddings import OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from lib_resume_builder_AIHawk.config import global_config
 from langchain_community.document_loaders import TextLoader
 from requests.exceptions import HTTPError as HTTPStatusError  # HTTP error handling
 import openai
@@ -68,8 +48,7 @@ class LLMParser:
         api_key = openai_api_key or cfg.ANTHROPIC_AUTH_TOKEN
         llm_client = _create_chat_model(api_key)
         self.llm = LoggerChatModel(llm_client)
-        self.llm_embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)  # Initialize embeddings
-        self.vectorstore = None  # Will be initialized after document loading
+        self.document_chunks: list[str] = []
 
     @staticmethod
     def _preprocess_template_string(template: str) -> str:
@@ -109,13 +88,7 @@ class LLMParser:
         all_splits = text_splitter.split_documents(document)
         logger.debug(f"Text split into {len(all_splits)} fragments.")
         
-        # Create the vectorstore using FAISS
-        try:
-            self.vectorstore = FAISS.from_documents(documents=all_splits, embedding=self.llm_embeddings)
-            logger.debug("Vectorstore successfully initialized.")
-        except Exception as e:
-            logger.error(f"Error during vectorstore creation: {e}")
-            raise
+        self.document_chunks = [item.page_content for item in all_splits if item.page_content.strip()]
 
     def _retrieve_context(self, query: str, top_k: int = 3) -> str:
         """
@@ -126,12 +99,15 @@ class LLMParser:
         Returns:
             str: Concatenated text fragments.
         """
-        if not self.vectorstore:
+        if not self.document_chunks:
             raise ValueError("Vectorstore not initialized. Run extract_job_description first.")
-        
-        retriever = self.vectorstore.as_retriever()
-        retrieved_docs = retriever.get_relevant_documents(query)[:top_k]
-        context = "\n\n".join(doc.page_content for doc in retrieved_docs)
+        terms = set(re.findall(r"[a-z0-9_+#.-]+", query.lower()))
+        ranked = sorted(
+            self.document_chunks,
+            key=lambda chunk: sum(term in chunk.lower() for term in terms),
+            reverse=True,
+        )
+        context = "\n\n".join(ranked[:top_k])
         logger.debug(f"Context retrieved for query '{query}': {context[:200]}...")  # Log the first 200 characters
         return context
     

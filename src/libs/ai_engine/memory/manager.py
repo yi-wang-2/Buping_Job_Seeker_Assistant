@@ -17,6 +17,8 @@ class MemoryManager:
             return None
         if item.source != "user" and item.confidence < 0.8:
             return None
+        if item.source not in {"user", "user_confirmed"}:
+            return self.repository.create_memory_candidate(item)
         return self.repository.upsert_memory(item)
 
     def recall(self, user_id: str = "local", namespace: str = "") -> list[MemoryItem]:
