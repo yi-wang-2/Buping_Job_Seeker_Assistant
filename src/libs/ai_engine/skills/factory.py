@@ -5,7 +5,10 @@ from .builtin import (
     InterviewCoachSkill,
     JDAnalyzerSkill,
     JobStatusClassifierSkill,
+    JobRecommenderSkill,
+    DirectChatSkill,
     MockInterviewerSkill,
+    ResumeReviewerSkill,
     ResumeWriterSkill,
     SkillMatcherSkill,
     TextRewriterSkill,
@@ -17,8 +20,8 @@ def create_builtin_registry(rewrite_prompts: dict[str, dict[str, str]] | None = 
     registry = SkillRegistry()
     for skill in (
         TextRewriterSkill(rewrite_prompts), JDAnalyzerSkill(), InterviewCoachSkill(),
-        MockInterviewerSkill(), ResumeWriterSkill(), SkillMatcherSkill(), CareerAdvisorSkill(),
-        JobStatusClassifierSkill(),
+        MockInterviewerSkill(), ResumeWriterSkill(), ResumeReviewerSkill(), SkillMatcherSkill(), CareerAdvisorSkill(),
+        JobStatusClassifierSkill(), JobRecommenderSkill(), DirectChatSkill(),
     ):
         registry.register(skill)
     return registry

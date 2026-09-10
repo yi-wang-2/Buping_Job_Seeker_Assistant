@@ -40,3 +40,15 @@ def test_resume_prompt_is_owned_by_resume_writer_skill():
     assert "RESUME_PROMPT_TEMPLATE" in skill_prompt
     assert "【职位描述】（用于定制化）" in skill_prompt
     assert "�" not in skill_prompt
+
+
+def test_assistant_service_does_not_own_skill_specific_presentation():
+    service = (ROOT / "backend/services/assistant_service.py").read_text("utf-8")
+    presenter = (
+        ROOT / "src/libs/ai_engine/skills/builtin/resume_reviewer/presenter.py"
+    ).read_text("utf-8")
+
+    assert "_format_resume_review" not in service
+    assert "render_skill_result" in service
+    assert "总体评价" in presenter
+    assert "修改优先级" in presenter

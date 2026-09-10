@@ -47,7 +47,9 @@ def test_builtin_registry_is_discoverable_and_every_skill_has_an_input_schema():
 
     assert {
         "resume_writer", "mock_interviewer", "interview_coach", "text_rewriter",
-        "jd_analyzer", "skill_matcher", "career_advisor", "job_status_classifier",
+        "resume_reviewer", "jd_analyzer", "skill_matcher", "career_advisor", "job_status_classifier",
+        "job_recommender",
+        "direct_chat",
     } == names
     assert all(skill.metadata.input_schema is not None for skill in registry.list())
 
@@ -142,12 +144,13 @@ def test_job_status_classifier_requires_verbatim_evidence():
     bad_runtime = AIRuntime(
         LLMGateway(GatewayConfig(), client_factory=lambda _: hallucinated), registry,
     )
-    with pytest.raises(ValueError, match="原文"):
+    with pytest.raises(ValueError, match="原文") as captured:
         bad_runtime.execute(
             JobStatusClassifierSkill.metadata.name,
             {"page_context": "当前状态：技术面试", "company": "测试公司", "role": "AI Agent"},
             provider="fake", model="fake",
         )
+    assert captured.value.skill_usage.total_tokens == 7
 
 
 def test_job_status_classifier_repairs_missing_json_comma_without_changing_values():
