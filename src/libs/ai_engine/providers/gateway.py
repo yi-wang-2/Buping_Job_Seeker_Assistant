@@ -223,10 +223,24 @@ class LLMGateway:
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        if status is not None:
-            return status == 429 or status >= 500
-        return isinstance(exc, (TimeoutError, ConnectionError))
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            status = getattr(getattr(current, "response", None), "status_code", None)
+            if status is not None:
+                return status == 429 or status >= 500
+            name = type(current).__name__.lower()
+            if (
+                isinstance(current, (TimeoutError, ConnectionError))
+                or "timeout" in name
+                or "connectionerror" in name
+                or "connecterror" in name
+                or "networkerror" in name
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     def _emit(
         self,

@@ -710,9 +710,16 @@ class AssistantService:
             return {"user_message": user_message, "assistant_message": assistant_message,
                     "run": finished, "proposal": None}
         except Exception as exc:
-            emit("failed", f"处理失败：{type(exc).__name__}", "failed")
+            from backend.services.llm_connection_service import diagnose_llm_error
+            from src.libs.ai_engine.exceptions import ProviderConfigurationError, ProviderInvocationError
+
+            if isinstance(exc, (ProviderConfigurationError, ProviderInvocationError)):
+                error_code, detail = diagnose_llm_error(exc)
+            else:
+                error_code, detail = type(exc).__name__, str(exc)
+            emit("failed", f"处理失败：{detail}", "failed")
             return self._fail(
-                run, user_message, str(exc), type(exc).__name__, runtime_events=runtime_events,
+                run, user_message, detail, error_code, runtime_events=runtime_events,
             )
 
     def confirm_proposal(self, proposal_id: str) -> dict[str, Any]:

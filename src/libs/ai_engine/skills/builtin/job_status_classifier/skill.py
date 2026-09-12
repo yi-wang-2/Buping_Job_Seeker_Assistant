@@ -11,7 +11,7 @@ from ...schemas import JobStatusClassification, JobStatusClassifierInput
 
 
 ALLOWED_CONFIDENT_STATUSES = {
-    "简历筛选", "笔试", "技术面", "主管面", "HR面", "Offer", "泡池子", "简历挂",
+    "简历筛选", "笔试", "一面", "二面", "三面", "Offer", "泡池子", "简历挂",
 }
 
 
@@ -44,6 +44,8 @@ class JobStatusClassifierSkill:
         "如果页面只有一条申请记录且状态明显属于整条申请流程，不得仅因志愿名称不同而判定不匹配；"
         "如果页面有多条独立申请记录，则必须定位目标岗位对应的状态。"
         "例如‘待处理’且页面说明简历评估尚未结束，应归类为‘简历筛选’。"
+        "面试轮次统一归一化：初试、第一轮、技术面或专业面归类为‘一面’；"
+        "复试、第二轮、主管面或业务面归类为‘二面’；终试、终面、第三轮或 HR 面归类为‘三面’。"
         "页面导航、流程阶段列表或说明文字中孤立出现的‘Offer’不代表候选人已获得 Offer；"
         "只有目标申请明确显示‘已录用’、‘录用通知’、‘Offer 已发放/已发送’，或‘当前状态：Offer’时才可归类为 Offer。"
         "返回且仅返回 JSON：matched_application(boolean), normalized_status(string), raw_status(string), "
@@ -54,7 +56,7 @@ class JobStatusClassifierSkill:
         "若所有申请状态一致，顶层可以返回共同状态。"
         "application_match_confidence 只衡量页面记录是否属于目标申请；status_confidence 只衡量状态文字是否明确；"
         "confidence 是二者的保守综合值。normalized_status 只能是："
-        "简历筛选、笔试、技术面、主管面、HR面、Offer、泡池子、简历挂、unknown。"
+        "简历筛选、笔试、一面、二面、三面、Offer、泡池子、简历挂、unknown。"
         "raw_status 必须逐字复制页面文本中的最短状态证据；无法确认时返回 unknown，置信度不得高于0.5。"
     )
 

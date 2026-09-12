@@ -35,7 +35,7 @@ def test_status_change_and_login_expiry_trigger_notifications(monkeypatch):
     monkeypatch.setattr(job_tracker.notification_service, "send_notification", lambda title, body, **kwargs: events.append((title, body, kwargs)) or {"sent": 2, "results": []})
     record = {"id": 7, "company": "示例公司", "role": "算法工程师", "status": "简历筛选", "status_history": []}
     job_tracker._apply_followup_result(record, {
-        "result": "changed", "status": "技术面", "raw_status": "专业面试",
+        "result": "changed", "status": "一面", "raw_status": "专业面试",
         "checked_at": "2026-08-11T00:00:00+00:00", "connection_state": "connected",
     }, notify=True)
     job_tracker._apply_followup_result(record, {
@@ -62,10 +62,10 @@ def test_plain_status_application_never_notifies(monkeypatch):
     monkeypatch.setattr(job_tracker.notification_service, "send_notification", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not send")))
     record = {"id": 9, "status": "简历筛选", "status_history": []}
     job_tracker._apply_followup_result(record, {
-        "result": "changed", "status": "技术面", "raw_status": "测试数据",
+        "result": "changed", "status": "一面", "raw_status": "测试数据",
         "checked_at": "2026-08-11T00:00:00+00:00", "connection_state": "connected",
     })
-    assert record["status"] == "技术面"
+    assert record["status"] == "一面"
     assert "last_notification" not in record
 
 

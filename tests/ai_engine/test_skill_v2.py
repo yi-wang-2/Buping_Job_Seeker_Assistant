@@ -125,7 +125,7 @@ def test_unavailable_tool_is_rejected_before_model_invocation():
 
 def test_job_status_classifier_requires_verbatim_evidence():
     valid = FakeClient(
-        '{"matched_application":true,"normalized_status":"技术面",'
+        '{"matched_application":true,"normalized_status":"一面",'
         '"raw_status":"技术面试","confidence":0.96,"reason":"页面明确显示"}'
     )
     gateway = LLMGateway(GatewayConfig(), client_factory=lambda _: valid)
@@ -135,7 +135,7 @@ def test_job_status_classifier_requires_verbatim_evidence():
         {"page_context": "当前状态：技术面试", "company": "测试公司", "role": "AI Agent"},
         provider="fake", model="fake",
     )
-    assert result.structured_output["normalized_status"] == "技术面"
+    assert result.structured_output["normalized_status"] == "一面"
 
     hallucinated = FakeClient(
         '{"matched_application":true,"normalized_status":"Offer",'

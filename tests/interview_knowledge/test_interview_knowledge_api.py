@@ -112,3 +112,51 @@ def test_rejected_private_upload_does_not_leave_source_file(tmp_path, monkeypatc
     assert rejected.status_code == 400
     assert list(source_root.rglob("secret.md")) == []
     assert list(source_root.rglob("user-*-secret.md")) == []
+
+
+def test_public_catalog_can_be_installed_rebuilt_and_removed_through_api(tmp_path, monkeypatch):
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(json.dumps({
+        "schema_version": "1", "sources": [{
+            "id": "agent-pack", "name": "Agent Pack", "description": "Agent 面试资料",
+            "repository_url": "https://example.com/agent.git", "revision": "b" * 40,
+            "source_type": "git", "domain_pack": "ai_agent", "license": "MIT",
+            "license_notice": "测试许可说明", "license_evidence_path": "README.md",
+            "license_evidence_text": "MIT License", "required_paths": ["README.md", "data.json"],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    service = InterviewKnowledgeService(
+        tmp_path / "knowledge.sqlite3", tmp_path / "sources", catalog_path,
+    )
+
+    def fake_checkout(spec, destination):
+        (destination / "README.md").write_text("MIT License", encoding="utf-8")
+        (destination / "data.json").write_text(json.dumps([{
+            "question": "什么是 Agent Loop？", "answer": "规划、执行、观察和迭代。",
+        }], ensure_ascii=False), encoding="utf-8")
+        service._validate_catalog_checkout(spec, destination)
+
+    monkeypatch.setattr(service, "_checkout_catalog_source", fake_checkout)
+    monkeypatch.setattr(interview_knowledge, "get_interview_knowledge_service", lambda: service)
+    app = FastAPI()
+    app.include_router(interview_knowledge.router, prefix="/api/interview-knowledge")
+    client = TestClient(app)
+
+    available = client.get("/api/interview-knowledge/catalog")
+    assert available.status_code == 200
+    assert available.json()["items"][0]["installed"] is False
+    assert client.post(
+        "/api/interview-knowledge/catalog/agent-pack/install",
+        json={"accept_license": False},
+    ).status_code == 400
+
+    installed = client.post(
+        "/api/interview-knowledge/catalog/agent-pack/install",
+        json={"accept_license": True},
+    )
+    assert installed.status_code == 200
+    assert installed.json()["catalog"]["installed"] is True
+    assert client.post(
+        "/api/interview-knowledge/catalog/agent-pack/rebuild", json={},
+    ).status_code == 200
+    assert client.delete("/api/interview-knowledge/catalog/agent-pack").json() == {"deleted": True}

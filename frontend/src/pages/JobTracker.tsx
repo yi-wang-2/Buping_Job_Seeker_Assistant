@@ -22,6 +22,9 @@ import {
   LogIn,
   RefreshCw,
   ShieldCheck,
+  Search,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
@@ -42,16 +45,21 @@ import {
 /* ─── Constants ─────────────────────────────────────────── */
 
 const STORAGE_KEY = "myJobTrackerV4";
+const PREFERENCES_KEY = "myJobTrackerPrefs";
 const trackerStorage = import.meta.env.VITE_DEPLOYMENT_MODE === "public" ? window.sessionStorage : window.localStorage;
+const PAGE_SIZES = [10, 20, 50, 0] as const;
+
+type SortKey = "default" | "newest" | "company" | "status";
 
 const STATUSES = [
   "简历筛选",
   "笔试",
-  "技术面",
-  "技术面挂",
-  "主管面",
-  "主管面挂",
-  "HR面",
+  "一面",
+  "一面挂",
+  "二面",
+  "二面挂",
+  "三面",
+  "三面挂",
   "Offer",
   "泡池子",
   "简历挂",
@@ -99,7 +107,7 @@ const DEFAULT_ENTRIES: JobEntry[] = [
     base: "深圳",
     remark: "暑期实习",
     link: "https://careers.tencent.com",
-    status: "技术面",
+    status: "一面",
     icon: "/api/job-tracker/icon/腾讯QQ.svg",
     notes:
       "一面复盘：\n1. 详细问了 Linux epoll 的触发模式（LT/ET）与底层红黑树结构。\n2. 基于 Qt 的客户端和 IM 网络编程底层逻辑。\n3. 手撕：滑动窗口最大值问题。",
@@ -148,11 +156,36 @@ function detectPresetIcon(company: string): string {
   return "";
 }
 
+function isEndedStatus(status: string): boolean {
+  return status.includes("挂") || status.toLowerCase() === "offer";
+}
+
+function migrateStatus(status: string): string {
+  return ({
+    技术面: "一面",
+    技术面挂: "一面挂",
+    主管面: "二面",
+    主管面挂: "二面挂",
+    HR面: "三面",
+    HR面挂: "三面挂",
+  } as Record<string, string>)[status] || status;
+}
+
+function loadPageSizePreference(): number {
+  try {
+    const saved = JSON.parse(trackerStorage.getItem(PREFERENCES_KEY) || "{}");
+    return PAGE_SIZES.includes(saved.pageSize) ? saved.pageSize : 20;
+  } catch {
+    return 20;
+  }
+}
+
 /** Migrate old icon paths from the previous /company-icons/ location. */
 function migrateIconPaths(records: JobEntry[]): JobEntry[] {
   return records.map((r) => ({
     ...r,
-    followup_enabled: r.status.includes("挂") ? false : r.followup_enabled,
+    status: migrateStatus(r.status),
+    followup_enabled: migrateStatus(r.status).includes("挂") ? false : r.followup_enabled,
     icon: r.icon ? r.icon.replace("/company-icons/", "/api/job-tracker/icon/") : "",
   }));
 }
@@ -181,6 +214,11 @@ export default function JobTracker({ t }: Props) {
   const [followupInterval, setFollowupInterval] = useState(8);
   const [scheduleStatus, setScheduleStatus] = useState("");
   const [followupRuntime, setFollowupRuntime] = useState({ autoEnabled: false, lastRunAt: "", lastRunStatus: "never", lastChecked: 0, lastError: "" });
+  const [filterStatus, setFilterStatus] = useState("全部");
+  const [searchText, setSearchText] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("default");
+  const [pageSize, setPageSize] = useState(loadPageSizePreference);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const iconFileInputRef = useRef<HTMLInputElement>(null);
   const dataFileInputRef = useRef<HTMLInputElement>(null);
@@ -196,16 +234,86 @@ export default function JobTracker({ t }: Props) {
     () => entries.filter((e) => e.status.toLowerCase() === "offer").length,
     [entries],
   );
-  const countInterviews = useMemo(
-    () => entries.filter((e) => e.status.includes("面") && !e.status.includes("挂")).length,
+  const countActive = useMemo(
+    () => entries.filter((entry) => !isEndedStatus(entry.status)).length,
     [entries],
   );
+  const countRejected = useMemo(
+    () => entries.filter((entry) => entry.status.includes("挂")).length,
+    [entries],
+  );
+  const statusCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    entries.forEach((entry) => counts.set(entry.status, (counts.get(entry.status) || 0) + 1));
+    return counts;
+  }, [entries]);
+  const filterChips = useMemo(() => [
+    { key: "全部", label: jt.filterAll, count: entries.length },
+    { key: "进行中", label: jt.activeLabel, count: countActive },
+    { key: "已挂", label: jt.rejectedLabel, count: countRejected },
+    ...STATUSES.filter((status) => (statusCounts.get(status) || 0) > 0)
+      .map((status) => ({ key: status, label: status, count: statusCounts.get(status) || 0 })),
+  ], [countActive, countRejected, entries.length, jt.activeLabel, jt.filterAll, jt.rejectedLabel, statusCounts]);
+  const filteredEntries = useMemo(() => {
+    const query = searchText.trim().toLocaleLowerCase();
+    return entries.filter((entry) => {
+      const matchesStatus = filterStatus === "全部"
+        || (filterStatus === "进行中" && !isEndedStatus(entry.status))
+        || (filterStatus === "已挂" && entry.status.includes("挂"))
+        || entry.status === filterStatus;
+      if (!matchesStatus || !query) return matchesStatus;
+      return [entry.company, entry.role, entry.base, entry.remark]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(query);
+    });
+  }, [entries, filterStatus, searchText]);
+  const sortedEntries = useMemo(() => {
+    const result = [...filteredEntries];
+    if (sortKey === "newest") result.sort((a, b) => b.id - a.id);
+    if (sortKey === "company") result.sort((a, b) => a.company.localeCompare(b.company, undefined, { sensitivity: "base" }));
+    if (sortKey === "status") result.sort((a, b) => {
+      const left = STATUSES.indexOf(a.status);
+      const right = STATUSES.indexOf(b.status);
+      return (left < 0 ? STATUSES.length : left) - (right < 0 ? STATUSES.length : right);
+    });
+    return result;
+  }, [filteredEntries, sortKey]);
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(sortedEntries.length / pageSize));
+  const paginatedEntries = useMemo(() => {
+    if (pageSize === 0) return sortedEntries;
+    const start = (currentPage - 1) * pageSize;
+    return sortedEntries.slice(start, start + pageSize);
+  }, [currentPage, pageSize, sortedEntries]);
+  const pageNumbers = useMemo<Array<number | "…">>(() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+    const pages = [...new Set([1, 2, currentPage - 1, currentPage, currentPage + 1, totalPages - 1, totalPages]
+      .filter((page) => page >= 1 && page <= totalPages))].sort((a, b) => a - b);
+    const result: Array<number | "…"> = [];
+    pages.forEach((page, index) => {
+      if (index > 0 && page - pages[index - 1] > 1) result.push("…");
+      result.push(page);
+    });
+    return result;
+  }, [currentPage, totalPages]);
 
   /* ---- effects ---- */
 
   useEffect(() => {
     syncStatusRef.current = syncStatus;
   }, [syncStatus]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterStatus, searchText, sortKey, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
+  useEffect(() => {
+    trackerStorage.setItem(PREFERENCES_KEY, JSON.stringify({ pageSize }));
+  }, [pageSize]);
 
   // Initial load: API first, fallback to localStorage
   useEffect(() => {
@@ -358,13 +466,25 @@ export default function JobTracker({ t }: Props) {
       link: normalizedLink,
     };
     const icon = detectPresetIcon(company);
-    setEntries((prev) => [
-      ...prev,
-      { id: Date.now(), ...normalizedForm, icon, notes: "" },
-    ]);
+    const newEntry = { id: Date.now(), ...normalizedForm, icon, notes: "" };
+    setEntries((prev) => [...prev, newEntry]);
+    const query = searchText.trim().toLocaleLowerCase();
+    const matchesSearch = !query || [newEntry.company, newEntry.role, newEntry.base, newEntry.remark]
+      .join(" ").toLocaleLowerCase().includes(query);
+    const matchesFilter = filterStatus === "全部"
+      || (filterStatus === "进行中" && !isEndedStatus(newEntry.status))
+      || (filterStatus === "已挂" && newEntry.status.includes("挂"))
+      || filterStatus === newEntry.status;
+    if (!matchesSearch || !matchesFilter) {
+      setFilterStatus("全部");
+      setSearchText("");
+    }
+    setCurrentPage(sortKey === "default" && pageSize > 0
+      ? Math.ceil((entries.length + 1) / pageSize)
+      : 1);
     setForm(createInitialForm());
     setFormFeedback({ type: "success", message: jt.recordAdded });
-  }, [form, jt.formRequired, jt.recordAdded]);
+  }, [entries.length, filterStatus, form, jt.formRequired, jt.recordAdded, pageSize, searchText, sortKey]);
 
   const updateEntry = useCallback(
     (id: number, field: keyof JobEntry, value: string) => {
@@ -461,7 +581,7 @@ export default function JobTracker({ t }: Props) {
     try {
       const result = await checkAllJobFollowups();
       const refreshed = await getJobTrackerRecords();
-      setEntries(refreshed.records);
+      setEntries(migrateIconPaths(refreshed.records));
       window.alert(`检查完成：${result.checked} 条自动跟进记录`);
     } catch (error: any) {
       window.alert(error?.response?.data?.detail || error?.message || "自动跟进检查失败");
@@ -533,7 +653,7 @@ export default function JobTracker({ t }: Props) {
         try {
           const data = JSON.parse(ev.target?.result as string);
           if (Array.isArray(data)) {
-            setEntries(data);
+            setEntries(migrateIconPaths(data));
             alert("✅ 存档数据加载成功！");
           } else {
             alert("❌ 格式不正确，解析失败。");
@@ -645,12 +765,27 @@ export default function JobTracker({ t }: Props) {
     }
   }, [entries.length, initResizableColumns]);
 
+  const setFilter = useCallback((status: string) => {
+    setFilterStatus((current) => current === status && status !== "全部" ? "全部" : status);
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setFilterStatus("全部");
+    setSearchText("");
+  }, []);
+
+  const goToPage = useCallback((page: number) => {
+    setCurrentPage(Math.min(Math.max(1, page), totalPages));
+    requestAnimationFrame(() => document.getElementById("job-tracker-table")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  }, [totalPages]);
+
   /* ---- render ---- */
 
   return (
     <div className="page-enter max-w-[1400px] mx-auto relative">
       {/* Header + Stats */}
-      <header className="mb-8 flex flex-col md:flex-row justify-between items-center gap-6">
+      <header className="mb-8 space-y-5">
         <div>
           <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 flex items-center gap-3">
             <Rocket className="h-8 w-8 text-indigo-500" />
@@ -692,31 +827,36 @@ export default function JobTracker({ t }: Props) {
               {syncStatus === "error" && "离线模式（仅本地存储）"}
             </span>
           </div>
-
-          <div className="rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border border-gray-200 dark:border-gray-700 text-center">
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <button type="button" onClick={clearFilters} title={jt.clearFilters} className={`rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border text-center transition-all hover:-translate-y-0.5 hover:shadow-md ${filterStatus !== "全部" || searchText ? "border-indigo-400 ring-2 ring-indigo-200 dark:ring-indigo-900" : "border-gray-200 dark:border-gray-700"}`}>
             <div className="text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">
               {jt.totalLabel}
             </div>
             <div className="text-xl font-bold text-gray-800 dark:text-white">
               {entries.length}
             </div>
-          </div>
-          <div className="rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border border-gray-200 dark:border-gray-700 text-center">
+          </button>
+          <button type="button" onClick={() => setFilter("进行中")} className={`rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border border-b-4 border-blue-500 text-center transition-all hover:-translate-y-0.5 hover:shadow-md ${filterStatus === "进行中" ? "ring-2 ring-blue-300" : ""}`}>
             <div className="text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">
-              {jt.interviewingLabel}
+              {jt.activeLabel}
             </div>
             <div className="text-xl font-bold text-blue-600 dark:text-blue-400">
-              {countInterviews}
+              {countActive}
             </div>
-          </div>
-          <div className="rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border border-b-4 border-green-500 dark:border-green-400 text-center">
+          </button>
+          <button type="button" onClick={() => setFilter("已挂")} className={`rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border border-b-4 border-red-500 text-center transition-all hover:-translate-y-0.5 hover:shadow-md ${filterStatus === "已挂" ? "ring-2 ring-red-300" : ""}`}>
+            <div className="text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">{jt.rejectedLabel}</div>
+            <div className="text-xl font-bold text-red-600 dark:text-red-400">{countRejected}</div>
+          </button>
+          <button type="button" onClick={() => setFilter("Offer")} className={`rounded-2xl bg-white/80 dark:bg-gray-800/80 px-5 py-3 shadow-sm border border-b-4 border-green-500 dark:border-green-400 text-center transition-all hover:-translate-y-0.5 hover:shadow-md ${filterStatus === "Offer" ? "ring-2 ring-green-300" : ""}`}>
             <div className="text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">
               {jt.offersLabel}
             </div>
             <div className="text-xl font-bold text-green-600 dark:text-green-400">
               {countOffers}
             </div>
-          </div>
+          </button>
         </div>
       </header>
 
@@ -851,7 +991,33 @@ export default function JobTracker({ t }: Props) {
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden dark:border-gray-700 dark:bg-gray-800">
+      <div id="job-tracker-table" className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex flex-col gap-3 border-b border-gray-100 bg-white/70 p-4 dark:border-gray-700 dark:bg-gray-800/70 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            {filterChips.map((chip) => (
+              <button key={chip.key} type="button" onClick={() => setFilter(chip.key)}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${filterStatus === chip.key ? "bg-indigo-600 text-white shadow-sm shadow-indigo-200 dark:shadow-none" : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"}`}>
+                {chip.label}
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${filterStatus === chip.key ? "bg-white/25" : "bg-white text-gray-500 dark:bg-gray-800 dark:text-gray-300"}`}>{chip.count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1 sm:flex-none">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+              <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder={jt.searchPlaceholder}
+                className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-8 pr-8 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white sm:w-72" />
+              {searchText && <button type="button" onClick={() => setSearchText("")} title={jt.clearSearch} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>}
+            </div>
+            <select value={sortKey} onChange={(event) => setSortKey(event.target.value as SortKey)} title={jt.sortLabel}
+              className="cursor-pointer rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300">
+              <option value="default">{jt.sortDefault}</option>
+              <option value="newest">{jt.sortNewest}</option>
+              <option value="company">{jt.sortCompany}</option>
+              <option value="status">{jt.sortStatus}</option>
+            </select>
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table
             ref={tableRef}
@@ -896,13 +1062,13 @@ export default function JobTracker({ t }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {entries.map((entry, index) => (
+              {paginatedEntries.map((entry, index) => (
                 <tr
                   key={entry.id}
                   className="hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-colors group"
                 >
                   <td className="px-2 py-4 text-center text-sm font-semibold tabular-nums text-gray-500 dark:text-gray-400">
-                    {index + 1}
+                    {pageSize === 0 ? index + 1 : (currentPage - 1) * pageSize + index + 1}
                   </td>
                   {/* Company */}
                   <td className="py-4 px-6 truncate">
@@ -1080,19 +1246,39 @@ export default function JobTracker({ t }: Props) {
                 </tr>
               ))}
 
-              {entries.length === 0 && (
+              {paginatedEntries.length === 0 && (
                 <tr>
                   <td
                     colSpan={9}
                     className="py-12 text-center text-gray-400 dark:text-gray-500"
                   >
-                    <FolderOpen className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                    <p>{jt.noData}</p>
+                    {entries.length === 0 ? <FolderOpen className="h-10 w-10 mx-auto mb-3 opacity-50" /> : <Search className="h-10 w-10 mx-auto mb-3 opacity-50" />}
+                    <p>{entries.length === 0 ? jt.noData : jt.noFilteredData}</p>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+        <div className="flex flex-col items-center justify-between gap-3 border-t border-gray-100 bg-gray-50/70 px-6 py-4 dark:border-gray-700 dark:bg-gray-900/30 md:flex-row">
+          <div className="text-xs tabular-nums text-gray-500">
+            {filteredEntries.length === entries.length
+              ? jt.totalResult.replace("{total}", String(entries.length))
+              : jt.filteredResult.replace("{filtered}", String(filteredEntries.length)).replace("{total}", String(entries.length))}
+            {pageSize > 0 && ` · ${jt.pageResult.replace("{current}", String(currentPage)).replace("{total}", String(totalPages))}`}
+          </div>
+          <div className="flex items-center gap-3">
+            {pageSize > 0 && <div className="flex items-center gap-1">
+              <button type="button" onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="flex h-8 items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"><ChevronLeft className="h-3.5 w-3.5" />{jt.previousPage}</button>
+              {pageNumbers.map((page, index) => page === "…"
+                ? <span key={`ellipsis-${index}`} className="px-0.5 text-xs text-gray-400">…</span>
+                : <button key={page} type="button" onClick={() => goToPage(page)} className={`h-8 w-8 rounded-lg text-xs font-semibold transition-all ${page === currentPage ? "bg-indigo-600 text-white shadow-md shadow-indigo-200 dark:shadow-none" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"}`}>{page}</button>)}
+              <button type="button" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} className="flex h-8 items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">{jt.nextPage}<ChevronRight className="h-3.5 w-3.5" /></button>
+            </div>}
+            <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} title={jt.pageSizeLabel} className="cursor-pointer rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-600 outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              {PAGE_SIZES.map((size) => <option key={size} value={size}>{size === 0 ? jt.showAll : jt.perPage.replace("{size}", String(size))}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 

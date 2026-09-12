@@ -89,6 +89,29 @@ class FollowupScheduleRequest(BaseModel):
 
 # ---- Helpers ----
 
+_STATUS_MIGRATION = {
+    "技术面": "一面",
+    "技术面挂": "一面挂",
+    "主管面": "二面",
+    "主管面挂": "二面挂",
+    "HR面": "三面",
+    "HR面挂": "三面挂",
+}
+
+
+def _migrate_record_statuses(record: dict) -> bool:
+    changed = False
+    status = str(record.get("status") or "")
+    if status in _STATUS_MIGRATION:
+        record["status"] = _STATUS_MIGRATION[status]
+        changed = True
+    for event in record.get("status_history") or []:
+        event_status = str(event.get("status") or "")
+        if event_status in _STATUS_MIGRATION:
+            event["status"] = _STATUS_MIGRATION[event_status]
+            changed = True
+    return changed
+
 def _ensure_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -110,8 +133,11 @@ def _load_records() -> list[dict]:
     except (json.JSONDecodeError, OSError):
         return []
     records = data if isinstance(data, list) else data.get("records", []) if isinstance(data, dict) else []
-    stopped = [_stop_rejected_followup(record) for record in records]
-    if any(stopped):
+    changed = False
+    for record in records:
+        changed = _migrate_record_statuses(record) or changed
+        changed = _stop_rejected_followup(record) or changed
+    if changed:
         _save_records(records)
     return records
 
@@ -119,6 +145,7 @@ def _load_records() -> list[dict]:
 def _save_records(records: list[dict]) -> None:
     _ensure_dir()
     for record in records:
+        _migrate_record_statuses(record)
         _stop_rejected_followup(record)
     DATA_FILE.write_text(
         json.dumps(records, ensure_ascii=False, indent=2),

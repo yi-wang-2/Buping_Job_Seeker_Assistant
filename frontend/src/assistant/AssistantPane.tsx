@@ -58,13 +58,13 @@ export default function AssistantPane({ page, lang }: Props) {
   const isJobProposal = proposal?.proposal_type === "job_radar_action";
 
   const copy = useMemo(() => lang === "zh" ? {
-    title: "AI 助手", empty: "告诉我你想分析或修改什么。选中右侧简历文字后，可以直接要求润色、缩短或校对。",
+    title: "不平", empty: "告诉我你想分析或修改什么。选中右侧简历文字后，可以直接要求润色、缩短或校对。",
     placeholder: "输入你的要求…", apply: "应用到简历", runWorkflow: "开始生成", confirmAction: "确认操作", undo: "撤销修改", dismiss: "暂不采用",
     original: "原文", suggestion: "建议", loading: "正在处理", context: "上下文",
     addContext: "添加上下文", uploadDocument: "上传文档", uploading: "正在解析文档…",
     noContext: "未添加上下文", noAvailableContext: "当前没有其他可添加的上下文",
   } : {
-    title: "AI Assistant", empty: "Ask for analysis or edits. Select resume text on the right to rewrite it.",
+    title: "Buping", empty: "Ask for analysis or edits. Select resume text on the right to rewrite it.",
     placeholder: "Describe what you need…", apply: "Apply to resume", runWorkflow: "Start generation", confirmAction: "Confirm action", undo: "Undo change", dismiss: "Dismiss",
     original: "Original", suggestion: "Suggestion", loading: "Working", context: "Context",
     addContext: "Add context", uploadDocument: "Upload document", uploading: "Parsing document…",

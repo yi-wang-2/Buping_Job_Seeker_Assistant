@@ -1,14 +1,29 @@
 import { useState, useRef, useEffect } from "react";
-import { Bot, Send, Play, Square, Loader2, User, Download, Mic, MicOff, Volume2, RotateCcw } from "lucide-react";
+import { Bot, Send, Play, Square, Loader2, User, Download, Mic, MicOff, Volume2, RotateCcw, Upload, History as HistoryIcon, FileText, RefreshCw, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { Strings } from "../i18n";
 import { useSessionState } from "../hooks/useSessionState";
-import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getMockInterviewTTSVoices, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech } from "../api/client";
+import { startMockInterview, submitMockAnswer, endMockInterview, getMockInterviewDownloadUrl, getMockInterviewTTSVoices, getResumeContent, getSettings, synthesizeMockInterviewSpeech, streamMockInterviewSpeech, getHistory, previewSavedResume, uploadResume } from "../api/client";
 import KnowledgeSourcePicker from "../components/interview/KnowledgeSourcePicker";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+}
+
+interface ResumeHistoryFile {
+  name: string;
+  path: string;
+  size: number;
+  modified: string;
+}
+
+function resumeHtmlToText(html: string): string {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  document.querySelectorAll("script, style, template, noscript").forEach((element) => element.remove());
+  return (document.body.innerText || document.body.textContent || "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 type SpeechRecognitionLike = {
@@ -64,6 +79,7 @@ export default function MockInterview({ t }: { t: Strings }) {
   const audioCacheRef = useRef<Map<string, Blob>>(new Map());
   const ttsAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const resumeFileInputRef = useRef<HTMLInputElement>(null);
 
   const [companyName, setCompanyName] = useSessionState("buping_mock_company", "MiniMax");
   const [companyIndustry, setCompanyIndustry] = useSessionState("buping_mock_industry", "AI");
@@ -75,6 +91,7 @@ export default function MockInterview({ t }: { t: Strings }) {
   const [resumeLoadedFromFile, setResumeLoadedFromFile] = useSessionState("buping_mock_resume_source", "");
 
   const [sessionId, setSessionId] = useSessionState<string | null>("buping_mock_session_id", null);
+  const [configExpanded, setConfigExpanded] = useState(!sessionId);
   const [history, setHistory] = useSessionState<Message[]>("buping_mock_history", []);
   const [userInput, setUserInput] = useSessionState("buping_mock_user_input", "");
   const [loading, setLoading] = useState(false);
@@ -98,6 +115,10 @@ export default function MockInterview({ t }: { t: Strings }) {
   ]);
   const [ttsSpeed, setTtsSpeed] = useSessionState("buping_mock_tts_speed", 1);
   const [knowledgeSourceIds, setKnowledgeSourceIds] = useSessionState<string[]>("buping_mock_knowledge", []);
+  const [resumeHistoryFiles, setResumeHistoryFiles] = useState<ResumeHistoryFile[]>([]);
+  const [resumeHistoryOpen, setResumeHistoryOpen] = useState(false);
+  const [resumeSourceLoading, setResumeSourceLoading] = useState(false);
+  const [resumeSourceStatus, setResumeSourceStatus] = useState("");
 
   useEffect(() => {
     mountedRef.current = true;
@@ -495,6 +516,63 @@ export default function MockInterview({ t }: { t: Strings }) {
     void speakText(typingFullContentRef.current);
   };
 
+  const loadResumeHistory = async () => {
+    setResumeSourceLoading(true);
+    setResumeSourceStatus("");
+    try {
+      const result = await getHistory();
+      setResumeHistoryFiles(result.files.filter((file) => file.name.toLowerCase().endsWith(".pdf")));
+    } catch (error: any) {
+      setResumeSourceStatus(`⚠️ ${mi.resumeHistoryLoadFailed}: ${error?.response?.data?.detail || error?.message || "unknown error"}`);
+    } finally {
+      setResumeSourceLoading(false);
+    }
+  };
+
+  const handleLoadHistoricalResume = async (file: ResumeHistoryFile) => {
+    setResumeSourceLoading(true);
+    setResumeHistoryOpen(false);
+    setResumeSourceStatus("");
+    try {
+      const htmlFilename = file.name.replace(/\.pdf$/i, ".html");
+      const result = await previewSavedResume(htmlFilename);
+      const text = resumeHtmlToText(result.html);
+      if (!text) throw new Error(mi.resumeEmptyDocument);
+      setResumeText(text);
+      setResumeLoadedFromFile(file.name);
+      setResumeSourceStatus(`✓ ${mi.resumeLoaded}: ${file.name}`);
+    } catch (error: any) {
+      setResumeSourceStatus(`⚠️ ${mi.resumeHistoryLoadFailed}: ${error?.response?.data?.detail || error?.message || "unknown error"}`);
+    } finally {
+      setResumeSourceLoading(false);
+    }
+  };
+
+  const handleResumeUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setResumeSourceLoading(true);
+    setResumeSourceStatus("");
+    try {
+      let language = "zh";
+      try {
+        language = (await getSettings()).resume_language || "zh";
+      } catch {
+        language = "zh";
+      }
+      const result = await uploadResume(file, language);
+      if (!result.yaml_content?.trim()) throw new Error(mi.resumeEmptyDocument);
+      setResumeText(result.yaml_content);
+      setResumeLoadedFromFile(file.name);
+      setResumeSourceStatus(`✓ ${mi.resumeUploaded}: ${file.name}`);
+    } catch (error: any) {
+      setResumeSourceStatus(`⚠️ ${mi.resumeUploadFailed}: ${error?.response?.data?.detail || error?.message || "unknown error"}`);
+    } finally {
+      setResumeSourceLoading(false);
+    }
+  };
+
   const handleStart = async (mode: "text" | "voice") => {
     stopListening();
     stopSpeaking();
@@ -520,6 +598,7 @@ export default function MockInterview({ t }: { t: Strings }) {
       if (mountedRef.current) startTypewriter(result.history as Message[]);
       else setHistory(result.history as Message[]);
       setSessionId(result.session_id);
+      setConfigExpanded(false);
       setStatus(result.status);
       setEvaluation("");
       setReportPdfFile("");
@@ -574,6 +653,7 @@ export default function MockInterview({ t }: { t: Strings }) {
       setEvaluation(result.evaluation);
       setReportPdfFile(result.pdf_filename || "");
       setSessionId(null);
+      setConfigExpanded(true);
       setStatus("✅ 面试已结束");
     } catch (err: any) {
       setStatus(`❌ ${err.response?.data?.detail || err.message}`);
@@ -598,15 +678,22 @@ export default function MockInterview({ t }: { t: Strings }) {
       <h2 className="mb-1 flex-none text-xl font-bold text-gray-900 dark:text-white">{mi.title}</h2>
       <p className="mb-3 flex-none text-xs text-gray-500 dark:text-gray-400">{mi.desc}</p>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className={`grid min-h-0 flex-1 grid-cols-1 gap-4 ${configExpanded || !sessionId ? "lg:grid-cols-3" : "lg:grid-cols-1"}`}>
         {/* Config Panel */}
-        <div className="space-y-4 overflow-y-auto pr-1 lg:col-span-1">
+        {(configExpanded || !sessionId) && <div className="space-y-4 overflow-y-auto pr-1 lg:col-span-1">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
-              <Bot className="h-4 w-4 text-brand-500" />
-              {mi.config}
-            </h3>
-            <div className="space-y-3">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                <Bot className="h-4 w-4 text-brand-500" />
+                {mi.config}
+              </h3>
+              {sessionId && (
+                <button type="button" onClick={() => setConfigExpanded(false)} title="收起配置" className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200">
+                  <PanelLeftClose className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.companyName}</label>
                 <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white" />
@@ -631,18 +718,46 @@ export default function MockInterview({ t }: { t: Strings }) {
                   {interviewStyles.map((style) => <option key={style} value={style}>{style}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.resumeText}</label>
+              <div className="sm:col-span-2">
+                <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.resumeText}</label>
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative">
+                      <button type="button" disabled={resumeSourceLoading || Boolean(sessionId)} onClick={() => {
+                        if (!resumeHistoryOpen) void loadResumeHistory();
+                        setResumeHistoryOpen((open) => !open);
+                      }} className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600">
+                        <HistoryIcon className="h-3 w-3" />{mi.loadHistoryResume}
+                      </button>
+                      {resumeHistoryOpen && <div className="absolute right-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
+                        <div className="sticky top-0 flex items-center justify-between border-b border-gray-100 bg-white px-3 py-2 text-xs font-semibold dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                          <span>{mi.historyResumes} ({resumeHistoryFiles.length})</span>
+                          <button type="button" onClick={() => void loadResumeHistory()} disabled={resumeSourceLoading} className="text-brand-600 disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${resumeSourceLoading ? "animate-spin" : ""}`} /></button>
+                        </div>
+                        {resumeSourceLoading ? <div className="p-5 text-center text-xs text-gray-500">{mi.loadingResume}</div>
+                          : resumeHistoryFiles.length === 0 ? <div className="p-5 text-center text-xs text-gray-500">{mi.noHistoryResume}</div>
+                          : <ul className="divide-y divide-gray-100 dark:divide-gray-700">{resumeHistoryFiles.map((file) => <li key={file.name}><button type="button" onClick={() => void handleLoadHistoricalResume(file)} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700"><FileText className="h-3.5 w-3.5 shrink-0 text-brand-500" /><span className="min-w-0"><span className="block truncate text-xs font-medium text-gray-800 dark:text-gray-100">{file.name}</span><span className="block text-[10px] text-gray-500">{file.modified}</span></span></button></li>)}</ul>}
+                      </div>}
+                    </div>
+                    <button type="button" disabled={resumeSourceLoading || Boolean(sessionId)} onClick={() => resumeFileInputRef.current?.click()} className="inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2 py-1 text-[11px] font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50 dark:border-brand-800 dark:bg-brand-900/30 dark:text-brand-300">
+                      {resumeSourceLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}{mi.uploadResumeFile}
+                    </button>
+                    <input ref={resumeFileInputRef} type="file" className="hidden" accept=".pdf,.doc,.docx,.html,.htm,.md,.txt,.yaml,.yml,.json,.tex" onChange={handleResumeUpload} />
+                  </div>
+                </div>
                 <textarea value={resumeText} onChange={(e) => { setResumeText(e.target.value); setResumeLoadedFromFile(""); }} placeholder={mi.resumeTextPlaceholder} rows={4} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white resize-none" />
                 {resumeLoadedFromFile && (
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">已自动加载：{resumeLoadedFromFile}</p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{mi.resumeSource}: {resumeLoadedFromFile}</p>
                 )}
+                {resumeSourceStatus && <p className={`mt-1 text-xs ${resumeSourceStatus.startsWith("✓") ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>{resumeSourceStatus}</p>}
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{mi.jobDesc}</label>
                 <textarea value={jobDesc} onChange={(e) => setJobDesc(e.target.value)} placeholder={mi.jobDescPlaceholder} rows={3} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white resize-none" />
               </div>
-              <KnowledgeSourcePicker selected={knowledgeSourceIds} onChange={setKnowledgeSourceIds} disabled={Boolean(sessionId) || loading} />
+              <div className="sm:col-span-2">
+                <KnowledgeSourcePicker selected={knowledgeSourceIds} onChange={setKnowledgeSourceIds} disabled={Boolean(sessionId) || loading} />
+              </div>
             </div>
 
             {!sessionId ? (
@@ -677,14 +792,22 @@ export default function MockInterview({ t }: { t: Strings }) {
               </button>
             )}
           </div>
-        </div>
+        </div>}
 
         {/* Chat Panel */}
-        <div className="flex h-full min-h-0 flex-col gap-3 lg:col-span-2">
+        <div className={`flex h-full min-h-0 w-full flex-col gap-3 ${configExpanded || !sessionId ? "lg:col-span-2" : "mx-auto max-w-4xl lg:col-span-1"}`}>
           <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
             {/* Chat header */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{mi.chat}</h3>
+              <div className="flex items-center gap-2">
+                {sessionId && !configExpanded && (
+                  <button type="button" onClick={() => setConfigExpanded(true)} title="展开配置" className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">
+                    <PanelLeftOpen className="h-3.5 w-3.5" />
+                    展开配置
+                  </button>
+                )}
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{mi.chat}</h3>
+              </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <div className="inline-flex overflow-hidden rounded-lg border border-gray-200 text-xs font-medium dark:border-gray-700">
                   <button

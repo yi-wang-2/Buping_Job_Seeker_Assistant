@@ -44,6 +44,13 @@ class DiscoverModelsRequest(BaseModel):
     llm_protocol: str = "openai_chat"
 
 
+class TestLLMConnectionRequest(BaseModel):
+    llm_api_key: str = ""
+    llm_model_type: str = "anthropic"
+    llm_model: str = ""
+    llm_base_url: str = ""
+
+
 class NotificationSettingsRequest(BaseModel):
     email_enabled: bool = False
     smtp_host: str = ""
@@ -107,6 +114,25 @@ async def discover_models(req: DiscoverModelsRequest) -> dict:
         req.llm_api_key, req.llm_base_url, req.llm_protocol
     )
     return {"models": models}
+
+
+@router.post("/llm/test")
+def test_model_connection(req: TestLLMConnectionRequest) -> dict:
+    """Test the exact unsaved LLM configuration entered by the user."""
+    from backend.services.llm_connection_service import diagnose_llm_error, test_llm_connection
+
+    try:
+        return test_llm_connection(
+            api_key=req.llm_api_key,
+            provider=req.llm_model_type,
+            model=req.llm_model,
+            base_url=req.llm_base_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        code, message = diagnose_llm_error(exc)
+        raise HTTPException(status_code=502, detail={"code": code, "message": message}) from exc
 
 
 @router.get("/notifications")

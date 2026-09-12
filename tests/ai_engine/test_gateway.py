@@ -92,6 +92,23 @@ def test_gateway_retries_timeout_with_bound():
     assert client.calls == 2
 
 
+def test_gateway_retries_wrapped_http_client_connection_error():
+    class ConnectError(Exception):
+        pass
+
+    client = FakeClient([ConnectError("connection refused"), FakeResponse()])
+    gateway = LLMGateway(
+        GatewayConfig(max_retries=1, retry_backoff_seconds=0),
+        client_factory=lambda _: client,
+        sleep=lambda _: None,
+    )
+
+    response = gateway.invoke(request())
+
+    assert response.retries == 1
+    assert client.calls == 2
+
+
 def test_gateway_does_not_retry_non_retryable_error():
     client = FakeClient([ValueError("bad request")])
     gateway = LLMGateway(GatewayConfig(max_retries=5), client_factory=lambda _: client)

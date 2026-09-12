@@ -698,10 +698,58 @@ export async function saveSettings(params: {
   return data;
 }
 
+export async function testModelConnection(params: {
+  llm_api_key?: string;
+  llm_model_type: string;
+  llm_model: string;
+  llm_base_url?: string;
+}): Promise<{ success: boolean; provider: string; model: string; base_url: string; latency_ms: number }> {
+  const payload = {
+    ...params,
+    llm_api_key: params.llm_api_key || window.sessionStorage.getItem(API_KEY_SESSION_KEY) || "",
+  };
+  const { data } = await api.post("/settings/llm/test", payload, { timeout: 45000 });
+  return data;
+}
+
 export interface InterviewKnowledgeSource {
   id: string; name: string; source_type: string; scope: "public" | "organization" | "user" | "session";
   sync_status: string; last_synced_at?: string | null; license?: string | null;
   stats: { units: number; characters: number; average_quality: number };
+}
+
+export interface PublicInterviewKnowledgeCatalogItem {
+  id: string; name: string; description: string; repository_url: string; revision: string;
+  source_type: "git"; domain_pack: string; license: string; license_notice: string;
+  required_paths: string[]; installed: boolean; installed_revision?: string | null;
+  managed_copy: boolean; update_available: boolean; sync_status: string;
+  stats: { units: number; characters: number; average_quality: number };
+}
+
+export async function getInterviewKnowledgeCatalog(): Promise<{ items: PublicInterviewKnowledgeCatalogItem[] }> {
+  const { data } = await api.get("/interview-knowledge/catalog");
+  return data;
+}
+
+export async function installInterviewKnowledgeCatalogSource(
+  sourceId: string,
+): Promise<{ source: InterviewKnowledgeSource; catalog: PublicInterviewKnowledgeCatalogItem }> {
+  const { data } = await api.post(
+    `/interview-knowledge/catalog/${encodeURIComponent(sourceId)}/install`,
+    { accept_license: true }, { timeout: 300000 },
+  );
+  return data;
+}
+
+export async function rebuildInterviewKnowledgeCatalogSource(sourceId: string): Promise<void> {
+  await api.post(
+    `/interview-knowledge/catalog/${encodeURIComponent(sourceId)}/rebuild`,
+    {}, { timeout: 300000 },
+  );
+}
+
+export async function uninstallInterviewKnowledgeCatalogSource(sourceId: string): Promise<void> {
+  await api.delete(`/interview-knowledge/catalog/${encodeURIComponent(sourceId)}`);
 }
 
 export async function getInterviewKnowledgeSources(): Promise<{ items: InterviewKnowledgeSource[] }> {

@@ -12,6 +12,50 @@ from src.libs.ai_engine.knowledge import KnowledgeQuery
 router = APIRouter()
 
 
+class CatalogInstallRequest(BaseModel):
+    accept_license: bool = False
+
+
+@router.get("/catalog")
+def list_public_catalog() -> dict[str, Any]:
+    return {"items": get_interview_knowledge_service().list_catalog()}
+
+
+@router.post("/catalog/{source_id}/install")
+def install_public_catalog_source(
+    source_id: str, request: CatalogInstallRequest,
+) -> dict[str, Any]:
+    try:
+        return get_interview_knowledge_service().install_catalog_source(
+            source_id, accept_license=request.accept_license,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/catalog/{source_id}/rebuild")
+def rebuild_public_catalog_source(source_id: str) -> dict[str, Any]:
+    try:
+        return get_interview_knowledge_service().rebuild_catalog_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/catalog/{source_id}")
+def uninstall_public_catalog_source(source_id: str) -> dict[str, bool]:
+    try:
+        deleted = get_interview_knowledge_service().uninstall_catalog_source(source_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="public knowledge source is not installed")
+    return {"deleted": True}
+
+
 class SourceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

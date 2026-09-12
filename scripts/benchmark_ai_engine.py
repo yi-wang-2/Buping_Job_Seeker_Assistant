@@ -176,7 +176,7 @@ def benchmark_skills_and_prompts() -> dict[str, Any]:
                 "jd_analyzer": '{"role":"Python 工程师","company":null,"responsibilities":[],"required_skills":["Python"],"preferred_skills":[],"experience_years":3,"education":null,"location":null,"salary":null,"keywords":["Python"]}',
                 "skill_matcher": '{"match_score":80,"matched_skills":["Python"],"gaps":[],"evidence":[],"recommendations":[]}',
                 "career_advisor": '{"summary":"继续提升 AI 能力","priorities":["项目"],"action_plan":["完善作品集"],"assumptions":[]}',
-                "job_status_classifier": '{"matched_application":true,"normalized_status":"技术面","raw_status":"技术面试","confidence":0.95,"reason":"页面明确显示"}',
+                "job_status_classifier": '{"matched_application":true,"normalized_status":"一面","raw_status":"技术面试","confidence":0.95,"reason":"页面明确显示"}',
             }
             output = structured_outputs.get(skill.metadata.name, "符合约束的测试输出")
             parsed = skill.parse_output(LLMResponse(output, "fake", "fake", TokenUsage(10, 2, 12)))

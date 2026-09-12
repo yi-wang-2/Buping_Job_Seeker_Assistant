@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2, Image as ImageIcon, Mail, MessageCircle, Send } from "lucide-react";
+import { Settings as SettingsIcon, Save, FileEdit, Loader2, Upload, FileText, CheckCircle2, AlertCircle, Brain, Trash2, Image as ImageIcon, Mail, MessageCircle, Send, PlugZap } from "lucide-react";
 import type { Strings } from "../i18n";
 import {
   getSettings,
   saveSettings,
+  testModelConnection,
   getResumeContent,
   saveResumeContent,
   uploadResume,
@@ -127,6 +128,7 @@ export default function SettingsPage({ t }: { t: Strings }) {
   const availableModels = useAvailableModels(apiKey, baseUrl, llmProtocol);
   const [resumeLang, setResumeLang] = useState("zh");
   const [configStatus, setConfigStatus] = useState("");
+  const [testingConnection, setTestingConnection] = useState(false);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [cacheEnabled, setCacheEnabled] = useState(true);
   const [memoryStatus, setMemoryStatus] = useState("");
@@ -256,6 +258,26 @@ export default function SettingsPage({ t }: { t: Strings }) {
       setMemoryStatus(`已删除 ${result.deleted} 条长期记忆`);
     } catch (err: any) {
       setMemoryStatus(`❌ ${err.message}`);
+    }
+  };
+
+  const handleTestModelConnection = async () => {
+    setTestingConnection(true);
+    setConfigStatus(st.testingConnection);
+    try {
+      const result = await testModelConnection({
+        llm_api_key: apiKey,
+        llm_model_type: modelType,
+        llm_model: modelName.trim(),
+        llm_base_url: baseUrl.trim(),
+      });
+      setConfigStatus(`${st.connectionSuccess} · ${result.model} · ${result.latency_ms} ms`);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      const message = typeof detail === "string" ? detail : detail?.message;
+      setConfigStatus(`❌ ${message || err?.message || st.connectionFailed}`);
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -507,6 +529,15 @@ export default function SettingsPage({ t }: { t: Strings }) {
           >
             <Save className="h-4 w-4" />
             {st.save}
+          </button>
+          <button
+            type="button"
+            onClick={handleTestModelConnection}
+            disabled={testingConnection}
+            className="flex items-center gap-2 rounded-lg border border-brand-300 bg-brand-50 px-5 py-2.5 text-sm font-semibold text-brand-700 transition-colors hover:bg-brand-100 disabled:cursor-wait disabled:opacity-60 dark:border-brand-700 dark:bg-brand-900/20 dark:text-brand-300 dark:hover:bg-brand-900/40"
+          >
+            {testingConnection ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
+            {testingConnection ? st.testingConnection : st.testConnection}
           </button>
           {configStatus && (
             <span className={`text-sm ${configStatus.startsWith("❌") ? "text-red-600" : "text-green-600"}`}>

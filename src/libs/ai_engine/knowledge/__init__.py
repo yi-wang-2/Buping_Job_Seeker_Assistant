@@ -15,6 +15,7 @@ from .retrieval import HybridKnowledgeRetriever
 from .vector import HashingEmbeddingProvider, SentenceTransformerEmbeddingProvider, SQLiteVectorIndex
 from .context_provider import InterviewKnowledgeContextProvider, InterviewKnowledgeRuntimeProvider, KnowledgeAugmentation
 from .domain_packs import DomainPack, DomainPackRegistry
+from .catalog import PublicKnowledgeCatalog, PublicKnowledgeSourceSpec, load_public_knowledge_catalog
 
 __all__ = [
     "DomainPack", "DomainPackRegistry", "KnowledgeQuery", "KnowledgeSource", "KnowledgeSourceAdapter", "KnowledgeUnit",
@@ -22,4 +23,5 @@ __all__ = [
     "InterviewKnowledgeContextProvider", "InterviewKnowledgeRuntimeProvider", "KnowledgeAugmentation", "KnowledgeRegistry",
     "RawKnowledgeUnit", "RetrievalHit", "RetrievalResult", "SentenceTransformerEmbeddingProvider",
     "SQLiteKnowledgeRepository", "SQLiteVectorIndex", "SourceDocument",
+    "PublicKnowledgeCatalog", "PublicKnowledgeSourceSpec", "load_public_knowledge_catalog",
 ]

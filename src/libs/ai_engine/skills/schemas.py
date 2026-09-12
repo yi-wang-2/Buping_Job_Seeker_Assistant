@@ -190,7 +190,7 @@ class JobApplicationStatus(BaseModel):
     role: str
     matched_target: bool = True
     normalized_status: Literal[
-        "简历筛选", "笔试", "技术面", "主管面", "HR面", "Offer", "泡池子", "简历挂", "unknown"
+        "简历筛选", "笔试", "一面", "二面", "三面", "Offer", "泡池子", "简历挂", "unknown"
     ]
     raw_status: str
     confidence: float = Field(ge=0, le=1)
@@ -204,7 +204,7 @@ class JobStatusClassification(BaseModel):
 
     matched_application: bool
     normalized_status: Literal[
-        "简历筛选", "笔试", "技术面", "主管面", "HR面", "Offer", "泡池子", "简历挂", "unknown"
+        "简历筛选", "笔试", "一面", "二面", "三面", "Offer", "泡池子", "简历挂", "unknown"
     ]
     raw_status: str
     confidence: float = Field(ge=0, le=1)

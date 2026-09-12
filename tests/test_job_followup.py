@@ -35,13 +35,13 @@ def test_application_context_does_not_use_another_jobs_status():
 def test_followup_result_updates_status_and_appends_timeline():
     record = {"id": 1, "status": "简历筛选", "status_history": []}
     job_tracker._apply_followup_result(record, {
-        "status": "技术面", "raw_status": "进入面试", "checked_at": "2026-08-11T00:00:00+00:00",
+        "status": "一面", "raw_status": "进入面试", "checked_at": "2026-08-11T00:00:00+00:00",
         "evidence_url": "https://example.com/application", "connection_state": "connected",
     })
-    assert record["status"] == "技术面"
+    assert record["status"] == "一面"
     assert record["followup_state"] == "connected"
     assert record["last_raw_status"] == "进入面试"
-    assert record["status_history"][0]["status"] == "技术面"
+    assert record["status_history"][0]["status"] == "一面"
 
 
 def test_scheduled_followup_publishes_only_confirmed_status_changes(monkeypatch):
@@ -54,15 +54,15 @@ def test_scheduled_followup_publishes_only_confirmed_status_changes(monkeypatch)
     monkeypatch.setattr(job_tracker, "_save_records", lambda _records: None)
     monkeypatch.setattr(job_tracker, "_publish_status_changes", lambda changed: published.extend(changed))
     monkeypatch.setattr(job_tracker.job_followup_service, "check_application", lambda _record: {
-        "status": "技术面", "raw_status": "进入面试", "checked_at": "2026-08-24T12:00:00+08:00",
+        "status": "一面", "raw_status": "进入面试", "checked_at": "2026-08-24T12:00:00+08:00",
         "connection_state": "connected",
     })
 
     result = job_tracker.run_followup_all()
 
     assert result["checked"] == 1
-    assert records[0]["status"] == "技术面"
-    assert published[0]["status"] == "技术面"
+    assert records[0]["status"] == "一面"
+    assert published[0]["status"] == "一面"
 
 
 def test_scheduled_followup_batches_same_type_but_separates_status_from_auth(monkeypatch):
@@ -76,7 +76,7 @@ def test_scheduled_followup_batches_same_type_but_separates_status_from_auth(mon
         1: {"result": "login_required", "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z"},
         2: {"result": "login_required", "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z"},
         3: {"result": "login_required", "connection_state": "login_required", "checked_at": "2026-09-10T01:00:00Z"},
-        4: {"result": "changed", "status": "技术面", "raw_status": "进入初试", "connection_state": "connected", "checked_at": "2026-09-10T01:00:00Z"},
+        4: {"result": "changed", "status": "一面", "raw_status": "进入初试", "connection_state": "connected", "checked_at": "2026-09-10T01:00:00Z"},
     }
     sent = []
     monkeypatch.setattr(job_tracker, "_load_records", lambda: records)
@@ -92,7 +92,7 @@ def test_scheduled_followup_batches_same_type_but_separates_status_from_auth(mon
 
     assert len(sent) == 2
     login = next(item for item in sent if "登录已失效" in item[0])
-    interview = next(item for item in sent if "技术面" in item[0])
+    interview = next(item for item in sent if "一面" in item[0])
     assert "3 个岗位登录已失效" in login[0]
     assert all(company in login[1] for company in ("甲公司", "乙公司", "丙公司"))
     assert "丁公司" not in login[1]
@@ -138,16 +138,33 @@ def test_legacy_job_entry_gets_safe_followup_defaults():
     assert entry.status_history == []
 
 
+def test_legacy_interview_statuses_are_migrated_on_load(monkeypatch, tmp_path):
+    path = tmp_path / "records.json"
+    path.write_text(json.dumps([{
+        "id": 1,
+        "status": "主管面",
+        "status_history": [{"status": "技术面", "checked_at": "2026-09-01T00:00:00Z"}],
+    }], ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(job_tracker, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(job_tracker, "DATA_FILE", path)
+
+    records = job_tracker._load_records()
+
+    assert records[0]["status"] == "二面"
+    assert records[0]["status_history"][0]["status"] == "一面"
+    assert json.loads(path.read_text("utf-8"))[0]["status"] == "二面"
+
+
 def test_rejection_stops_followup_but_still_notifies(monkeypatch):
     events = []
     monkeypatch.setattr(job_tracker, "_safe_notify", lambda *args, **kwargs: events.append(args) or {"sent": 1})
-    for status in ("简历挂", "技术面挂", "主管面挂"):
+    for status in ("简历挂", "一面挂", "二面挂", "三面挂"):
         record = {"id": 1, "status": "简历筛选", "followup_enabled": True}
         assert job_tracker._apply_followup_result(record, {"status": status}, notify=True)
         assert record["followup_enabled"] is False
         assert record["status_history"][-1]["status"] == status
         assert record["last_notification"]["sent"] == 1
-    assert len(events) == 3
+    assert len(events) == 4
 
 
 def test_partial_rejection_does_not_stop_other_applications():
@@ -174,7 +191,7 @@ def test_save_cannot_reenable_rejected_record(monkeypatch, tmp_path):
     path = tmp_path / "records.json"
     monkeypatch.setattr(job_tracker, "DATA_DIR", tmp_path)
     monkeypatch.setattr(job_tracker, "DATA_FILE", path)
-    job_tracker._save_records([{"id": 1, "status": "技术面挂", "followup_enabled": True}])
+    job_tracker._save_records([{"id": 1, "status": "一面挂", "followup_enabled": True}])
     assert json.loads(path.read_text("utf-8"))[0]["followup_enabled"] is False
 
 
@@ -249,14 +266,14 @@ def test_restored_matching_tab_is_activated():
 
 def test_unknown_local_status_uses_llm_fallback(monkeypatch):
     monkeypatch.setattr(followup, "classify_status_with_llm", lambda context, record: {
-        "status": "技术面", "raw_status": "专业交流环节", "confidence": 0.93,
+        "status": "一面", "raw_status": "专业交流环节", "confidence": 0.93,
         "usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100}, "cache_hit": False,
     })
     result = followup.classify_application_status(
         "示例公司\n算法工程师\n专业交流环节", "示例公司\n算法工程师\n专业交流环节",
         {"company": "示例公司", "role": "算法工程师", "followup_ai_enabled": True},
     )
-    assert result["status"] == "技术面"
+    assert result["status"] == "一面"
     assert result["parser"] == "llm"
     assert result["llm_usage"]["total_tokens"] == 100
 
@@ -264,14 +281,14 @@ def test_unknown_local_status_uses_llm_fallback(monkeypatch):
 def test_llm_result_must_quote_page_evidence():
     context = "示例公司\n算法工程师\n专业交流环节"
     valid = followup._validated_llm_result({
-        "matched_application": True, "normalized_status": "技术面",
+        "matched_application": True, "normalized_status": "一面",
         "raw_status": "专业交流环节", "confidence": 0.91,
     }, context)
     hallucinated = followup._validated_llm_result({
         "matched_application": True, "normalized_status": "Offer",
         "raw_status": "已录用", "confidence": 0.99,
     }, context)
-    assert valid == {"status": "技术面", "raw_status": "专业交流环节", "confidence": 0.91}
+    assert valid == {"status": "一面", "raw_status": "专业交流环节", "confidence": 0.91}
     assert hallucinated is None
 
 
@@ -296,12 +313,12 @@ def test_same_status_can_be_confirmed_at_lower_risk_threshold():
     assert followup._validated_llm_result(payload, context, "简历筛选") == {
         "status": "简历筛选", "raw_status": "简历筛选", "confidence": 0.70,
     }
-    assert followup._validated_llm_result(payload, context, "技术面") is None
+    assert followup._validated_llm_result(payload, context, "一面") is None
 
 
 def test_low_confidence_status_change_keeps_candidate_for_review(monkeypatch):
     monkeypatch.setattr(followup, "classify_status_with_llm", lambda context, record: {
-        "status": "技术面", "raw_status": "专业交流环节", "confidence": 0.70,
+        "status": "一面", "raw_status": "专业交流环节", "confidence": 0.70,
         "matched_application": True, "application_match_confidence": 0.72,
         "status_confidence": 0.93, "reason": "岗位名称为简称",
         "usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100},
@@ -314,7 +331,7 @@ def test_low_confidence_status_change_keeps_candidate_for_review(monkeypatch):
     )
     assert result["status"] is None
     assert result["llm_confidence"] == 0.70
-    assert result["llm_candidate_status"] == "技术面"
+    assert result["llm_candidate_status"] == "一面"
     assert result["llm_candidate_evidence"] == "专业交流环节"
     assert result["llm_usage"]["total_tokens"] == 100
     assert "更新投递状态" in result["fallback_error"]
@@ -337,7 +354,7 @@ def test_three_parallel_applications_are_preserved_without_forcing_one_status(mo
         "status_confidence": 0.90, "reason": "三条并行申请状态不同",
         "applications": [
             {"role": "AI Agent 开发", "matched_target": True, "normalized_status": "简历筛选", "raw_status": "筛选中", "confidence": 0.91, "application_match_confidence": 0.92, "status_confidence": 0.93},
-            {"role": "AI 视觉开发", "matched_target": True, "normalized_status": "技术面", "raw_status": "专业面试", "confidence": 0.90, "application_match_confidence": 0.91, "status_confidence": 0.94},
+            {"role": "AI 视觉开发", "matched_target": True, "normalized_status": "一面", "raw_status": "专业面试", "confidence": 0.90, "application_match_confidence": 0.91, "status_confidence": 0.94},
             {"role": "算法工程师", "matched_target": True, "normalized_status": "简历筛选", "raw_status": "待处理", "confidence": 0.89, "application_match_confidence": 0.90, "status_confidence": 0.92},
         ],
         "usage": {"input_tokens": 180, "output_tokens": 80, "total_tokens": 260},
@@ -350,7 +367,7 @@ def test_three_parallel_applications_are_preserved_without_forcing_one_status(mo
     assert result["status"] is None
     assert result["llm_candidate_status"] == "多岗位"
     assert len(result["application_statuses"]) == 3
-    assert result["application_statuses"][1]["status"] == "技术面"
+    assert result["application_statuses"][1]["status"] == "一面"
     assert "未覆盖汇总状态" in result["fallback_error"]
 
 

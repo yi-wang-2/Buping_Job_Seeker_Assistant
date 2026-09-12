@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "sources": [
+    {
+      "id": "agent-interview-hub",
+      "name": "AI Agent 面试知识库",
+      "description": "AI Agent、RAG、MCP、系统设计及项目实战面试资料。",
+      "repository_url": "https://github.com/Zchary1106/agent-interview-hub.git",
+      "revision": "a1518d4b77a8fb370615fd105ffe8e274462b572",
+      "source_type": "git",
+      "domain_pack": "ai_agent",
+      "license": "MIT",
+      "license_notice": "上游 README 声明采用 MIT License；固定版本未包含独立 LICENSE 文件，安装前请确认上游许可说明。",
+      "license_evidence_path": "README.md",
+      "license_evidence_text": "MIT License",
+      "required_paths": ["README.md", "data.json"],
+      "accept_import_warnings": true
+    }
+  ]
+}

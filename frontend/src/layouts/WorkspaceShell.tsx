@@ -66,7 +66,7 @@ export default function WorkspaceShell({ page, lang, children }: Props) {
   return (
     <div className="h-full min-h-0">
       <div className="mb-3 grid grid-cols-2 rounded-lg bg-gray-100 p-1 lg:hidden dark:bg-gray-800">
-        <button onClick={() => setMobileTab("assistant")} className={`rounded-md py-2 text-sm ${mobileTab === "assistant" ? "bg-white shadow dark:bg-gray-700" : "text-gray-500"}`}>AI 助手</button>
+        <button onClick={() => setMobileTab("assistant")} className={`rounded-md py-2 text-sm ${mobileTab === "assistant" ? "bg-white shadow dark:bg-gray-700" : "text-gray-500"}`}>{lang === "zh" ? "不平" : "Buping"}</button>
         <button onClick={() => setMobileTab("workspace")} className={`rounded-md py-2 text-sm ${mobileTab === "workspace" ? "bg-white shadow dark:bg-gray-700" : "text-gray-500"}`}>工作区</button>
       </div>
       <div ref={splitRef} className="workspace-split h-[calc(100%-3.25rem)] min-h-0 min-w-0 lg:h-full" style={splitStyle}>
