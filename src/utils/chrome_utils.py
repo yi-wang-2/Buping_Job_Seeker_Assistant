@@ -312,6 +312,15 @@ def HTML_to_PDF(html_content, driver):
         # they can no longer stall the resume request indefinitely.
         time.sleep(1)
 
+        # Font Awesome is embedded in saved resumes, so this normally resolves
+        # immediately. Await it explicitly to prevent printing before Chrome
+        # has decoded the WOFF2 fonts on slower machines.
+        driver.execute_cdp_cmd("Runtime.evaluate", {
+            "expression": "Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 3000))])",
+            "awaitPromise": True,
+            "returnByValue": True,
+        })
+
         # Esegue il comando CDP per stampare la pagina in PDF
         pdf_base64 = driver.execute_cdp_cmd("Page.printToPDF", {
             "printBackground": True,          # Includi lo sfondo nella stampa

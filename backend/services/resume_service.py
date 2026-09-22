@@ -409,8 +409,9 @@ def switch_resume_template(html_content: str, style_name: str) -> dict[str, str]
 def _sanitize_edited_resume_html(html_content: str) -> str:
     """Remove transient WYSIWYG state while preserving resume styling."""
     from bs4 import BeautifulSoup
+    from src.utils.resume_icons import embed_contact_icons
 
-    soup = BeautifulSoup(html_content, "html.parser")
+    soup = BeautifulSoup(embed_contact_icons(html_content), "html.parser")
     # Browser-native list commands create unclassified lists with the user
     # agent's much wider default indentation. Generated resume lists use the
     # template's compact-list spacing, so normalize edited and legacy saves to

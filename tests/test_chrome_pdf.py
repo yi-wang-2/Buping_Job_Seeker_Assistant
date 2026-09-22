@@ -32,6 +32,7 @@ def test_html_to_pdf_injects_document_without_file_navigation(monkeypatch):
         "Page.enable",
         "Page.getFrameTree",
         "Page.setDocumentContent",
+        "Runtime.evaluate",
         "Page.printToPDF",
     ]
     injected = driver.commands[2][1]

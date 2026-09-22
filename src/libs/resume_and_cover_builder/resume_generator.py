@@ -10,6 +10,7 @@ from src.libs.resume_and_cover_builder.llm.llm_generate_cover_letter_from_job im
 from .module_loader import load_module
 from .config import global_config
 from .resume_html import add_default_profile_photo
+from src.utils.resume_icons import embed_contact_icons
 
 class ResumeGenerator:
     def __init__(self):
@@ -62,7 +63,7 @@ class ResumeGenerator:
         
         # Applica i contenuti al template
         full_html = template.substitute(body=body_html, style_css=style_css, lang=lang_attr)
-        return add_default_profile_photo(full_html)
+        return add_default_profile_photo(embed_contact_icons(full_html))
 
     def create_resume(self, style_path):
         strings = load_module(global_config.STRINGS_MODULE_RESUME_PATH, global_config.STRINGS_MODULE_NAME)
