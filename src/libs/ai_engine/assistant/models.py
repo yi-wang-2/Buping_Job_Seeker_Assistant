@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ExecutionMode(str, Enum):
@@ -66,6 +66,17 @@ class SupervisorTurn(BaseModel):
     reason_code: str
     continue_run: bool = False
     plan: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_discriminated_route(self) -> "SupervisorTurn":
+        named_kinds = {"skill_call", "workflow_call", "action_proposal"}
+        if self.kind in named_kinds and not str(self.name or "").strip():
+            raise ValueError(f"name is required for {self.kind}")
+        if self.kind in {"final_response", "clarification"} and self.name is not None:
+            raise ValueError(f"name must be null for {self.kind}")
+        if self.kind == "clarification" and not self.response.strip():
+            raise ValueError("response is required for clarification")
+        return self
 
 
 class PolicyDecision(BaseModel):

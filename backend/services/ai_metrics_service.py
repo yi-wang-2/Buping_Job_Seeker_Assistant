@@ -88,7 +88,8 @@ def _knowledge_database_metrics(path: Path = DEFAULT_KNOWLEDGE_DB_PATH) -> dict[
 def _assistant_metrics(path: Path, cutoff: datetime) -> dict[str, Any]:
     empty = {
         "summary": {"runs": 0, "completed": 0, "failed": 0, "cancelled": 0,
-                    "active": 0, "total_tokens": 0, "avg_latency_ms": 0},
+                    "active": 0, "total_tokens": 0, "avg_latency_ms": 0,
+                    "graph_v2_runs": 0, "resumed_runs": 0, "interrupted_runs": 0},
         "by_mode": [], "by_page": [], "recent": [],
     }
     if not path.exists():
@@ -100,7 +101,7 @@ def _assistant_metrics(path: Path, cutoff: datetime) -> dict[str, Any]:
             if "assistant_runs" not in tables:
                 return empty
             rows = [dict(row) for row in db.execute(
-                "SELECT id, page, proposed_mode, effective_mode, intent, dispatch_path, usage_json, "
+                "SELECT id, page, proposed_mode, effective_mode, intent, dispatch_path, policy_decision_json, usage_json, "
                 "status, error_code, started_at, finished_at FROM assistant_runs ORDER BY started_at DESC"
             ).fetchall()]
     except sqlite3.Error:
@@ -121,6 +122,10 @@ def _assistant_metrics(path: Path, cutoff: datetime) -> dict[str, Any]:
         except (TypeError, json.JSONDecodeError):
             usage = {}
         row["usage"] = usage
+        try:
+            row["policy_decision"] = json.loads(row.pop("policy_decision_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            row["policy_decision"] = {}
         row["total_tokens"] = int(usage.get("total_tokens", 0))
         row["latency_ms"] = 0
         if row.get("finished_at"):
@@ -153,6 +158,11 @@ def _assistant_metrics(path: Path, cutoff: datetime) -> dict[str, Any]:
             "active": statuses["running"] + statuses["cancel_requested"],
             "total_tokens": sum(row["total_tokens"] for row in filtered),
             "avg_latency_ms": round(sum(terminal_latencies) / len(terminal_latencies)) if terminal_latencies else 0,
+            "graph_v2_runs": sum(
+                1 for row in filtered if row.get("policy_decision", {}).get("orchestrator") == "langgraph_v2"
+            ),
+            "resumed_runs": sum(1 for row in filtered if row.get("policy_decision", {}).get("resumed")),
+            "interrupted_runs": sum(1 for row in filtered if row.get("policy_decision", {}).get("interrupted")),
         },
         "by_mode": [{"mode": key, **value} for key, value in sorted(grouped_mode.items())],
         "by_page": [{"page": key, **value} for key, value in sorted(grouped_page.items())],

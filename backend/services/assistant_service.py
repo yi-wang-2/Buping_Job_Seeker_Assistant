@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from uuid import UUID
 
 from pydantic import ValidationError
+from loguru import logger
 
 from backend.services.ai_runtime_service import build_ai_runtime
 from backend.services.ai_skill_service import _resolve_config
 from backend.services.assistant_repository import AssistantRepository
-from backend.services.job_radar_query_service import execute_job_radar_query
+from backend.services.job_radar_query_service import (
+    JobRadarQuery,
+    execute_job_market_report,
+    execute_job_radar_query,
+)
 from src.libs.ai_engine.artifact_resolvers import ResumeArtifactResolver
 from src.libs.ai_engine.assistant import (
     AssistantController,
+    AssistantGraphFacade,
     AssistantSupervisorSkill,
     AssistantTurnPresenter,
     DispatchInput,
@@ -42,6 +49,17 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_STORED_ATTACHMENT_CHARACTERS = 200_000
 MAX_CONTEXT_ATTACHMENT_CHARACTERS = 40_000
 RESUME_OUTPUT_FOLDER = Path("data_folder/output")
+CAPABILITY_ARGUMENT_MODELS = {"job_radar_query": JobRadarQuery}
+
+
+def _validated_supervisor_turn(payload: Any) -> SupervisorTurn:
+    """Validate both the route envelope and the selected capability's arguments."""
+    turn = SupervisorTurn.model_validate(payload)
+    argument_model = CAPABILITY_ARGUMENT_MODELS.get(str(turn.name or ""))
+    if argument_model is not None:
+        arguments = argument_model.model_validate(turn.arguments).model_dump(mode="json", exclude_none=True)
+        turn = turn.model_copy(update={"arguments": arguments})
+    return turn
 
 
 class AssistantRunCancelled(RuntimeError):
@@ -237,27 +255,74 @@ class AssistantService:
             "context_labels": normalized_context_labels,
         }
 
-        def supervise(observations: list[dict[str, Any]] | None = None) -> SupervisorTurn:
+        def supervise(
+            observations: list[dict[str, Any]] | None = None,
+            graph_request: dict[str, Any] | None = None,
+        ) -> SupervisorTurn:
             check_cancelled()
             emit("supervisor", "正在根据执行结果重新规划" if observations else "正在判断意图和执行方式", "running")
-            call_inputs = {**supervisor_inputs, "observations": observations or []}
+            call_inputs = {
+                **supervisor_inputs,
+                "message": str((graph_request or {}).get("message") or message),
+                "observations": observations or [],
+            }
+            first_call_usage: dict[str, int] = {}
+            first_route: Any = None
+            result: Any = None
             try:
                 result = bundle.runtime.execute(
                     supervisor_skill.metadata.name, call_inputs, provider=config["provider"],
                     model=config["model"], session_id=session_id,
                 )
-                call_usage = self._usage(result)
-            except (json.JSONDecodeError, ValidationError) as first_error:
-                failed_usage = self._exception_usage(first_error)
+                first_call_usage = self._usage(result)
+                first_route = result.structured_output
+                turn = _validated_supervisor_turn(first_route)
+                call_usage = first_call_usage
+            except (json.JSONDecodeError, ValidationError, PermissionError) as first_error:
+                failed_usage = self._sum_usage(first_call_usage, self._exception_usage(first_error))
                 emit("supervisor_retry", "路由结果格式不完整，正在进行一次受控重试", "running")
-                result = bundle.runtime.execute(
-                    supervisor_skill.metadata.name, call_inputs, provider=config["provider"],
-                    model=config["model"], session_id=session_id,
-                )
-                call_usage = self._sum_usage(failed_usage, self._usage(result))
-                emit("supervisor_retry", "路由结果已恢复为有效结构")
+                retry_inputs = {
+                    **call_inputs,
+                    "previous_route": first_route,
+                    "route_validation_error": str(first_error)[:1200],
+                    "retry_instruction": "只修正路由 JSON 和能力参数，不要改写用户目标。",
+                }
+                retry_call_usage: dict[str, int] = {}
+                try:
+                    result = bundle.runtime.execute(
+                        supervisor_skill.metadata.name, retry_inputs, provider=config["provider"],
+                        model=config["model"], session_id=session_id,
+                    )
+                    retry_call_usage = self._usage(result)
+                    turn = _validated_supervisor_turn(result.structured_output)
+                    call_usage = self._sum_usage(failed_usage, retry_call_usage)
+                    emit("supervisor_retry", "路由结果已恢复为有效结构")
+                except (json.JSONDecodeError, ValidationError, PermissionError):
+                    all_failed_usage = self._sum_usage(failed_usage, retry_call_usage)
+                    supervisor_usage.update(self._sum_usage(supervisor_usage, all_failed_usage))
+                    attempted_name = str(
+                        (getattr(result, "structured_output", None) or first_route or {}).get("name") or ""
+                    ) if isinstance(getattr(result, "structured_output", None) or first_route, dict) else ""
+                    if attempted_name and attempted_name != "direct_chat":
+                        emit("supervisor_fallback", "能力参数连续无效，需要重新描述查询条件")
+                        return SupervisorTurn(
+                            kind="clarification", intent="route_recovery",
+                            response="查询条件未能转换为安全的结构，请换一种方式说明要查询的对象、排序方式和数量。",
+                            reason_code="invalid_capability_arguments",
+                        )
+                    if "direct_chat" in available_skills:
+                        emit("supervisor_fallback", "路由结构连续无效，已安全降级为只读回答")
+                        return SupervisorTurn(
+                            kind="skill_call", intent="safe_readonly_fallback", name="direct_chat",
+                            reason_code="invalid_route_safe_fallback",
+                        )
+                    emit("supervisor_fallback", "路由结构连续无效，需要补充明确任务")
+                    return SupervisorTurn(
+                        kind="clarification", intent="route_recovery",
+                        response="请再具体说明你希望我完成的只读任务。",
+                        reason_code="invalid_route_clarification",
+                    )
             supervisor_usage.update(self._sum_usage(supervisor_usage, call_usage))
-            turn = SupervisorTurn.model_validate(result.structured_output)
             check_cancelled()
             if turn.plan:
                 emit("plan", "已生成执行计划", plan=turn.plan)
@@ -267,9 +332,46 @@ class AssistantService:
             )
             return turn
 
-        def execute(turn: SupervisorTurn) -> dict[str, Any]:
+        def execute(
+            turn: SupervisorTurn,
+            graph_request: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
             check_cancelled()
+            request_message = str((graph_request or {}).get("message") or message)
             emit("policy", "页面权限与执行范围校验通过", capability=turn.name or "")
+            if turn.kind == "workflow_call" and turn.name == "job_market_report":
+                dimensions = [str(item) for item in turn.arguments.get("dimensions", [])]
+                emit("tool", "正在读取一次完整岗位库快照并聚合全部维度", "running", capability=turn.name)
+                report = execute_job_market_report(dimensions)
+                self.repository.record_step(
+                    run["id"], skill_name="workflow:job_market_report",
+                    inputs={"dimensions": dimensions}, status="completed", usage={},
+                    observation={
+                        "scope": report["scope"], "as_of": report["as_of"],
+                        "job_count": report["job_count"], "company_count": report["company_count"],
+                    },
+                )
+                answer_inputs = {
+                    "message": request_message,
+                    "page": page,
+                    "workspace_context": {
+                        "job_market_report": report,
+                        "query_result_is_authoritative": True,
+                        "required_scope_statement": "当前本地岗位库",
+                    },
+                    "conversation_summary": conversation_summary,
+                    "language": "en" if snapshot.get("language") == "en" else "zh",
+                }
+                generated = bundle.runtime.execute(
+                    direct_chat_skill.metadata.name, answer_inputs, provider=config["provider"],
+                    model=config["model"], session_id=session_id,
+                )
+                emit("workflow", "岗位总体报告已基于同一数据快照生成", capability=turn.name)
+                return {
+                    "content": render_skill_result(direct_chat_skill, generated, answer_inputs),
+                    "usage": self._usage(generated),
+                    "report_metadata": {"scope": report["scope"], "as_of": report["as_of"]},
+                }
             if turn.kind == "skill_call" and turn.name == "job_radar_query":
                 emit("tool", "正在查询完整岗位库", "running", capability=turn.name)
                 query_result = execute_job_radar_query(turn.arguments)
@@ -287,7 +389,7 @@ class AssistantService:
                     capability=turn.name, truncated=query_result["truncated"],
                 )
                 answer_inputs = {
-                    "message": message,
+                    "message": request_message,
                     "page": page,
                     "workspace_context": {
                         "job_radar_query_result": query_result,
@@ -305,7 +407,7 @@ class AssistantService:
                 return {"content": render_skill_result(direct_chat_skill, result, answer_inputs), "usage": usage}
             if turn.kind == "skill_call" and turn.name == "direct_chat":
                 inputs = {
-                    "message": message,
+                    "message": request_message,
                     "page": page,
                     "workspace_context": snapshot,
                     "conversation_summary": conversation_summary,
@@ -639,11 +741,28 @@ class AssistantService:
             return {"proposal": proposal, "usage": usage}
 
         try:
-            outcome = self.controller.handle(
-                DispatchInput(message=message, page=page, selected_objects=selected_objects),
-                supervisor=supervise, executor=execute,
-                replanner=supervise,
-            )
+            graph_v2_enabled = os.getenv("ASSISTANT_GRAPH_V2", "1").strip().lower() not in {"0", "false", "no", "off"}
+            if graph_v2_enabled:
+                graph = AssistantGraphFacade(
+                    self.repository.memory.path.with_name("assistant_graph.sqlite3"),
+                    supervisor=lambda observations, request: supervise(observations, request),
+                    executor=lambda turn, request: execute(turn, request),
+                    max_steps=5, max_replans=1, max_tokens=12000,
+                )
+                outcome = graph.invoke(
+                    session_id=session_id, page=page,
+                    request={"message": message, "page": page, "selected_objects": selected_objects},
+                )
+                if outcome.resumed:
+                    emit("graph_resume", "已从持久化检查点恢复原任务")
+                elif outcome.interrupted:
+                    emit("graph_interrupt", "任务已保存，等待补充信息")
+            else:
+                outcome = self.controller.handle(
+                    DispatchInput(message=message, page=page, selected_objects=selected_objects),
+                    supervisor=supervise, executor=execute,
+                    replanner=supervise,
+                )
             check_cancelled()
             if outcome.error_code:
                 emit("policy", f"执行请求已被策略拒绝：{outcome.error_code}", "rejected")
@@ -689,13 +808,22 @@ class AssistantService:
                     "runtime_events": runtime_events,
                     "execution_steps": list(outcome.steps),
                     "terminal_reason": outcome.terminal_reason,
+                    "orchestrator": "langgraph_v2" if graph_v2_enabled else "controller_v1",
+                    "graph_resumed": bool(getattr(outcome, "resumed", False)),
+                    "graph_interrupted": bool(getattr(outcome, "interrupted", False)),
                     **execution_metadata,
                 },
             )
+            policy_payload = outcome.policy.model_dump(mode="json") if outcome.policy else {}
+            policy_payload.update({
+                "orchestrator": "langgraph_v2" if graph_v2_enabled else "controller_v1",
+                "resumed": bool(getattr(outcome, "resumed", False)),
+                "interrupted": bool(getattr(outcome, "interrupted", False)),
+            })
             finished = self.repository.finish_run(
                 run["id"], mode=outcome.mode.value, intent=turn.intent if turn else "",
                 dispatch_path=outcome.dispatch_path,
-                policy=outcome.policy.model_dump(mode="json") if outcome.policy else {}, usage=usage,
+                policy=policy_payload, usage=usage,
             )
             emit("completed", "处理完成")
             return {"user_message": user_message, "assistant_message": assistant_message,
@@ -716,7 +844,8 @@ class AssistantService:
             if isinstance(exc, (ProviderConfigurationError, ProviderInvocationError)):
                 error_code, detail = diagnose_llm_error(exc)
             else:
-                error_code, detail = type(exc).__name__, str(exc)
+                logger.exception("Assistant graph execution failed")
+                error_code, detail = "internal_error", "内部执行出现异常，请重试；若持续失败请查看 AI 监控中的 Trace。"
             emit("failed", f"处理失败：{detail}", "failed")
             return self._fail(
                 run, user_message, detail, error_code, runtime_events=runtime_events,
@@ -732,16 +861,37 @@ class AssistantService:
             raise KeyError("Assistant proposal not found")
         if proposal["status"] != "pending":
             raise ValueError(f"Proposal is already {proposal['status']}")
-        return self.repository.apply_proposal_with_token(proposal_id, confirmation_token)
+        applied = self.repository.apply_proposal_with_token(proposal_id, confirmation_token)
+        self._resume_graph_proposal(proposal, approved=True)
+        return applied
 
     def dismiss_proposal(self, proposal_id: str) -> dict[str, Any]:
         proposal = self.repository.get_proposal(proposal_id)
         if not proposal:
             raise KeyError("Assistant proposal not found")
-        return self.repository.set_proposal_status(proposal_id, "dismissed") or proposal
+        dismissed = self.repository.set_proposal_status(proposal_id, "dismissed") or proposal
+        self._resume_graph_proposal(proposal, approved=False)
+        return dismissed
 
     def undo_proposal(self, proposal_id: str) -> dict[str, Any]:
         return self.repository.undo_proposal(proposal_id)
+
+    def _resume_graph_proposal(self, proposal: dict[str, Any], *, approved: bool) -> None:
+        run = self.repository.get_run(str(proposal.get("run_id") or ""))
+        if not run:
+            return
+
+        def unexpected_supervisor(*_args: Any) -> SupervisorTurn:
+            raise RuntimeError("Proposal resume unexpectedly reached the supervisor")
+
+        def unexpected_executor(*_args: Any) -> dict[str, Any]:
+            raise RuntimeError("Proposal resume unexpectedly reached an executor")
+
+        graph = AssistantGraphFacade(
+            self.repository.memory.path.with_name("assistant_graph.sqlite3"),
+            supervisor=unexpected_supervisor, executor=unexpected_executor,
+        )
+        graph.resume_approval(session_id=str(run["session_id"]), approved=approved)
 
     def _fail(self, run: dict[str, Any], user_message: dict[str, Any], detail: str,
               error_code: str, runtime_events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -898,5 +1048,6 @@ class AssistantService:
             "empty_message": "请输入要处理的内容。",
             "skill_not_allowed": "当前页面不允许执行这个能力。",
             "action_not_allowed": "当前页面不允许执行这个操作。",
+            "pending_confirmation": "当前有一项操作等待确认，请先确认或取消后再继续。",
         }
         return messages.get(code, code)

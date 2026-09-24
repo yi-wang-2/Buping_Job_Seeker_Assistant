@@ -24,6 +24,7 @@ PAGE_CAPABILITIES: dict[str, PageCapabilities] = {
     "job-radar": PageCapabilities(
         modes=frozenset({ExecutionMode.CHAT, ExecutionMode.DIRECT_SKILL, ExecutionMode.CLARIFICATION}),
         skills=frozenset({"direct_chat", "jd_analyzer", "skill_matcher", "career_advisor", "job_recommender", "job_radar_query"}),
+        workflows=frozenset({"job_market_report"}),
         actions=frozenset({"favorite_job", "not_interested_job", "track_job"}),
     ),
 }

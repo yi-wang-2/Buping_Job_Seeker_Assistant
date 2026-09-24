@@ -11,11 +11,15 @@ from .models import (
 from .policy import AssistantPolicyEngine, PAGE_CAPABILITIES
 from .presenter import AssistantTurnPresenter
 from .supervisor import AssistantSupervisorSkill
+from .graph import AssistantGraphFacade, AssistantGraphState, GraphOutcome
 
 __all__ = [
     "AssistantController",
     "AssistantPolicyEngine",
     "AssistantSupervisorSkill",
+    "AssistantGraphFacade",
+    "AssistantGraphState",
+    "GraphOutcome",
     "AssistantTurnPresenter",
     "ControllerOutcome",
     "DispatchInput",
