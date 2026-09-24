@@ -66,6 +66,33 @@ class JobRadarQuery(BaseModel):
     cursor: str | None = None
     job_id: str | None = Field(default=None, max_length=200)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_structured_tool_arguments(cls, value: Any) -> Any:
+        """Normalize safe, unambiguous variations emitted by structured-output providers."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        operation = str(data.get("operation") or "")
+        group_by = data.get("group_by")
+        sort = data.get("sort")
+        if isinstance(sort, str):
+            normalized = sort.casefold()
+            field = (
+                "last_seen_at" if "last" in normalized or "time" in normalized
+                else "count" if "count" in normalized
+                else "score"
+            )
+            direction = "asc" if "asc" in normalized or "升序" in normalized else "desc"
+            data["sort"] = {"field": field, "direction": direction}
+        # group_by has no meaning for a search. Providers sometimes include it to
+        # express entity deduplication; company is the only safe interpretation.
+        if operation != "group_by" and group_by is not None:
+            if operation == "search" and group_by == "company":
+                data["metric"] = "companies"
+            data.pop("group_by", None)
+        return data
+
     @model_validator(mode="after")
     def validate_operation_contract(self) -> "JobRadarQuery":
         if self.operation == "group_by" and not self.group_by:
@@ -169,6 +196,41 @@ def _public_row(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in fields}
 
 
+def _company_search_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one company per row, ranked by that company's best matching job."""
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        company = str(row.get("company") or "").strip()
+        if company:
+            grouped.setdefault(company, []).append(row)
+    result = []
+    for company, jobs in grouped.items():
+        best = max(jobs, key=lambda item: (float(item.get("score") or 0), str(item.get("id") or "")))
+        result.append({
+            "company": company,
+            "score": best.get("score"),
+            "match_level": best.get("match_level"),
+            "job_count": len(jobs),
+            "top_role": best.get("role"),
+            "top_job_id": best.get("id"),
+            "location": best.get("location"),
+            "industry": best.get("industry"),
+            "company_type": best.get("company_type"),
+            "last_seen_at": max(str(job.get("last_seen_at") or "") for job in jobs),
+        })
+    return result
+
+
+def _ordered_search_rows(
+    rows: list[dict[str, Any]], *, sort_field: str, reverse: bool,
+) -> list[dict[str, Any]]:
+    if sort_field == "last_seen_at":
+        key = lambda row: (str(row.get("last_seen_at") or ""), str(row.get("company") or row.get("id") or ""))
+    else:
+        key = lambda row: (float(row.get("score") or 0), str(row.get("company") or row.get("id") or ""))
+    return sorted(rows, key=key, reverse=reverse)
+
+
 def execute_job_radar_query(
     payload: JobRadarQuery | dict[str, Any], db_path: Path = job_radar_service.DB_PATH,
 ) -> dict[str, Any]:
@@ -207,9 +269,17 @@ def execute_job_radar_query(
     else:
         reverse = query.sort.direction == "desc"
         sort_field = query.sort.field if query.sort.field in {"score", "last_seen_at"} else "score"
-        ordered = sorted(filtered, key=lambda row: (row.get(sort_field) or 0, row.get("id") or ""), reverse=reverse)
+        if query.metric == "companies":
+            company_rows = _company_search_rows(filtered)
+            ordered = _ordered_search_rows(company_rows, sort_field=sort_field, reverse=reverse)
+        else:
+            ordered = _ordered_search_rows(filtered, sort_field=sort_field, reverse=reverse)
         total_count = len(ordered)
-        rows = [_public_row(row) for row in ordered[:query.limit]]
+        rows = (
+            ordered[:query.limit]
+            if query.metric == "companies"
+            else [_public_row(row) for row in ordered[:query.limit]]
+        )
 
     filters_applied = query.filters.model_dump(exclude_none=True)
     return JobRadarQueryResult(
@@ -223,3 +293,45 @@ def execute_job_radar_query(
         truncated=bool(rows and total_count > len(rows)),
         as_of=datetime.now(timezone.utc).isoformat(),
     ).model_dump()
+
+
+def execute_job_market_report(
+    dimensions: list[str], db_path: Path = job_radar_service.DB_PATH,
+) -> dict[str, Any]:
+    """Build all requested dimensions from one authoritative database snapshot."""
+    allowed = {
+        "location", "industry", "company_type", "recruitment_type", "scene", "match_level", "company"
+    }
+    selected = [item for item in dict.fromkeys(dimensions) if item in allowed]
+    if not selected:
+        raise ValueError("At least one supported report dimension is required")
+    as_of = datetime.now(timezone.utc).isoformat()
+    rows = _domain_rows(db_path)
+    distributions: dict[str, list[dict[str, Any]]] = {}
+    truncated_dimensions: list[str] = []
+    for dimension in selected:
+        counts = Counter(str(row.get(dimension) or "未标注") for row in rows)
+        if len(counts) > 20:
+            truncated_dimensions.append(dimension)
+        distributions[dimension] = [
+            {"key": key, "count": count}
+            for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:20]
+        ]
+    companies = {str(row.get("company")) for row in rows if str(row.get("company") or "").strip()}
+    sources = Counter(str(row.get("source") or "未标注") for row in rows)
+    return {
+        "schema_version": "1",
+        "scope": "database",
+        "scope_label": "当前本地岗位库",
+        "as_of": as_of,
+        "source": "job_radar.sqlite3",
+        "job_count": len(rows),
+        "company_count": len(companies),
+        "dimensions": selected,
+        "distributions": distributions,
+        "source_coverage": [
+            {"source": source, "count": count}
+            for source, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "truncated_dimensions": truncated_dimensions,
+    }

@@ -55,6 +55,43 @@ def test_search_reports_total_and_truncation(tmp_path):
     assert result["truncated"] is True
 
 
+def test_company_search_deduplicates_and_ranks_by_best_matching_job(tmp_path, monkeypatch):
+    rows = [
+        {"id": "a1", "company": "甲公司", "role": "测试", "score": 40, "match_level": "低匹配"},
+        {"id": "a2", "company": "甲公司", "role": "算法", "score": 91, "match_level": "高匹配"},
+        {"id": "b1", "company": "乙公司", "role": "开发", "score": 80, "match_level": "高匹配"},
+    ]
+    monkeypatch.setattr(
+        "backend.services.job_radar_query_service._domain_rows", lambda _path: rows,
+    )
+
+    result = execute_job_radar_query({
+        "operation": "search", "metric": "companies",
+        "sort": {"field": "score", "direction": "desc"}, "limit": 2,
+    }, tmp_path / "unused.sqlite3")
+
+    assert result["total_count"] == 2
+    assert [row["company"] for row in result["rows"]] == ["甲公司", "乙公司"]
+    assert result["rows"][0]["score"] == 91
+    assert result["rows"][0]["top_role"] == "算法"
+    assert result["rows"][0]["job_count"] == 2
+
+
+def test_provider_style_search_arguments_are_safely_normalized(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "backend.services.job_radar_query_service._domain_rows",
+        lambda _path: [{"id": "a", "company": "甲公司", "score": 88, "match_level": "高匹配"}],
+    )
+
+    result = execute_job_radar_query({
+        "operation": "search", "metric": "jobs", "group_by": "company",
+        "sort": "match_score_desc", "limit": 41,
+    }, tmp_path / "unused.sqlite3")
+
+    assert result["metric"] == "companies"
+    assert result["rows"][0]["company"] == "甲公司"
+
+
 def test_unknown_fields_and_oversized_limits_are_rejected(tmp_path):
     with pytest.raises(ValidationError):
         execute_job_radar_query({"operation": "count", "sql": "DROP TABLE job_postings"}, tmp_path / "x.db")
