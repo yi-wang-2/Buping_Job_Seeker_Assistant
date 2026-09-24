@@ -82,6 +82,8 @@ def test_fact_policy_classifies_locked_soft_and_generative_fields():
     assert policy_for("experience_details.0.key_responsibilities") is FactPolicy.GROUNDED_REWRITE
     assert policy_for("experience_details.0.skills_acquired") is FactPolicy.GROUNDED_REWRITE
     assert policy_for("projects.0.description") is FactPolicy.GROUNDED_REWRITE
+    assert policy_for("projects.0.project_level") is FactPolicy.LOCKED
+    assert policy_for("projects.0.project_role") is FactPolicy.LOCKED
     assert policy_for("professional_summary") is FactPolicy.GENERATIVE
 
 
@@ -272,7 +274,10 @@ def test_guard_patches_hard_facts_without_flattening_generated_html():
             "key_responsibilities": [{"responsibility": "负责模型训练与部署"}],
             "skills_acquired": ["Python"],
         }],
-        "projects": [{"name": "真实项目", "link": "https://example.com/real", "description": "构建检索服务"}],
+        "projects": [{
+            "name": "真实项目", "project_level": "国家级", "project_role": "项目负责人",
+            "time_period": "2024-2025", "link": "https://example.com/real", "description": "构建检索服务",
+        }],
         "achievements": [], "certifications": [], "languages": [], "interests": [],
     }
     generated = {
@@ -289,6 +294,7 @@ def test_guard_patches_hard_facts_without_flattening_generated_html():
           <section id="side-projects" data-layout="rich"><div class="entry card">
             <div class="entry-header"><span class="entry-name"><i class="fab fa-github"></i><a href="https://fake.example">错误项目</a></span>
             <span class="entry-tech"><b>RAG</b> / FastAPI</span></div>
+            <div class="entry-details"><span class="entry-title">错误角色</span><span class="entry-year">2099</span></div>
             <ul><li><mark>检索增强：</mark>构建检索服务</li></ul></div></section>
         ''',
         "additional_skills": '<section id="technical-stack"><ul><li><strong>平台与工具：</strong><em>Docker</em> / Kubernetes</li></ul></section>',
@@ -308,11 +314,37 @@ def test_guard_patches_hard_facts_without_flattening_generated_html():
     assert '<span class="entry-tech"><b>RAG</b> / FastAPI</span>' in projects
     assert "<mark>检索增强：</mark>" in projects
     assert 'href="https://example.com/real"' in projects and "真实项目" in projects
+    assert 'data-project-level="国家级"' in projects
+    assert '<span class="entry-title">项目负责人</span>' in projects
+    assert '<span class="entry-year">2024-2025</span>' in projects
     assert 'data-source-id="project-0"' in projects
 
     assert '<em>Docker</em>' in result.sections["additional_skills"]
     assert 'class="hero"' in result.sections["header"]
     assert "真实姓名" in result.sections["header"] and "truth@example.com" in result.sections["header"]
+
+
+def test_missing_project_level_and_role_are_not_filled_by_model():
+    source = {
+        "personal_information": {"full_name": "测试用户"},
+        "education_details": [], "experience_details": [],
+        "projects": [{"name": "真实项目", "description": "完成核心功能", "time_period": ""}],
+        "achievements": [], "certifications": [], "languages": [], "interests": [],
+    }
+    generated = {
+        "header": "<header><h1>测试用户</h1></header>",
+        "projects": '''<section id="side-projects"><div class="entry">
+          <div class="entry-header"><span class="entry-name" data-project-level="国家级">真实项目</span></div>
+          <div class="entry-details"><span class="entry-title">个人项目 · 主导设计与开发</span><span class="entry-year">2099</span></div>
+          <ul><li>完成核心功能</li></ul></div></section>''',
+    }
+
+    projects = protect_resume_sections(source, generated, language="zh").sections["projects"]
+
+    assert 'data-project-level' not in projects
+    assert '<span class="entry-title"></span>' in projects
+    assert '<span class="entry-year"></span>' in projects
+    assert "个人项目 · 主导设计与开发" not in projects
 
 
 def test_guard_removes_only_the_invalid_claim_and_keeps_sibling_markup():

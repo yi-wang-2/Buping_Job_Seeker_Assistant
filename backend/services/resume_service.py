@@ -191,22 +191,28 @@ def _render_resume_preview_body(data: dict[str, Any], language: str = "zh") -> s
                     + "</div>"
                 )
             items.append(
-                f'<div class="preview-item">'
+                f'<div class="preview-item preview-work-item">'
                 f'<div class="preview-item-head">'
                 f'<span class="preview-item-title">{_escape(exp.get("position") or "")}</span>'
                 f'<span class="preview-item-period">{_escape(exp.get("employment_period") or "")}</span>'
                 f'</div>'
-                f'<div class="preview-item-sub">{_escape(exp.get("company") or "")}'
-                f' &middot; {_escape(exp.get("location") or "")}</div>'
+                f'<div class="preview-item-sub preview-item-company" data-location="{_escape(exp.get("location") or "")}">'
+                f'{_escape(exp.get("company") or "")}</div>'
                 f'{resp_html}{skills_html}'
                 f'</div>'
             )
-        parts.append(f'<section><h2>Experience</h2>{"".join(items)}</section>')
+        parts.append(f'<section class="preview-work-section"><h2>Experience</h2>{"".join(items)}</section>')
 
     education = data.get("education_details") or []
     if education:
+        from src.libs.resume_and_cover_builder.resume_html import education_tier_label
+
         items = []
         for edu in education:
+            tier = education_tier_label(edu)
+            tier_attr = f' data-school-tier="{_escape(tier)}"' if tier else ""
+            location = _escape(edu.get("location") or "")
+            location_attr = f' data-location="{location}"' if location else ""
             additional = edu.get("additional_info") or {}
             education_facts: list[str] = []
             for label, value in (
@@ -217,24 +223,39 @@ def _render_resume_preview_body(data: dict[str, Any], language: str = "zh") -> s
                     rendered = "、".join(_escape(item) for item in value) if isinstance(value, list) else _escape(value)
                     education_facts.append(f'<li><strong>{label}：</strong>{rendered}</li>')
             facts_html = f'<ul class="compact-list">{"".join(education_facts)}</ul>' if education_facts else ""
+            highlight_html = ""
+            highlight_candidates = (
+                ("研究方向" if language != "en" else "Research focus", edu.get("research_direction") or additional.get("research_direction")),
+                ("研究内容" if language != "en" else "Research topics", edu.get("research_topics") or additional.get("research_topics")),
+                ("相关课程" if language != "en" else "Relevant coursework", additional.get("relevant_courses") or edu.get("exam")),
+                ("GPA", edu.get("final_evaluation_grade")),
+            )
+            for label, value in highlight_candidates:
+                if value:
+                    rendered = "、".join(_escape(item) for item in value) if isinstance(value, list) else _escape(value)
+                    separator = "：" if label != "GPA" else ": "
+                    highlight_html = f'<div class="education-highlight"><strong>{label}{separator}</strong>{rendered}</div>'
+                    break
             items.append(
-                f'<div class="preview-item">'
+                f'<div class="preview-item preview-education-item">'
                 f'<div class="preview-item-head">'
-                f'<span class="preview-item-title">{_escape(edu.get("institution") or "")}</span>'
-                f'<span class="preview-item-period">'
+                f'<span class="preview-item-title"{tier_attr}>{_escape(edu.get("institution") or "")}</span>'
+                f'<span class="preview-item-period"{location_attr}>'
                 f'{_escape(edu.get("start_date") or "")} &ndash; {_escape(edu.get("year_of_completion") or "")}'
                 f'</span></div>'
                 f'<div class="preview-item-sub">{_escape(edu.get("education_level") or "")} '
                 f'&middot; {_escape(edu.get("field_of_study") or "")}</div>'
-                f'{facts_html}'
+                f'{highlight_html}{facts_html}'
                 f'</div>'
             )
-        parts.append(f'<section><h2>Education</h2>{"".join(items)}</section>')
+        parts.append(f'<section class="preview-education-section"><h2>Education</h2>{"".join(items)}</section>')
 
     projects = data.get("projects") or []
     if projects:
         items = []
         for proj in projects:
+            level = _escape(proj.get("project_level") or "")
+            level_attr = f' data-project-level="{level}"' if level else ""
             link_html = ""
             if proj.get("link"):
                 link_html = (
@@ -242,12 +263,16 @@ def _render_resume_preview_body(data: dict[str, Any], language: str = "zh") -> s
                     f'{_escape(proj["link"])}</a>'
                 )
             items.append(
-                f'<div class="preview-item">'
-                f'<div class="preview-item-title">{_escape(proj.get("name") or "")}{link_html}</div>'
+                f'<div class="preview-item preview-project-item">'
+                f'<div class="preview-item-head">'
+                f'<div class="preview-item-title"{level_attr}>{_escape(proj.get("name") or "")}{link_html}</div>'
+                f'<div class="preview-item-role">{_escape(proj.get("project_role") or "")}</div>'
+                f'<div class="preview-item-period">{_escape(proj.get("time_period") or "")}</div>'
+                f'</div>'
                 f'<p>{_escape(proj.get("description") or "")}</p>'
                 f'</div>'
             )
-        parts.append(f'<section><h2>Projects</h2>{"".join(items)}</section>')
+        parts.append(f'<section class="preview-project-section"><h2>Projects</h2>{"".join(items)}</section>')
 
     achievements = data.get("achievements") or []
     if achievements:
@@ -340,7 +365,13 @@ def generate_preview_html(
         style_css=style_css,
         lang=lang_attr,
     )
-    return {"html": full_html, "style": chosen, "language": resume_language}
+    from src.libs.resume_and_cover_builder.resume_html import apply_template_branding
+
+    return {
+        "html": apply_template_branding(full_html, style_path.name),
+        "style": chosen,
+        "language": resume_language,
+    }
 
 
 def get_available_styles() -> dict[str, dict[str, str]]:
@@ -353,6 +384,43 @@ def get_available_styles() -> dict[str, dict[str, str]]:
     for name, (file_name, author_link) in raw_styles.items():
         styles[name] = {"file": file_name, "author": author_link}
     return styles
+
+
+def refresh_saved_resume_preview_html(html_content: str) -> tuple[str, str, bool]:
+    """Refresh a UCAS preview's embedded CSS without changing its saved file.
+
+    Generated and switched templates store CSS inside each HTML artifact, so
+    opening history otherwise keeps rendering the obsolete stylesheet.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html_content, "html.parser")
+    styles = soup.find_all("style")
+    logo_present = bool(soup.select_one("#ucas-template-logo"))
+    ucas_style = next((style for style in styles if
+        style.get("data-resume-style") == "国科大模板"
+        or style.get_text().lstrip().startswith("/*国科大模板$")
+    ), None)
+    if not logo_present and ucas_style is None:
+        return html_content, "", False
+    if logo_present and ucas_style is not None:
+        from src.libs.resume_and_cover_builder import StyleManager
+        from src.libs.resume_and_cover_builder.resume_html import DATA_FOLDER, SUPPORTED_PHOTO_EXTENSIONS
+
+        style_manager = StyleManager()
+        style_manager.set_selected_style("国科大模板")
+        style_path = style_manager.get_style_path()
+        photo_available = any(
+            (DATA_FOLDER / f"resume_photo{extension}").is_file()
+            for extension in SUPPORTED_PHOTO_EXTENSIONS
+        )
+        photo_missing = photo_available and not soup.select_one("img.resume-photo-frame")
+        if (style_path
+                and ucas_style.get_text().strip() == style_path.read_text(encoding="utf-8").strip()
+                and not photo_missing):
+            return html_content, "国科大模板", False
+    refreshed = switch_resume_template(html_content, "国科大模板")
+    return refreshed["html"], "国科大模板", refreshed["html"] != html_content
 
 
 def switch_resume_template(html_content: str, style_name: str) -> dict[str, str]:
@@ -403,7 +471,9 @@ def switch_resume_template(html_content: str, style_name: str) -> dict[str, str]
     for link in head.find_all("link", href=True):
         if "resume_style" in str(link.get("href")):
             link.decompose()
-    return {"html": str(soup), "style": style_name}
+    from src.libs.resume_and_cover_builder.resume_html import apply_template_branding
+
+    return {"html": apply_template_branding(str(soup), style_path.name), "style": style_name}
 
 
 def _sanitize_edited_resume_html(html_content: str) -> str:
@@ -957,6 +1027,10 @@ def build_preserved_resume_context(base_html: str, targets: list[str], max_chars
     soup = BeautifulSoup(_sanitize_edited_resume_html(base_html), "html.parser")
     for unsafe in soup.select("script, iframe, object, embed"):
         unsafe.decompose()
+    # Withdrawn entries belong to the library, not to the LLM's locked
+    # visible-resume context. The DOM merge still preserves the library.
+    for library in soup.select("#buping-experience-library-store"):
+        library.decompose()
 
     style_reference = "\n".join(str(style) for style in soup.select("head style"))
     section_targets = {
@@ -1428,6 +1502,10 @@ def generate_resume(
         resume_file = DATA_FOLDER / ("plain_text_resume.yaml" if resume_language == "en" else "plain_text_resume_zh.yaml")
         with open(resume_file, "r", encoding="utf-8") as f:
             plain_text_resume = f.read()
+    if base_html.strip():
+        from backend.services.resume_selection import select_visible_experiences
+
+        plain_text_resume = select_visible_experiences(plain_text_resume, base_html)
     report(15, "resume_loading", "Loaded source resume content")
     from backend.services.resume_validation import validate_resume_yaml
     validation = validate_resume_yaml(plain_text_resume)
@@ -1497,7 +1575,9 @@ def generate_resume(
             filename = filename.replace("resume_", "resume_partial_", 1)
             report(78, "partial_merge", "Merged regenerated modules with retained content")
         else:
-            final_html = generated_html
+            from backend.services.resume_selection import carry_experience_library
+
+            final_html = carry_experience_library(base_html, generated_html)
 
         def compact_for_layout(candidate_html: str, target_text_ratio: float) -> tuple[str, bool]:
             return condense_resume_html_with_llm(
@@ -1517,6 +1597,8 @@ def generate_resume(
             content_compactor=compact_for_layout,
             progress_callback=report,
         )
+        if generation_mode == "new" and base_html.strip():
+            final_html = carry_experience_library(base_html, final_html)
 
         if PUBLIC_DEMO_MODE:
             cleanup_public_artifacts()

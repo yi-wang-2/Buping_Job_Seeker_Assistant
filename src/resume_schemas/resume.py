@@ -40,6 +40,7 @@ class PersonalInformation(ResumeModel):
 
 
 class EducationAdditionalInfo(ResumeModel):
+    is_985: Optional[bool] = None
     is_211: Optional[bool] = None
     is_double_first_class: Optional[bool] = None
     college: Optional[str] = None
@@ -52,6 +53,7 @@ class EducationDetails(ResumeModel):
     education_level: Optional[str] = None
     institution: Optional[str] = None
     field_of_study: Optional[str] = None
+    location: Optional[str] = None
     final_evaluation_grade: Optional[str] = None
     start_date: Optional[str] = None
     year_of_completion: Optional[int] = None
@@ -87,9 +89,16 @@ class ExperienceDetails(ResumeModel):
 
 class Project(ResumeModel):
     name: Optional[str] = None
+    project_level: Optional[str] = None
+    project_role: Optional[str] = None
     description: Optional[str] = None
     link: Optional[str] = None  # 改为 str 类型避免URL验证
     time_period: Optional[str] = None
+
+
+class SkillCategory(ResumeModel):
+    category: Optional[str] = None
+    details: Optional[str] = None
 
 
 class Achievement(ResumeModel):
@@ -168,6 +177,7 @@ class Resume(ResumeModel):
     education_details: Optional[List[EducationDetails]] = None
     experience_details: Optional[List[ExperienceDetails]] = None
     projects: Optional[List[Project]] = None
+    skills: Optional[List[SkillCategory]] = None
     achievements: Optional[List[Achievement]] = None
     academic_achievements: Optional[List[AcademicAchievement]] = None
     certifications: Optional[List[Certifications]] = None

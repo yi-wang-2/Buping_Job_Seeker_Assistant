@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import unicodedata
 from urllib.parse import urlparse, urlunparse
 from typing import Any
 
@@ -50,8 +51,42 @@ def _extract_text(raw: bytes) -> str:
 
 def _clean_extracted_text(text: str) -> str:
     """Normalize extractor output without changing resume content."""
-    lines = [line.strip() for line in text.splitlines()]
-    return "\n".join(line for line in lines if line)
+    # PDF embedded fonts frequently emit CJK compatibility ideographs and
+    # presentation ligatures (for example “项⽬” and “Workﬂow”). NFKC restores
+    # their ordinary searchable forms without changing the represented facts.
+    lines = [unicodedata.normalize("NFKC", line.strip()) for line in text.splitlines()]
+    return _coalesce_wrapped_detail_lines([line for line in lines if line])
+
+
+_DETAIL_LINE = re.compile(
+    r"^(?:研究方向|核心课程|学术成果|成就荣誉|项目参与|核心职责|技术实现|关键难点|"
+    r"项目背景|Agent\s*架构|AI\s*Runtime|简历生成|问题解决|项目成果|技术积累|"
+    r"AI/LLM\s*工程|全栈开发|深度学习与视觉|ISP影像处理|语言能力|兴趣爱好)\s*[：:]",
+    re.IGNORECASE,
+)
+_TERMINAL_PUNCTUATION = ("。", "！", "？", ".", "!", "?", "）", ")")
+_PDF_RADICAL_TRANSLATION = str.maketrans({"⻆": "角", "⻚": "页", "⻓": "长", "⻩": "黄"})
+
+
+def _coalesce_wrapped_detail_lines(lines: list[str]) -> str:
+    """Join visual PDF wraps inside labeled facts before LLM extraction.
+
+    PDF extractors preserve layout line breaks. A responsibility or project
+    result split across those lines is otherwise easily mistaken for a new
+    field and partially dropped by the model.
+    """
+    merged: list[str] = []
+    active_detail = False
+    for line in lines:
+        line = line.translate(_PDF_RADICAL_TRANSLATION)
+        is_detail = bool(_DETAIL_LINE.match(line))
+        if active_detail and not is_detail:
+            separator = " " if line[:1].isascii() and line[:1].isalnum() else ""
+            merged[-1] = f"{merged[-1]}{separator}{line}"
+        else:
+            merged.append(line)
+        active_detail = (active_detail or is_detail) and not merged[-1].endswith(_TERMINAL_PUNCTUATION)
+    return "\n".join(merged)
 
 
 def _looks_like_pdf_binary_decode(text: str) -> bool:
@@ -217,6 +252,7 @@ def _empty_resume() -> dict:
         "education_details": [],
         "experience_details": [],
         "projects": [],
+        "skills": [],
         "achievements": [],
         "academic_achievements": [],
         "certifications": [],
@@ -264,7 +300,7 @@ def normalize_resume_data(data: dict[str, Any]) -> dict[str, Any]:
     }
 
     education_defaults = {
-        "education_level": "", "institution": "", "field_of_study": "",
+        "education_level": "", "institution": "", "field_of_study": "", "location": "",
         "final_evaluation_grade": "", "year_of_completion": "", "start_date": "",
         "research_direction": "", "research_topics": [], "additional_info": {}, "exam": [],
     }
@@ -284,7 +320,7 @@ def normalize_resume_data(data: dict[str, Any]) -> dict[str, Any]:
         if "exam" not in item and "exam" in additional:
             item["exam"] = additional.pop("exam")
         item["additional_info"] = {
-            "is_211": None, "is_double_first_class": None, "college": "",
+            "is_985": None, "is_211": None, "is_double_first_class": None, "college": "",
             "study_mode": "", "honors": "", "relevant_courses": "",
             **additional,
         }
@@ -296,7 +332,8 @@ def normalize_resume_data(data: dict[str, Any]) -> dict[str, Any]:
             "position": "", "company": "", "employment_period": "", "location": "",
             "industry": "", "key_responsibilities": [], "skills_acquired": [],
         },
-        "projects": {"name": "", "description": "", "link": "", "time_period": ""},
+        "projects": {"name": "", "project_level": "", "project_role": "", "description": "", "link": "", "time_period": ""},
+        "skills": {"category": "", "details": ""},
         "achievements": {"name": "", "description": ""},
         "academic_achievements": {
             "type": "", "title": "", "authors": "", "venue": "", "date": "",
@@ -370,6 +407,7 @@ education_details:
   - education_level: "学历，如 Bachelor's Degree"
     institution: "学校名称"
     field_of_study: "专业"
+    location: "学校所在城市；原文没有则为空字符串"
     final_evaluation_grade: "GPA 或空字符串"
     year_of_completion: "毕业年份"
     start_date: "入学年份 或空字符串"
@@ -377,6 +415,7 @@ education_details:
     research_topics:
       - "原文明确写出的研究课题；没有则为空列表"
     additional_info:
+      is_985: null
       is_211: null
       is_double_first_class: null
       college: "学院；原文没有则为空字符串"
@@ -397,9 +436,14 @@ experience_details:
       - "技能名称"
 projects:
   - name: "项目名称"
-    description: "项目描述"
+    project_level: "原文明确写出的项目级别、比赛级别或层次；没有则为空字符串"
+    project_role: "本人在项目中担任的角色；原文没有则为空字符串"
+    description: "逐字保留该项目的技术栈、项目背景、架构、技术实现、难点和项目成果；各段用换行连接，禁止摘要或删减"
     link: "URL 或空字符串"
     time_period: "项目起止时间或空字符串"
+skills:
+  - category: "技术栈分类，如 AI/LLM 工程、全栈开发"
+    details: "该分类后的完整原文，保留能力层级、应用场景和实践证据"
 achievements:
   - name: "成就名称"
     description: "描述"
@@ -458,11 +502,13 @@ work_preferences:
 
 注意：
 1. 只输出 YAML，不要添加 markdown 代码块标记
-2. 所有字段都尽量填满，空字段用空字符串 "" 表示
-3. 不要遗漏任何信息；未明确说明的信息必须留空，严禁臆造
+2. 只输出原文实际出现的字段；空字段可以省略，程序会在本地补齐，不要用大量空字段占用输出长度
+3. 这是无损信息抽取，不是简历摘要或改写。不得压缩、概括、合并删除任何职责、技术实现、难点、量化结果、技术栈或项目成果
 4. 研究方向必须逐字忠实于原文，不得根据专业、课程、项目或目标岗位推断
-5. 列表项目（experience、education 等）至少保留一个条目占位
+5. 工作经历中“项目参与、核心职责、技术实现、关键难点、项目成果、技术积累”等每个标签必须分别进入 key_responsibilities，逐字保留完整内容
 6. full_name 必须逐字复制原文姓名；无法确认时留空，不得调整顺序或纠正用字
+7. 项目中的技术栈及“项目背景、Agent 架构、AI Runtime、简历生成、问题解决、项目成果”等所有段落必须完整进入 description，以换行分隔，禁止只保留第一段
+8. “技术栈”章节必须逐类写入 skills；语言等级（如 CET-6）必须原样保留，不得转换成 Intermediate 等推测等级
 
 以下是简历文本：
 ---
@@ -494,6 +540,7 @@ education_details:
   - education_level: "Degree, e.g. Bachelor's Degree"
     institution: "University name"
     field_of_study: "Major"
+    location: "School location explicitly stated in the source, otherwise empty"
     final_evaluation_grade: "GPA or empty string"
     year_of_completion: "Graduation year"
     start_date: "Start year or empty string"
@@ -501,6 +548,7 @@ education_details:
     research_topics:
       - "Research topic explicitly stated in the source; empty list if absent"
     additional_info:
+      is_985: null
       is_211: null
       is_double_first_class: null
       college: "College or school, otherwise empty"
@@ -521,9 +569,14 @@ experience_details:
       - "Skill name"
 projects:
   - name: "Project name"
-    description: "Project description"
+    project_level: "Project, competition, or program level explicitly stated in the source; empty if absent"
+    project_role: "Role explicitly held in the project; empty if absent"
+    description: "Lossless transcription of technologies, background, architecture, implementation, challenges and results; join labeled paragraphs with newlines, never summarize"
     link: "URL or empty string"
     time_period: "Project start/end period or empty string"
+skills:
+  - category: "Skill category from the source"
+    details: "Complete source text for this category, including proficiency, use cases and evidence"
 achievements:
   - name: "Achievement name"
     description: "Description"
@@ -582,11 +635,13 @@ work_preferences:
 
 Notes:
 1. Output YAML only, no markdown code fences
-2. Fill all fields; use empty string "" for missing fields
-3. Do not omit information found in the text; facts absent from the source must remain empty
+2. Emit only fields present in the source; empty fields may be omitted because the application fills defaults locally
+3. This is lossless extraction, not summarization or rewriting. Never shorten or drop responsibilities, implementation details, challenges, metrics, technologies, or project results
 4. Preserve research focus verbatim and never infer it from the major, courses, projects, or target job
-5. Keep at least one entry placeholder for list fields
+5. Preserve every labeled work-detail paragraph as a separate key_responsibilities item
 6. Copy full_name verbatim; leave it empty when uncertain and never reorder or correct it
+7. Preserve every project paragraph in description, separated by newlines, including technology stacks, architecture, implementation and results
+8. Extract every technical-skills category into skills and preserve language levels such as CET-6 verbatim
 
 Resume text:
 ---
@@ -644,7 +699,7 @@ def _call_llm(prompt: str, api_key: str, model_type: str = "anthropic",
                 GatewayConfig(api_key=api_key, base_url=normalized_base_url, max_retries=2),
                 trace_sink=JsonlTraceSink(),
             ), provider=normalized_model_type, model=model_name or cfg.LLM_MODEL,
-            skill="resume_document_parser", temperature=0.1, max_output_tokens=6000,
+            skill="resume_document_parser", temperature=0.0, max_output_tokens=10000,
         )
 
         # Call the underlying chat model directly with a HumanMessage.

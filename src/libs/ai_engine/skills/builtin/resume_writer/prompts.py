@@ -57,7 +57,7 @@ RESUME_PROMPT_TEMPLATE = r"""你是一位专业的HR专家和简历撰写顾问�
     <h2>教育背景</h2>
     <div class="entry">
       <div class="entry-header">
-          <span class="entry-name">[大学名称]</span>
+          <span class="entry-name" data-school-tier="[985 / 211 / 双一流；仅原始资料明确时填写]">[大学名称]</span>
           <span class="entry-location">[位置]</span>
       </div>
       <div class="entry-details">
@@ -100,11 +100,11 @@ RESUME_PROMPT_TEMPLATE = r"""你是一位专业的HR专家和简历撰写顾问�
     <h2>项目经验</h2>
     <div class="entry">
       <div class="entry-header">
-          <span class="entry-name"><i class="fab fa-github"></i> <a href="[项目链接]">[项目名称]</a></span>
+          <span class="entry-name" data-project-level="[项目级别或层次；原始资料没有则留空]"><i class="fab fa-github"></i> <a href="[项目链接]">[项目名称]</a></span>
           <span class="entry-tech">[技术栈1 / 技术栈2 / 技术栈3]</span>
       </div>
       <div class="entry-details">
-          <span class="entry-title">项目经历</span>
+          <span class="entry-title">[本人担任角色；原始资料没有则留空]</span>
           <span class="entry-year">[项目时间段；原始资料没有则留空，但必须保留此 span]</span>
       </div>
       <ul class="compact-list">

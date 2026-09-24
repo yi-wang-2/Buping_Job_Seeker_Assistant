@@ -358,7 +358,11 @@ export function getDownloadUrl(filename: string): string {
 }
 
 // Preview a previously-saved resume by HTML filename
-export async function previewSavedResume(htmlFilename: string): Promise<{ html: string }> {
+export async function previewSavedResume(htmlFilename: string): Promise<{
+  html: string;
+  style_name?: string;
+  style_refreshed?: boolean;
+}> {
   const { data } = await api.get(`/resume/preview-saved/${encodeURIComponent(htmlFilename)}`);
   return data;
 }

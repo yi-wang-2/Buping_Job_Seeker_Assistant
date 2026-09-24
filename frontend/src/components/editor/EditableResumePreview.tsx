@@ -117,7 +117,7 @@ export default function EditableResumePreview({
   };
 
   return (
-    <div className={className}>
+    <div className={`flex h-full min-h-0 flex-col ${className}`}>
       <EditableWYSIWYGEditor
         initialHtml={initialHtml}
         currentHtml={currentHtml}
@@ -128,7 +128,7 @@ export default function EditableResumePreview({
         libraryPortalTarget={libraryPortalTarget}
       />
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+      <div className="mt-2 flex flex-none flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
           {isDirty ? (
             <>
@@ -651,6 +651,9 @@ function EditableWYSIWYGEditor({
     const doc = section.ownerDocument;
     const entry = doc.createElement("div");
     entry.className = "entry";
+    // Keep the user-added source in saved HTML so future generations can
+    // promote it into the same experience inventory as existing entries.
+    entry.setAttribute("data-buping-manual-experience", type);
 
     if (type === "education") {
       entry.innerHTML = `
@@ -662,15 +665,16 @@ function EditableWYSIWYGEditor({
           <span class="entry-title">学历 · 专业</span>
           <span class="entry-year" data-buping-empty-field="时间段（选填）"></span>
         </div>
+        <div class="education-highlight"><strong>研究方向：</strong>填写研究方向、研究内容或核心课程</div>
         <ul class="compact-list"><li>补充课程、研究方向、荣誉或其他教育信息</li></ul>`;
     } else if (type === "project") {
       entry.innerHTML = `
         <div class="entry-header">
-          <span class="entry-name">项目名称</span>
-          <span class="entry-tech">技术栈 / 项目角色</span>
+          <span class="entry-name" data-project-level="">项目名称</span>
+          <span class="entry-tech">技术栈</span>
         </div>
         <div class="entry-details">
-          <span class="entry-title">项目经历</span>
+          <span class="entry-title">项目角色</span>
           <span class="entry-year" data-buping-empty-field="时间段（选填）"></span>
         </div>
         <ul class="compact-list">
@@ -1156,8 +1160,8 @@ function EditableWYSIWYGEditor({
   // The actual reset happens by reloading the iframe srcdoc.
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-0.5 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-600 dark:bg-gray-900">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-none flex-wrap items-center gap-0.5 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-gray-600 dark:bg-gray-900">
         <ToolButton title="撤销 (Ctrl+Z)" onClick={() => exec("undo")}>
           <Undo className="h-4 w-4" />
         </ToolButton>
@@ -1301,7 +1305,6 @@ function EditableWYSIWYGEditor({
         style={{
           width: "100%",
           maxWidth: "100%",
-          height: "100%",
           border: "1px solid",
           borderTop: "none",
           borderRadius: "0 0 0.5rem 0.5rem",

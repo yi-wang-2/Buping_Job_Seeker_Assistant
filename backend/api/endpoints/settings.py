@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -241,12 +241,12 @@ def delete_resume_photo() -> dict:
 @router.post("/upload-resume")
 async def upload_resume(
     file: UploadFile = File(...),
-    target_lang: str = "en",
-    api_key: str = "",
-    model_type: str = "",
-    model_name: str = "",
-    base_url: str = "",
-    llm_protocol: str = "",
+    target_lang: str = Form("en"),
+    api_key: str = Form(""),
+    model_type: str = Form(""),
+    model_name: str = Form(""),
+    base_url: str = Form(""),
+    llm_protocol: str = Form(""),
 ) -> dict:
     """Upload a resume document and extract structured YAML data.
 
@@ -351,7 +351,11 @@ async def upload_resume(
         )
         logger.info("Upload resume parse diagnostics: {}", parse_diagnostics)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
+        from backend.services.llm_connection_service import diagnose_llm_error
+
+        error_code, message = diagnose_llm_error(e)
+        status_code = 401 if error_code == "authentication_failed" else 422
+        raise HTTPException(status_code=status_code, detail=f"简历解析失败：{message}") from e
 
     # Dump to YAML string for display in the editor
     import yaml

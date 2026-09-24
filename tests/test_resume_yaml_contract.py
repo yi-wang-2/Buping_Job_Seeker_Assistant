@@ -89,6 +89,40 @@ certifications:
     assert set(parsed) == set(Resume.model_fields)
 
 
+def test_normalization_preserves_structured_technical_skills():
+    parsed = document_parser.normalize_resume_data({
+        "skills": [{
+            "category": "AI/LLM 工程",
+            "details": "熟悉 LangChain，具备 Agent Runtime 与上下文管理经验。",
+        }],
+    })
+
+    assert parsed["skills"] == [{
+        "category": "AI/LLM 工程",
+        "details": "熟悉 LangChain，具备 Agent Runtime 与上下文管理经验。",
+    }]
+
+
+def test_pdf_visual_wraps_are_joined_inside_labeled_details():
+    cleaned = document_parser._clean_extracted_text(
+        "项目成果：完成算法部署，打通 RTSP 视频采集、图像推理、\n"
+        "面积计算及数据库回传链路。\n"
+        "技术栈\n"
+        "AI/LLM 工程：熟悉 LangChain 与上下文管理。"
+    )
+
+    assert "项目成果:完成算法部署,打通 RTSP 视频采集、图像推理、面积计算及数据库回传链路。" in cleaned
+    assert "\n技术栈\n" in cleaned
+
+
+def test_pdf_compatibility_glyphs_are_normalized_before_label_detection():
+    cleaned = document_parser._clean_extracted_text(
+        "项⽬成果：支持 Fixed Workﬂow 与⻓上下文并完成\n工程化部署。\n语⾔能⼒：英语（CET-6）"
+    )
+
+    assert cleaned == "项目成果:支持 Fixed Workflow 与长上下文并完成工程化部署。\n语言能力:英语(CET-6)"
+
+
 def test_document_parser_prompts_cover_every_canonical_field():
     field_names = set(Resume.model_fields)
     field_names.update(PersonalInformation.model_fields)
@@ -100,3 +134,8 @@ def test_document_parser_prompts_cover_every_canonical_field():
     for prompt in (document_parser._PROMPT_TEMPLATE_ZH, document_parser._PROMPT_TEMPLATE_EN):
         for field_name in field_names:
             assert f"{field_name}:" in prompt
+
+    assert "无损信息抽取" in document_parser._PROMPT_TEMPLATE_ZH
+    assert "不得压缩、概括" in document_parser._PROMPT_TEMPLATE_ZH
+    assert "CET-6" in document_parser._PROMPT_TEMPLATE_ZH
+    assert "lossless extraction" in document_parser._PROMPT_TEMPLATE_EN

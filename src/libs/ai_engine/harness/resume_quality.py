@@ -96,11 +96,12 @@ def _mapping(value: Any) -> dict[str, Any]:
     return {
         name: getattr(value, name, None)
         for name in (
-            "name", "surname", "country", "city", "phone_prefix", "phone", "email", "github",
+            "full_name", "name", "surname", "country", "city", "phone_prefix", "phone", "email", "github",
             "linkedin", "wechat", "education_level", "institution", "field_of_study",
             "final_evaluation_grade", "start_date", "year_of_completion", "research_direction",
             "position", "company", "employment_period", "location", "industry",
-            "key_responsibilities", "skills_acquired", "description", "link", "language", "proficiency",
+            "key_responsibilities", "skills_acquired", "project_level", "project_role",
+            "description", "link", "time_period", "language", "proficiency",
         )
     }
 
@@ -153,7 +154,7 @@ def _expected_sections(data: Mapping[str, Any]) -> tuple[str, ...]:
 def _hard_anchors(data: Mapping[str, Any]) -> list[str]:
     anchors: list[str] = []
     personal = _mapping(data.get("personal_information"))
-    anchors.extend(_raw(personal.get(key)) for key in ("name", "surname", "email", "phone") if _present(personal.get(key)))
+    anchors.extend(_raw(personal.get(key)) for key in ("full_name", "name", "surname", "email", "phone") if _present(personal.get(key)))
     for key, fields in (
         ("education_details", ("institution", "field_of_study")),
         ("experience_details", ("company", "position", "employment_period")),
@@ -392,9 +393,11 @@ def _patch_header(html: str, personal: Any, language: str) -> str:
     header = soup.find("header")
     if header is None:
         return html
-    name = _raw(info.get("name"))
-    surname = _raw(info.get("surname"))
-    full_name = f"{name}{' ' if language == 'en' and name and surname else ''}{surname}"
+    full_name = _raw(info.get("full_name"))
+    if not full_name:
+        name = _raw(info.get("name"))
+        surname = _raw(info.get("surname"))
+        full_name = f"{name}{' ' if language == 'en' and name and surname else ''}{surname}"
     _replace_text(header.find("h1"), full_name)
     values = {
         "fa-map-marker-alt": ", ".join(filter(None, (_raw(info.get("city")), _raw(info.get("country"))))),

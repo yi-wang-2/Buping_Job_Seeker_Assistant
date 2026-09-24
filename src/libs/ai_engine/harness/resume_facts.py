@@ -30,6 +30,8 @@ FACT_POLICY: dict[str, FactPolicy] = {
     "experience_details.*.skills_acquired": FactPolicy.GROUNDED_REWRITE,
     "experience_details.*.key_responsibilities": FactPolicy.GROUNDED_REWRITE,
     "projects.*.name": FactPolicy.LOCKED,
+    "projects.*.project_level": FactPolicy.LOCKED,
+    "projects.*.project_role": FactPolicy.LOCKED,
     "projects.*.link": FactPolicy.LOCKED,
     "projects.*.time_period": FactPolicy.LOCKED,
     "projects.*.description": FactPolicy.GROUNDED_REWRITE,
@@ -105,7 +107,8 @@ def _as_mapping(value: Any) -> dict[str, Any]:
         "full_name", "name", "surname", "country", "city", "address", "phone_prefix",
         "phone", "email", "github", "linkedin", "wechat", "position", "company",
         "employment_period", "location", "industry", "key_responsibilities",
-        "skills_acquired", "description", "link", "proficiency", "language",
+        "skills_acquired", "project_level", "project_role", "time_period",
+        "description", "link", "proficiency", "language",
     )
     return {name: getattr(value, name, None) for name in names}
 
@@ -265,11 +268,17 @@ def _render_header(personal: Any, *, language: str) -> str:
 
 def _render_education_entry(raw: Any, *, language: str) -> str:
     edu = _as_mapping(raw)
+    from src.libs.resume_and_cover_builder.resume_html import education_tier_label
+
+    tier = education_tier_label(edu)
+    tier_attr = f' data-school-tier="{_text(tier)}"' if tier else ""
     additional = _as_mapping(edu.get("additional_info") or {})
     degree = _display_degree(edu.get("education_level"), language=language)
     major = edu.get("field_of_study")
     title = " · ".join(item for item in (degree, _text(major) if _present(major) else "") if item)
     years = " – ".join(_text(item) for item in (edu.get("start_date"), edu.get("year_of_completion")) if _present(item))
+    location = _raw_text(edu.get("location"))
+    location_attr = f' data-location="{_text(location)}"' if location else ""
     labels = {
         "research": "研究方向" if language != "en" else "Research focus",
         "topics": "研究内容" if language != "en" else "Research topics",
@@ -288,14 +297,27 @@ def _render_education_entry(raw: Any, *, language: str) -> str:
         if rendered:
             facts.append(f"<li><strong>{label}：</strong>{rendered}</li>")
     grade = edu.get("final_evaluation_grade")
+    highlight_candidates = (
+        (labels["research"], edu.get("research_direction") or additional.get("research_direction")),
+        (labels["topics"], edu.get("research_topics") or additional.get("research_topics")),
+        (labels["courses"], additional.get("relevant_courses") or additional.get("exam") or edu.get("exam")),
+        ("GPA", grade),
+    )
+    highlight_html = ""
+    for label, value in highlight_candidates:
+        rendered = _join_values(value)
+        if rendered:
+            separator = "：" if label != "GPA" else ": "
+            highlight_html = f'<div class="education-highlight"><strong>{label}{separator}</strong>{rendered}</div>'
+            break
     grade_html = f'<div class="grade">GPA: {_text(grade)}</div>' if _present(grade) else ""
     facts_html = f'<ul class="compact-list">{"".join(facts)}</ul>' if facts else ""
     return (
         '<div class="entry"><div class="entry-header">'
-        f'<span class="entry-name">{_text(edu.get("institution")) if _present(edu.get("institution")) else ""}</span>'
-        '<span class="entry-location"></span></div><div class="entry-details">'
-        f'<span class="entry-title">{title}</span><span class="entry-year">{years}</span>'
-        f'</div>{grade_html}{facts_html}</div>'
+        f'<span class="entry-name"{tier_attr}>{_text(edu.get("institution")) if _present(edu.get("institution")) else ""}</span>'
+        f'<span class="entry-location">{_text(edu.get("location")) if _present(edu.get("location")) else ""}</span>'
+        f'</div><div class="entry-details"><span class="entry-title">{title}</span><span class="entry-year"{location_attr}>{years}</span>'
+        f'</div>{highlight_html}{grade_html}{facts_html}</div>'
     )
 
 
@@ -374,14 +396,17 @@ def _render_projects(projects: Iterable[Any] | None, generated: str, language: s
         )
         violations.extend(blocked)
         name = _text(project.get("name")) if _present(project.get("name")) else ""
+        level = _raw_text(project.get("project_level"))
+        level_attr = f' data-project-level="{_text(level)}"' if level else ""
+        role = _text(project.get("project_role")) if _present(project.get("project_role")) else ""
         link = _raw_text(project.get("link"))
         name_html = f'<a href="{_text(link)}">{name}</a>' if link else name
         items = "".join(f"<li>{_text(item)}</li>" for item in bullets)
         list_html = f'<ul class="compact-list">{items}</ul>' if items else ""
         entries.append(
             '<div class="entry"><div class="entry-header">'
-            f'<span class="entry-name">{name_html}</span><span class="entry-tech"></span>'
-            '</div><div class="entry-details"><span class="entry-title"></span>'
+            f'<span class="entry-name"{level_attr}>{name_html}</span><span class="entry-tech"></span>'
+            f'</div><div class="entry-details"><span class="entry-title">{role}</span>'
             f'<span class="entry-year">{_text(project.get("time_period"))}</span></div>{list_html}</div>'
         )
     if not entries:
@@ -605,6 +630,8 @@ def _patch_header_in_place(generated: str, personal: Any, *, language: str) -> s
 
 
 def _patch_education_in_place(generated: str, education: Iterable[Any] | None, *, language: str) -> str:
+    from src.libs.resume_and_cover_builder.resume_html import education_tier_label
+
     sources = [_as_mapping(item) for item in (education or [])]
     if not sources:
         return ""
@@ -623,7 +650,21 @@ def _patch_education_in_place(generated: str, education: Iterable[Any] | None, *
                 root.append(canonical)
             continue
         entry["data-source-id"] = f"education-{index}"
-        for selector in (".entry-name", ".entry-location", ".entry-title", ".entry-year", ".grade", "ul.compact-list"):
+        entry_name = entry.select_one(".entry-name")
+        if entry_name is not None:
+            tier = education_tier_label(source)
+            if tier:
+                entry_name["data-school-tier"] = tier
+            else:
+                entry_name.attrs.pop("data-school-tier", None)
+        entry_year = entry.select_one(".entry-year")
+        if entry_year is not None:
+            location = _raw_text(source.get("location"))
+            if location:
+                entry_year["data-location"] = location
+            else:
+                entry_year.attrs.pop("data-location", None)
+        for selector in (".entry-name", ".entry-location", ".entry-title", ".entry-year", ".education-highlight", ".grade", "ul.compact-list"):
             current, locked = entry.select_one(selector), canonical.select_one(selector) if canonical else None
             if current is not None and locked is not None:
                 _copy_contents(current, locked)
@@ -708,6 +749,12 @@ def _patch_projects_in_place(generated: str, projects: Iterable[Any] | None, *, 
             continue
         entry["data-source-id"] = f"project-{index}"
         name_container = entry.select_one(".entry-name")
+        level = _raw_text(source.get("project_level"))
+        if name_container is not None:
+            if level:
+                name_container["data-project-level"] = level
+            else:
+                name_container.attrs.pop("data-project-level", None)
         link = _raw_text(source.get("link"))
         name_target = name_container.find("a") if name_container else None
         if name_target is not None:
@@ -726,6 +773,11 @@ def _patch_projects_in_place(generated: str, projects: Iterable[Any] | None, *, 
                 header.insert_after(details)
             else:
                 entry.insert(0, details)
+        role = details.select_one(".entry-title")
+        if role is None:
+            role = soup.new_tag("span", attrs={"class": "entry-title"})
+            details.insert(0, role)
+        _replace_node_text(role, source.get("project_role"))
         year = details.select_one(".entry-year")
         if year is None:
             year = soup.new_tag("span", attrs={"class": "entry-year"})

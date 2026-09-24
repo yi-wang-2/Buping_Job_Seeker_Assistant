@@ -321,7 +321,13 @@ async def preview_saved_resume(html_filename: str) -> dict:
         content = file_path.read_text(encoding="utf-8")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read HTML: {e}")
-    return {"html": content, "filename": safe_name}
+    preview_html, style_name, style_refreshed = resume_service.refresh_saved_resume_preview_html(content)
+    return {
+        "html": preview_html,
+        "filename": safe_name,
+        "style_name": style_name,
+        "style_refreshed": style_refreshed,
+    }
 
 
 # ---------------------------------------------------------------------------

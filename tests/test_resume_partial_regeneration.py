@@ -329,3 +329,18 @@ def test_resume_generator_assembles_exactly_one_html_document(tmp_path):
     assert len(soup.find_all("html")) == 1
     assert len(soup.find_all("body")) == 1
     assert soup.select_one("body > header h1").get_text(strip=True) == "NAME"
+
+
+def test_partial_context_does_not_expose_withdrawn_library_entries():
+    current = BASE_HTML.replace(
+        "</body>",
+        '<div id="buping-experience-library-store" hidden>'
+        '<div class="entry" data-buping-library-item="withdrawn">撤下项目内容</div>'
+        '</div></body>',
+    )
+
+    context = build_preserved_resume_context(current, ["entry:work-experience:1"])
+
+    assert "保留工作 A" in context
+    assert "撤下项目内容" not in context
+    assert "buping-experience-library-store" not in context

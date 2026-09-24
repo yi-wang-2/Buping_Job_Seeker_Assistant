@@ -1,0 +1,297 @@
+/*国科大模板$local://resume-templates*/
+/* Academic-style layout: only the institutional mark is bundled, never the source portrait or personal details. */
+:root {
+  --ucas-blue: #2c4e83;
+  --ucas-ink: #111111;
+  --ucas-muted: #303030;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 34px 24px;
+  background: #fff;
+  color: var(--ucas-ink);
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+  font-size: 9.7pt;
+  line-height: 1.34;
+}
+
+/* Use most of the A4 content area without running into the iframe scrollbar.
+   The shared 720px cap left oversized gutters; full width clipped the right edge. */
+body:has(.ucas-template-logo) > * {
+  width: 100% !important;
+  max-width: calc(100% - 24px) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+header {
+  position: relative;
+  min-height: 110px;
+  margin: 0 0 8px;
+  padding: 48px 0 5px;
+}
+
+.ucas-template-logo {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: block;
+  width: 190px;
+  height: auto;
+  transform: translateX(-50%);
+}
+
+h1 {
+  margin: 0 0 8px;
+  color: var(--ucas-ink);
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 16pt;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.contact-info, .preview-contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 20px;
+  max-width: 100%;
+  color: var(--ucas-ink);
+  font-size: 9.25pt;
+  line-height: 1.32;
+}
+
+.contact-info p { margin: 0; }
+.contact-info span, .preview-contact-item { overflow-wrap: anywhere; }
+header a, .contact-info a { color: inherit; text-decoration: none; }
+
+/* A portrait is displayed only when the user has supplied their own photo. */
+body header:has(.resume-photo-frame) {
+  min-height: 116px !important;
+  padding-right: 105px !important;
+}
+body .resume-photo-frame {
+  top: 18px;
+  right: 4px;
+  width: 73px;
+  height: 96px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+section { margin: 0; padding: 0; }
+
+h2 {
+  margin: 10px 0 5px;
+  padding: 0 0 3px;
+  border-bottom: 2px solid var(--ucas-blue);
+  color: var(--ucas-blue);
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 12pt;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.entry, .preview-item {
+  margin: 0 0 8px;
+  padding: 0 2px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.entry-header, .entry-details, .preview-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 12px;
+}
+
+.entry-header, .preview-item-head, .preview-item-title {
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 9.7pt;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.entry-details { margin-top: 1px; }
+.entry-location, .entry-year, .preview-item-period {
+  flex: none;
+  color: var(--ucas-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+.entry-title, .entry-name, .preview-item-sub { color: var(--ucas-ink); }
+.preview-item-sub { margin-top: 1px; }
+.preview-summary, .preview-item p { margin: 2px 0 3px; }
+
+/* Every experience starts with one strong three-column row. The underlying
+   semantic nodes stay intact so editing and switching templates remain safe. */
+body:has(.ucas-template-logo) #education .entry,
+body:has(.ucas-template-logo) #work-experience .entry,
+body:has(.ucas-template-logo) #side-projects .entry,
+body:has(.ucas-template-logo) #projects .entry,
+body:has(.ucas-template-logo) .preview-education-section .preview-education-item,
+body:has(.ucas-template-logo) .preview-work-section .preview-work-item,
+body:has(.ucas-template-logo) .preview-project-section .preview-project-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1.25fr);
+  align-items: baseline;
+  column-gap: 10px;
+  margin-bottom: 7px;
+  padding: 0 2px;
+  font-size: 9.3pt;
+}
+body:has(.ucas-template-logo) #education .entry-header,
+body:has(.ucas-template-logo) #education .entry-details,
+body:has(.ucas-template-logo) #work-experience .entry-header,
+body:has(.ucas-template-logo) #work-experience .entry-details,
+body:has(.ucas-template-logo) #side-projects .entry-header,
+body:has(.ucas-template-logo) #side-projects .entry-details,
+body:has(.ucas-template-logo) #projects .entry-header,
+body:has(.ucas-template-logo) #projects .entry-details,
+body:has(.ucas-template-logo) .preview-education-section .preview-item-head,
+body:has(.ucas-template-logo) .preview-work-section .preview-item-head,
+body:has(.ucas-template-logo) .preview-project-section .preview-item-head {
+  display: contents;
+}
+body:has(.ucas-template-logo) #education .entry-name,
+body:has(.ucas-template-logo) #work-experience .entry-name,
+body:has(.ucas-template-logo) #side-projects .entry-name,
+body:has(.ucas-template-logo) #projects .entry-name,
+body:has(.ucas-template-logo) .preview-education-section .preview-item-title,
+body:has(.ucas-template-logo) .preview-work-section .preview-item-company,
+body:has(.ucas-template-logo) .preview-project-section .preview-item-title {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  font-weight: 700;
+}
+body:has(.ucas-template-logo) #education .entry-title,
+body:has(.ucas-template-logo) #work-experience .entry-title,
+body:has(.ucas-template-logo) #side-projects .entry-title,
+body:has(.ucas-template-logo) #projects .entry-title,
+body:has(.ucas-template-logo) .preview-education-section .preview-item-sub,
+body:has(.ucas-template-logo) .preview-work-section .preview-item-title,
+body:has(.ucas-template-logo) .preview-project-section .preview-item-role {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+  white-space: nowrap;
+  font-weight: 700;
+  text-align: center;
+}
+body:has(.ucas-template-logo) #education .entry-year,
+body:has(.ucas-template-logo) #work-experience .entry-year,
+body:has(.ucas-template-logo) #side-projects .entry-year,
+body:has(.ucas-template-logo) #projects .entry-year,
+body:has(.ucas-template-logo) .preview-education-section .preview-item-period,
+body:has(.ucas-template-logo) .preview-work-section .preview-item-period,
+body:has(.ucas-template-logo) .preview-project-section .preview-item-period {
+  grid-column: 3;
+  grid-row: 1;
+  white-space: nowrap;
+  color: var(--ucas-ink);
+  font-weight: 700;
+  text-align: right;
+}
+body:has(.ucas-template-logo) #education [data-school-tier]:not([data-school-tier=""])::after,
+body:has(.ucas-template-logo) .preview-education-section [data-school-tier]:not([data-school-tier=""])::after {
+  content: " (" attr(data-school-tier) ")";
+  color: var(--ucas-muted);
+  font-size: 8.5pt;
+  font-weight: 400;
+}
+body:has(.ucas-template-logo) #side-projects [data-project-level]:not([data-project-level=""])::after,
+body:has(.ucas-template-logo) #projects [data-project-level]:not([data-project-level=""])::after,
+body:has(.ucas-template-logo) .preview-project-section [data-project-level]:not([data-project-level=""])::after {
+  content: " (" attr(data-project-level) ")";
+  color: var(--ucas-muted);
+  font-size: 8.5pt;
+  font-weight: 400;
+}
+body:has(.ucas-template-logo) #education .entry-year[data-location]:not([data-location=""])::after,
+body:has(.ucas-template-logo) .preview-education-section .preview-item-period[data-location]:not([data-location=""])::after {
+  content: " · " attr(data-location);
+}
+body:has(.ucas-template-logo) #education .education-highlight,
+body:has(.ucas-template-logo) .preview-education-section .education-highlight {
+  display: block;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  margin-top: 2px;
+  color: var(--ucas-ink);
+  font-size: 8.9pt;
+  font-weight: 400;
+  line-height: 1.3;
+}
+body:has(.ucas-template-logo) #work-experience .entry-location {
+  display: none;
+}
+body:has(.ucas-template-logo) #side-projects .entry-tech,
+body:has(.ucas-template-logo) #projects .entry-tech {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin-top: 2px;
+  color: var(--ucas-muted);
+  font-size: 8.7pt;
+  font-weight: 400;
+}
+body:has(.ucas-template-logo) #education .entry > ul,
+body:has(.ucas-template-logo) #education .entry > ol,
+body:has(.ucas-template-logo) #work-experience .entry > ul,
+body:has(.ucas-template-logo) #work-experience .entry > ol,
+body:has(.ucas-template-logo) #side-projects .entry > ul,
+body:has(.ucas-template-logo) #side-projects .entry > ol,
+body:has(.ucas-template-logo) #projects .entry > ul,
+body:has(.ucas-template-logo) #projects .entry > ol,
+body:has(.ucas-template-logo) .preview-work-section .preview-work-item > ul,
+body:has(.ucas-template-logo) .preview-work-section .preview-work-item > ol,
+body:has(.ucas-template-logo) .preview-work-section .preview-skills,
+body:has(.ucas-template-logo) .preview-project-section .preview-project-item > p {
+  grid-column: 1 / -1;
+}
+body:has(.ucas-template-logo) #education .grade,
+body:has(.ucas-template-logo) #education .entry-location,
+body:has(.ucas-template-logo) #education .entry > ul,
+body:has(.ucas-template-logo) #education .entry > ol,
+body:has(.ucas-template-logo) .preview-education-section .preview-education-item > ul,
+body:has(.ucas-template-logo) .preview-education-section .preview-education-item > ol,
+body:has(.ucas-template-logo) .preview-education-section .preview-education-item > p {
+  display: none;
+}
+
+.compact-list, .stack-list, .inline-list,
+.preview-item ul, .preview-item ol {
+  margin: 3px 0 0;
+  padding-left: 14px;
+  list-style: none;
+}
+.compact-list li, .stack-list li, .inline-list li,
+.preview-item li {
+  position: relative;
+  margin: 0 0 2px;
+  padding-left: 0;
+}
+.compact-list li::before, .stack-list li::before, .inline-list li::before,
+.preview-item li::before {
+  position: absolute;
+  left: -12px;
+  content: "-";
+}
+
+.two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.two-column ul { margin: 0; padding-left: 14px; }
+
+@media print {
+  @page { size: A4; margin: 11mm 13mm; }
+  body { width: auto; max-width: none; padding: 0; font-size: 9.7pt; line-height: 1.34; }
+  h2 { border-color: var(--ucas-blue); print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}

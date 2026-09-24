@@ -556,12 +556,20 @@ export default function MockInterview({ t }: { t: Strings }) {
     setResumeSourceStatus("");
     try {
       let language = "zh";
+      let settings: Awaited<ReturnType<typeof getSettings>> | null = null;
       try {
-        language = (await getSettings()).resume_language || "zh";
+        settings = await getSettings();
+        language = settings.resume_language || "zh";
       } catch {
         language = "zh";
       }
-      const result = await uploadResume(file, language);
+      const result = await uploadResume(file, language, settings ? {
+        apiKey: settings.llm_api_key || undefined,
+        modelType: settings.llm_model_type,
+        modelName: settings.llm_model,
+        baseUrl: settings.llm_base_url,
+        llmProtocol: settings.llm_protocol,
+      } : undefined);
       if (!result.yaml_content?.trim()) throw new Error(mi.resumeEmptyDocument);
       setResumeText(result.yaml_content);
       setResumeLoadedFromFile(file.name);

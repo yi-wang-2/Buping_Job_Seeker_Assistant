@@ -29,6 +29,7 @@ education_details:
       education_level: {type: string}
       institution: {type: string}
       field_of_study: {type: string}
+      location: {type: string}
       final_evaluation_grade: {type: string}
       year_of_completion: {type: integer, nullable: true}
       start_date: {type: string}
@@ -39,6 +40,7 @@ education_details:
       additional_info:
         type: object
         properties:
+          is_985: {type: boolean, nullable: true}
           is_211: {type: boolean, nullable: true}
           is_double_first_class: {type: boolean, nullable: true}
           college: {type: string}
@@ -74,8 +76,19 @@ projects:
     type: object
     properties:
       name: {type: string}
+      project_level: {type: string}
+      project_role: {type: string}
       description: {type: string}
       link: {type: string}
+      time_period: {type: string}
+
+skills:
+  type: array
+  items:
+    type: object
+    properties:
+      category: {type: string}
+      details: {type: string}
 
 achievements:
   type: array

@@ -318,7 +318,9 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
     "new",
   );
   const [regenerateTargets, setRegenerateTargets] = useState<string[]>([]);
-  const baseVersionHtml = editMode && editedHtml ? editedHtml : previewHtml;
+  // The edited buffer is the current version even after switching to preview.
+  // Preview mode must not silently revert experience selections or new entries.
+  const baseVersionHtml = editedHtml || previewHtml;
   const regenerationModules = useMemo(
     () => extractRegenerationModules(baseVersionHtml, resumeLang),
     [baseVersionHtml, resumeLang],
@@ -448,7 +450,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   }, [styleName, resumeLang]);
 
   const handleSwitchTemplate = async (nextStyle: string) => {
-    const currentHtml = editMode && editedHtml ? editedHtml : previewHtml;
+    const currentHtml = editedHtml || previewHtml;
     if (!currentHtml.trim() || !nextStyle) return;
     setPreviewing(true);
     try {
@@ -542,7 +544,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
         job_description: jobDesc || undefined,
         resume_language: resumeLang,
         generation_mode: generationMode,
-        base_html: generationMode === "partial" ? baseVersionHtml : undefined,
+        base_html: baseVersionHtml || undefined,
         regenerate_targets: generationMode === "partial" ? regenerateTargets : undefined,
         target_pages: targetPages,
         request_id: requestId,
@@ -920,13 +922,20 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
     try {
       const preview = await previewSavedResume(htmlFilename);
       setPreviewHtml(preview.html);
+      setEditedHtml(preview.html);
+      if (preview.style_name && preview.style_name !== styleName) {
+        // The loaded document, not the previously selected dropdown option,
+        // determines its style. Avoid a second template switch on this update.
+        skipRestoredPreviewRef.current = true;
+        setStyleName(preview.style_name);
+      }
       setPreviewKey((k) => k + 1);
       setDownloadFile(pdfFile.name);
       setDownloadHtmlFile(htmlFilename);
       setResumeDocumentName(pdfFile.name.replace(/\.pdf$/i, ""));
       setStatus(
         (resumeLang === "zh"
-          ? `✓ 已加载历史简历: ${pdfFile.name}`
+          ? `✓ 已加载历史简历: ${pdfFile.name}${preview.style_refreshed ? "；已按最新版国科大模板显示，原 PDF 未改动，保存后才会更新" : ""}`
           : `✓ Loaded historical resume: ${pdfFile.name}`),
       );
     } catch (e: any) {
@@ -1259,7 +1268,10 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
               <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-gray-600 dark:bg-gray-900">
                 <button
                   type="button"
-                  onClick={() => setEditMode(false)}
+                  onClick={() => {
+                    if (editedHtml && editedHtml !== previewHtml) setPreviewHtml(editedHtml);
+                    setEditMode(false);
+                  }}
                   className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
                     !editMode
                       ? "bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white"
@@ -1272,7 +1284,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
                 <button
                   type="button"
                   onClick={() => {
-                    setEditedHtml(previewHtml);
+                    if (!editedHtml) setEditedHtml(previewHtml);
                     setEditMode(true);
                   }}
                   disabled={!previewHtml}

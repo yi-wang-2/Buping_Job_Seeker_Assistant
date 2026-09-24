@@ -77,9 +77,13 @@ export function installPrintLayoutEmulation(doc: Document): void {
  */
 export function fitResumeToViewport(doc: Document): void {
   doc.getElementById(VIEWPORT_FIT_STYLE_ID)?.remove();
-  const viewportWidth = doc.defaultView?.innerWidth || doc.documentElement.clientWidth;
+  // innerWidth includes the vertical scrollbar in Chromium. Use the smaller
+  // client width so a full-width template cannot be clipped on the right.
+  const visibleWidths = [doc.documentElement.clientWidth, doc.defaultView?.innerWidth]
+    .filter((width): width is number => Boolean(width && width > 0));
+  const viewportWidth = visibleWidths.length ? Math.min(...visibleWidths) : 0;
   if (!viewportWidth) return;
-  const scale = Math.min(1.12, Math.max(0.25, (viewportWidth - 4) / PRINTABLE_PAGE_WIDTH_PX));
+  const scale = Math.min(1.12, Math.max(0.25, (viewportWidth - 8) / PRINTABLE_PAGE_WIDTH_PX));
   const horizontalOffset = Math.max(0, (viewportWidth - PRINTABLE_PAGE_WIDTH_PX * scale) / 2);
   const style = doc.createElement("style");
   style.id = VIEWPORT_FIT_STYLE_ID;
