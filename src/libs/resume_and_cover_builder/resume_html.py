@@ -1,7 +1,6 @@
 """Deterministic post-processing for generated resume HTML."""
 
 import base64
-import re
 from pathlib import Path
 
 
@@ -51,14 +50,13 @@ PHOTO_STYLE = """
 
 
 def add_default_profile_photo(html: str, photo_path: Path | None = None) -> str:
-    """Add the user's uploaded profile photo to the first resume header.
+    """Synchronize the first resume header with the currently saved user photo.
 
     The image is embedded so saved HTML remains portable and Chrome can render
-    it after copying the document to a temporary PDF directory.
+    it after copying the document to a temporary PDF directory. Existing photos
+    are replaced when the saved photo changes and removed when it is deleted.
     """
     if not html or "<header" not in html.lower():
-        return html
-    if re.search(r"<img\b[^>]*\bresume-photo-frame\b[^>]*>", html, flags=re.I):
         return html
 
     source = photo_path
@@ -68,22 +66,49 @@ def add_default_profile_photo(html: str, photo_path: Path | None = None) -> str:
              if (DATA_FOLDER / f"resume_photo{ext}").is_file()),
             None,
         )
-    if source is None or not source.is_file():
+
+    desired_src = ""
+    if source is not None and source.is_file():
+        encoded = base64.b64encode(source.read_bytes()).decode("ascii")
+        mime = "image/jpeg" if source.suffix.lower() in (".jpg", ".jpeg") else f"image/{source.suffix.lower().lstrip('.')}"
+        desired_src = f"data:{mime};base64,{encoded}"
+
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    existing_photos = soup.select("img.resume-photo-frame")
+    photo_style = soup.select_one("#resume-photo-style")
+    if desired_src:
+        if (len(existing_photos) == 1
+                and existing_photos[0].get("src") == desired_src
+                and photo_style is not None):
+            return html
+    elif not existing_photos and photo_style is None:
         return html
 
-    encoded = base64.b64encode(source.read_bytes()).decode("ascii")
-    mime = "image/jpeg" if source.suffix.lower() in (".jpg", ".jpeg") else f"image/{source.suffix.lower().lstrip('.')}"
-    photo = (
-        '<img class="resume-photo-frame" alt="profile photo" '
-        f'src="data:{mime};base64,{encoded}"/>'
-    )
-    html = re.sub(r"(<header\b[^>]*>)", rf"\1\n{photo}", html, count=1, flags=re.I)
-    if 'id="resume-photo-style"' in html or "id='resume-photo-style'" in html:
-        return html
-    if "</head>" in html.lower():
-        head_end = html.lower().index("</head>")
-        return html[:head_end] + PHOTO_STYLE + html[head_end:]
-    return PHOTO_STYLE + html
+    for existing in existing_photos:
+        existing.decompose()
+    if photo_style is not None:
+        photo_style.decompose()
+
+    if not desired_src:
+        return str(soup)
+
+    header = soup.find("header")
+    if header is None:
+        return str(soup)
+    photo = soup.new_tag("img")
+    photo["class"] = "resume-photo-frame"
+    photo["alt"] = "profile photo"
+    photo["src"] = desired_src
+    header.insert(0, photo)
+
+    style = BeautifulSoup(PHOTO_STYLE, "html.parser").find("style")
+    if soup.head is not None:
+        soup.head.append(style)
+    else:
+        soup.insert(0, style)
+    return str(soup)
 
 
 def apply_template_branding(html: str, style_file: str) -> str:
@@ -94,11 +119,9 @@ def apply_template_branding(html: str, style_file: str) -> str:
     """
     from bs4 import BeautifulSoup
 
+    html = add_default_profile_photo(html)
     if style_file != UCAS_STYLE_FILE and "ucas-template-logo" not in html:
         return html
-
-    if style_file == UCAS_STYLE_FILE:
-        html = add_default_profile_photo(html)
 
     soup = BeautifulSoup(html, "html.parser")
     for old_logo in soup.select("#ucas-template-logo"):

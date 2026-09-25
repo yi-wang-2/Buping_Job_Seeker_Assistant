@@ -39,3 +39,5 @@ def test_html_to_pdf_injects_document_without_file_navigation(monkeypatch):
     assert injected["frameId"] == "main-frame"
     assert "<main>resume</main>" in injected["html"]
     assert "buping-pdf-centering-fix" in injected["html"]
+    assert "color: inherit !important" in injected["html"]
+    assert "text-decoration: none !important" in injected["html"]

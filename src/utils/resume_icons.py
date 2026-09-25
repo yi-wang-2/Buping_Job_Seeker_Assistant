@@ -25,9 +25,9 @@ def _embedded_fontawesome_css() -> str:
   font-display:block; src:url(data:font/woff2;base64,{solid}) format("woff2"); }}
 @font-face {{ font-family:"Font Awesome 5 Brands"; font-style:normal; font-weight:400;
   font-display:block; src:url(data:font/woff2;base64,{brands}) format("woff2"); }}
-.contact-info .fas {{ font-family:"Font Awesome 5 Free" !important; font-weight:900 !important; }}
-.contact-info .fab {{ font-family:"Font Awesome 5 Brands" !important; font-weight:400 !important; }}
-.contact-info .fas,.contact-info .fab {{ display:inline-block; width:1em; margin-right:.3em; text-align:center; }}
+i.fas {{ font-family:"Font Awesome 5 Free" !important; font-weight:900 !important; }}
+i.fab {{ font-family:"Font Awesome 5 Brands" !important; font-weight:400 !important; }}
+i.fas,i.fab {{ display:inline-block; width:1em; margin-right:.3em; text-align:center; }}
 .contact-info p {{ font-family:"Noto Sans SC",sans-serif; font-weight:700; }}
 .fa-map-marker-alt::before {{ content:"\\f3c5"; }}
 .fa-phone::before {{ content:"\\f095"; }}
@@ -38,11 +38,19 @@ def _embedded_fontawesome_css() -> str:
 
 
 def embed_contact_icons(html: str) -> str:
-    """Move icon classes off contact text and embed the required icon fonts."""
-    if not html or "contact-info" not in html:
+    """Normalize Font Awesome markup and embed fonts used across the resume."""
+    if not html:
         return html
 
     soup = BeautifulSoup(html, "html.parser")
+    has_icon_markup = any(
+        class_name.startswith("fa-")
+        for item in soup.find_all(class_=True)
+        for class_name in (item.get("class") or [])
+    )
+    if soup.select_one(".contact-info") is None and not has_icon_markup:
+        return html
+
     for item in soup.select(".contact-info p.fas, .contact-info p.fab"):
         classes = list(item.get("class") or [])
         icon_classes = [name for name in classes if name in {"fas", "fab"} or name.startswith("fa-")]

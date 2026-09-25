@@ -302,6 +302,7 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const [editedHtml, setEditedHtml] = useSessionState<string>("buping_resume_edited_html", "");
   const [savedOk, setSavedOk] = useSessionState<boolean>("buping_resume_saved_ok", false);
   const [saving, setSaving] = useState<boolean>(false);
+  const [downloadingPdf, setDownloadingPdf] = useState<boolean>(false);
 
   // AI Rewrite state (Roadmap §1)
   const [rewriteDialogOpen, setRewriteDialogOpen] = useState<boolean>(false);
@@ -663,6 +664,53 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
   const handleEditSave = (html: string) => persistEditedResume(html, "overwrite");
   const handleEditSaveAs = (html: string) => persistEditedResume(html, "save_as");
 
+  const triggerPdfDownload = (filename: string) => {
+    const anchor = document.createElement("a");
+    anchor.href = getDownloadUrl(filename);
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!downloadFile || downloadingPdf) return;
+    const currentHtml = editedHtml || previewHtml;
+    if (!currentHtml.trim() || !downloadHtmlFile) {
+      triggerPdfDownload(downloadFile);
+      return;
+    }
+
+    // A historical PDF can lag behind its refreshed HTML preview (for example,
+    // after a template or embedded-font fix). Render from the currently visible
+    // HTML before every download so the exported artifact is WYSIWYG.
+    setDownloadingPdf(true);
+    try {
+      const result = await saveEditedResume(currentHtml, resumeDocumentName.trim() || "我的简历", {
+        saveMode: "overwrite",
+        currentPdfFilename: downloadFile,
+        currentHtmlFilename: downloadHtmlFile,
+      });
+      setDownloadFile(result.pdf_filename);
+      setDownloadHtmlFile(result.html_filename);
+      setPreviewHtml(currentHtml);
+      setStatus(
+        resumeLang === "zh"
+          ? "✓ PDF 已按当前预览重新生成并开始下载"
+          : "✓ PDF regenerated from the current preview and downloading",
+      );
+      triggerPdfDownload(result.pdf_filename);
+    } catch (err: any) {
+      setStatus(
+        resumeLang === "zh"
+          ? `⚠️ PDF 导出失败：${err?.response?.data?.detail || err?.message || "未知错误"}`
+          : `⚠️ PDF export failed: ${err?.response?.data?.detail || err?.message || "Unknown error"}`,
+      );
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   const handleRenameResume = async () => {
     const nextName = resumeDocumentName.trim();
     if (!nextName || !downloadFile || !downloadHtmlFile) {
@@ -935,8 +983,8 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
       setResumeDocumentName(pdfFile.name.replace(/\.pdf$/i, ""));
       setStatus(
         (resumeLang === "zh"
-          ? `✓ 已加载历史简历: ${pdfFile.name}${preview.style_refreshed ? "；已按最新版国科大模板显示，原 PDF 未改动，保存后才会更新" : ""}`
-          : `✓ Loaded historical resume: ${pdfFile.name}`),
+          ? `✓ 已加载历史简历: ${pdfFile.name}${preview.style_refreshed ? "；已同步当前模板、图标和后台照片，下载时会自动更新 PDF" : ""}`
+          : `✓ Loaded historical resume: ${pdfFile.name}${preview.style_refreshed ? "; current template, icons, and saved photo synchronized; PDF will update on download" : ""}`),
       );
     } catch (e: any) {
       setStatus(
@@ -1415,14 +1463,17 @@ export default function ResumeGenerate({ t }: { t: Strings }) {
               </button>
 
               {downloadFile && (
-                <a
-                  href={getDownloadUrl(downloadFile)}
-                  download
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={downloadingPdf || saving}
                   className="flex items-center justify-center gap-2 rounded-xl border border-brand-200 bg-brand-50 px-5 py-3 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-900/20 dark:text-brand-300"
                 >
-                  <Download className="h-4 w-4" />
-                  {rt.download}
-                </a>
+                  {downloadingPdf ? <LoadingSpinner size="sm" /> : <Download className="h-4 w-4" />}
+                  {downloadingPdf
+                    ? (resumeLang === "zh" ? "正在生成 PDF…" : "Rendering PDF…")
+                    : rt.download}
+                </button>
               )}
             </div>
 

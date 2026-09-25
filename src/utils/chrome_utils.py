@@ -238,6 +238,15 @@ def HTML_to_PDF(html_content, driver):
     break-inside: avoid !important;
     page-break-inside: avoid !important;
   }
+  /* Resume links should read like ordinary resume text in the exported PDF.
+     Keep the href in the PDF annotation, but remove browser link decoration. */
+  a,
+  a:visited,
+  a:hover,
+  a:active {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
 </style>
 """
 

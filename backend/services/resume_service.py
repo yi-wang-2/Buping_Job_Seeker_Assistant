@@ -387,14 +387,22 @@ def get_available_styles() -> dict[str, dict[str, str]]:
 
 
 def refresh_saved_resume_preview_html(html_content: str) -> tuple[str, str, bool]:
-    """Refresh a UCAS preview's embedded CSS without changing its saved file.
+    """Refresh dynamic assets and UCAS CSS without changing the saved file.
 
-    Generated and switched templates store CSS inside each HTML artifact, so
-    opening history otherwise keeps rendering the obsolete stylesheet.
+    Generated HTML embeds portable assets. On history load, the user photo and
+    icon fonts must reflect current backend state, while UCAS documents must
+    also use the latest template stylesheet.
     """
     from bs4 import BeautifulSoup
+    from src.libs.resume_and_cover_builder.resume_html import add_default_profile_photo
+    from src.utils.resume_icons import embed_contact_icons
 
-    soup = BeautifulSoup(html_content, "html.parser")
+    # User photos are account-level assets: every load reflects the currently
+    # saved backend photo instead of keeping the snapshot embedded at generation.
+    # Re-embedding icons also upgrades legacy contact-only Font Awesome rules.
+    normalized_html = embed_contact_icons(add_default_profile_photo(html_content))
+    assets_refreshed = normalized_html != html_content
+    soup = BeautifulSoup(normalized_html, "html.parser")
     styles = soup.find_all("style")
     logo_present = bool(soup.select_one("#ucas-template-logo"))
     ucas_style = next((style for style in styles if
@@ -402,24 +410,16 @@ def refresh_saved_resume_preview_html(html_content: str) -> tuple[str, str, bool
         or style.get_text().lstrip().startswith("/*国科大模板$")
     ), None)
     if not logo_present and ucas_style is None:
-        return html_content, "", False
+        return normalized_html, "", assets_refreshed
     if logo_present and ucas_style is not None:
         from src.libs.resume_and_cover_builder import StyleManager
-        from src.libs.resume_and_cover_builder.resume_html import DATA_FOLDER, SUPPORTED_PHOTO_EXTENSIONS
-
         style_manager = StyleManager()
         style_manager.set_selected_style("国科大模板")
         style_path = style_manager.get_style_path()
-        photo_available = any(
-            (DATA_FOLDER / f"resume_photo{extension}").is_file()
-            for extension in SUPPORTED_PHOTO_EXTENSIONS
-        )
-        photo_missing = photo_available and not soup.select_one("img.resume-photo-frame")
         if (style_path
-                and ucas_style.get_text().strip() == style_path.read_text(encoding="utf-8").strip()
-                and not photo_missing):
-            return html_content, "国科大模板", False
-    refreshed = switch_resume_template(html_content, "国科大模板")
+                and ucas_style.get_text().strip() == style_path.read_text(encoding="utf-8").strip()):
+            return normalized_html, "国科大模板", assets_refreshed
+    refreshed = switch_resume_template(normalized_html, "国科大模板")
     return refreshed["html"], "国科大模板", refreshed["html"] != html_content
 
 
@@ -547,9 +547,10 @@ def _sanitize_edited_resume_html(html_content: str) -> str:
 def render_html_to_pdf_bytes(html_content: str) -> bytes:
     """Render HTML with the exact same Chrome print pipeline used for downloads."""
     import base64 as _b64
+    from src.libs.resume_and_cover_builder.resume_html import add_default_profile_photo
     from src.utils.chrome_utils import HTML_to_PDF, init_browser
 
-    sanitized_html = _sanitize_edited_resume_html(html_content)
+    sanitized_html = _sanitize_edited_resume_html(add_default_profile_photo(html_content))
     driver = init_browser()
     try:
         return _b64.b64decode(HTML_to_PDF(sanitized_html, driver))
@@ -1103,7 +1104,9 @@ def convert_html_to_pdf(
     # Defense in depth: editor-only DOM attributes and highlight CSS must
     # never be persisted or rendered, even when an older frontend submits
     # unsanitized iframe HTML.
-    html_content = _sanitize_edited_resume_html(html_content)
+    from src.libs.resume_and_cover_builder.resume_html import add_default_profile_photo
+
+    html_content = _sanitize_edited_resume_html(add_default_profile_photo(html_content))
 
     from backend.services.config_service import PUBLIC_DEMO_MODE
     if overwrite_pdf_filename and overwrite_html_filename and not PUBLIC_DEMO_MODE:

@@ -186,3 +186,18 @@ def test_current_ucas_history_adds_newly_uploaded_photo(tmp_path):
     assert refreshed.count('class="resume-photo-frame"') == 1
     assert 'src="data:image/png;base64,c3ludGhldGljLXBob3Rv"' in refreshed
     assert "示例姓名" in refreshed
+
+
+def test_current_ucas_history_replaces_changed_backend_photo(tmp_path):
+    (tmp_path / "resume_photo.png").write_bytes(b"old-photo")
+    source = "<html><head></head><body><header><h1>示例姓名</h1></header></body></html>"
+    current = switch_resume_template(source, "国科大模板")["html"]
+    (tmp_path / "resume_photo.png").write_bytes(b"new-photo")
+
+    refreshed, style_name, changed = resume_service.refresh_saved_resume_preview_html(current)
+
+    assert style_name == "国科大模板"
+    assert changed is True
+    assert "b2xkLXBob3Rv" not in refreshed
+    assert "bmV3LXBob3Rv" in refreshed
+    assert refreshed.count('class="resume-photo-frame"') == 1
